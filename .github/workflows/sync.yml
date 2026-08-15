@@ -39,12 +39,14 @@ jobs:
           echo "target=$TARGET" >> "$GITHUB_OUTPUT"
 
       - name: Checkout source
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ secrets.SOURCE_REPO }}
-          token: ${{ secrets.SYNC_TOKEN }}
-          path: work
-          fetch-depth: 0
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          if ! git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work >/tmp/step.log 2>&1; then
+            echo 'Source checkout failed.'
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@v4
