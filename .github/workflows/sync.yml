@@ -1,0 +1,82 @@
+name: Scheduled sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Which job to run'
+        type: choice
+        options:
+          - a
+          - b
+        default: a
+  schedule:
+    - cron: '0 14 * * *'
+    - cron: '30 14 * * *'
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Determine target
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TARGET="${{ github.event.inputs.target }}"
+          elif [ "${{ github.event.schedule }}" = "30 14 * * *" ]; then
+            TARGET="b"
+          else
+            TARGET="a"
+          fi
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.SOURCE_REPO }}
+          token: ${{ secrets.SYNC_TOKEN }}
+          path: work
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci >/tmp/step.log 2>&1 || (echo 'Dependency installation failed.'; exit 1)
+
+      - name: Install browser
+        working-directory: work
+        run: |
+          npm install --no-save playwright devalue >/tmp/step.log 2>&1 || (echo 'Browser dependency installation failed.'; exit 1)
+          npx playwright install --with-deps chromium >>/tmp/step.log 2>&1 || (echo 'Browser installation failed.'; exit 1)
+
+      - name: Run job A
+        if: steps.target.outputs.target == 'a'
+        working-directory: work
+        run: bash scripts/ci/run-a.sh >/tmp/step.log 2>&1 || (echo 'Job A failed.'; exit 1)
+
+      - name: Run job B
+        if: steps.target.outputs.target == 'b'
+        working-directory: work
+        run: bash scripts/ci/run-b.sh >/tmp/step.log 2>&1 || (echo 'Job B failed.'; exit 1)
+
+      - name: Push results (A)
+        if: steps.target.outputs.target == 'a'
+        working-directory: work
+        run: bash scripts/ci/push.sh "data/raw data/labeled data/reports data/windows" >/tmp/step.log 2>&1 || (echo 'Push A failed.'; exit 1)
+
+      - name: Push results (B)
+        if: steps.target.outputs.target == 'b'
+        working-directory: work
+        run: bash scripts/ci/push.sh "data/bl/raw data/bl/labeled data/bl/reports data/bl/windows" >/tmp/step.log 2>&1 || (echo 'Push B failed.'; exit 1)
