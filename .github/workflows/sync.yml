@@ -9,6 +9,8 @@ on:
         options:
           - a
           - b
+          - c
+          - d
         default: a
   schedule:
     - cron: '0 14 * * *'
@@ -55,10 +57,12 @@ jobs:
           node-version: '22'
 
       - name: Install dependencies
+        if: steps.target.outputs.target != 'd'
         working-directory: work
         run: npm ci >/tmp/step.log 2>&1 || (echo 'Dependency installation failed.'; exit 1)
 
       - name: Install browser
+        if: steps.target.outputs.target != 'd'
         working-directory: work
         run: |
           npm install --no-save playwright devalue >/tmp/step.log 2>&1 || (echo 'Browser dependency installation failed.'; exit 1)
@@ -74,6 +78,16 @@ jobs:
         working-directory: work
         run: bash scripts/ci/run-b.sh >/tmp/step.log 2>&1 || (echo 'Job B failed.'; exit 1)
 
+      - name: Run job C
+        if: steps.target.outputs.target == 'c'
+        working-directory: work
+        run: bash scripts/ci/run-c.sh >/tmp/step.log 2>&1 || (echo 'Job C failed.'; exit 1)
+
+      - name: Run job D
+        if: steps.target.outputs.target == 'd'
+        working-directory: work
+        run: node scripts/postprocess-catalog-sensitive-labels.mjs >/tmp/step.log 2>&1 || (echo 'Job D failed.'; exit 1)
+
       - name: Push results (A)
         if: steps.target.outputs.target == 'a'
         working-directory: work
@@ -83,3 +97,13 @@ jobs:
         if: steps.target.outputs.target == 'b'
         working-directory: work
         run: bash scripts/ci/push.sh "data/bl/raw data/bl/labeled data/bl/reports data/bl/windows" >/tmp/step.log 2>&1 || (echo 'Push B failed.'; exit 1)
+
+      - name: Push results (C)
+        if: steps.target.outputs.target == 'c'
+        working-directory: work
+        run: bash scripts/ci/push.sh "data/bl/yearly" >/tmp/step.log 2>&1 || (echo 'Push C failed.'; exit 1)
+
+      - name: Push results (D)
+        if: steps.target.outputs.target == 'd'
+        working-directory: work
+        run: bash scripts/ci/push.sh "web/data/catalog/summary.json web/data/catalog/search-index.json" >/tmp/step.log 2>&1 || (echo 'Push D failed.'; exit 1)
