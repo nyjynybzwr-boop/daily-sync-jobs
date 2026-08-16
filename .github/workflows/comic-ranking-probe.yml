@@ -1,0 +1,50 @@
+name: Comic ranking probe
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/comic-ranking-probe.yml'
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci >/tmp/step.log 2>&1
+
+      - name: Install browser
+        working-directory: work
+        run: |
+          npm install --no-save playwright devalue >/tmp/step.log 2>&1
+          npx playwright install --with-deps chromium >>/tmp/step.log 2>&1
+
+      - name: Probe comic ranking
+        working-directory: work
+        run: node scripts/probe-comic-ranking.mjs
+
+      - name: Push result
+        working-directory: work
+        run: bash scripts/ci/push.sh "analysis/comic-ranking-probe.json"
