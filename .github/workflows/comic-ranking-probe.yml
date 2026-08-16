@@ -41,6 +41,7 @@ jobs:
           npm install --no-save playwright devalue >/tmp/step.log 2>&1
           npx playwright install --with-deps chromium >>/tmp/step.log 2>&1
 
+      # Compare the user-provided 30-day URL with explicit comic-filter variants.
       - name: Probe comic ranking
         working-directory: work
         run: node scripts/probe-comic-ranking.mjs
