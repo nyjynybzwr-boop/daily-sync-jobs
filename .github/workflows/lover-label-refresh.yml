@@ -50,3 +50,5 @@ jobs:
       - name: Push refreshed data
         working-directory: work
         run: bash scripts/ci/push.sh "web/data/catalog/summary.json web/data/catalog/search-index.json web/data/catalog/similar-works.json web/data/reports/market-insights.json web/data/reports/market-insights-compact.json"
+
+# Refresh marker: referent-scope guard 2026-08-17
