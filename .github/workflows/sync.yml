@@ -18,6 +18,7 @@ on:
           - i
           - j
           - k
+          - l
         default: a
   schedule:
     - cron: '0 14 * * *'
@@ -72,6 +73,11 @@ jobs:
         if: steps.target.outputs.target == 'h' || steps.target.outputs.target == 'i' || steps.target.outputs.target == 'j' || steps.target.outputs.target == 'k'
         working-directory: work
         run: npm install --no-save @huggingface/transformers@3.8.1 >/tmp/step.log 2>&1 || (echo 'Embedding dependency installation failed.'; exit 1)
+
+      - name: Install comic inspection dependency
+        if: steps.target.outputs.target == 'l'
+        working-directory: work
+        run: npm install --no-save devalue >/tmp/step.log 2>&1 || (echo 'Comic inspection dependency installation failed.'; exit 1)
 
       - name: Install browser
         if: steps.target.outputs.target == 'a' || steps.target.outputs.target == 'b' || steps.target.outputs.target == 'c'
@@ -163,6 +169,11 @@ jobs:
           EMBED_SCENES_PER_WORK: '6'
         run: node scripts/poc-nuance-embedding-search-v6.mjs
 
+      - name: Run job L
+        if: steps.target.outputs.target == 'l'
+        working-directory: work
+        run: node scripts/inspect-comic-nuxt.mjs >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Job L failed.'; exit 1)
+
       - name: Push results (A)
         if: steps.target.outputs.target == 'a'
         working-directory: work
@@ -197,3 +208,8 @@ jobs:
         if: steps.target.outputs.target == 'g'
         working-directory: work
         run: bash scripts/ci/push.sh "web/data/catalog/bl/summary.json web/data/catalog/bl/search-index.json web/data/catalog/bl/similar-works.json web/data/reports/bl/market-insights.json web/data/reports/bl/market-insights-compact.json" >/tmp/step.log 2>&1 || (echo 'Push G failed.'; exit 1)
+
+      - name: Push results (L)
+        if: steps.target.outputs.target == 'l'
+        working-directory: work
+        run: bash scripts/ci/push.sh "analysis/comic-nuxt-inspect.json" >/tmp/step.log 2>&1 || (echo 'Push L failed.'; exit 1)
