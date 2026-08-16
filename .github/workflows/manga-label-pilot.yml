@@ -1,0 +1,44 @@
+name: Manga label pilot
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/manga-label-pilot.yml'
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci >/tmp/step.log 2>&1
+
+      - name: Analyze manga label reuse
+        working-directory: work
+        run: node scripts/analyze-manga-label-pilot.mjs
+
+      - name: Push pilot result
+        working-directory: work
+        run: bash scripts/ci/push.sh "analysis/manga-label-pilot.json"
