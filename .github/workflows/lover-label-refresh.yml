@@ -58,6 +58,24 @@ jobs:
         working-directory: work
         run: git lfs pull --include="data/catalog/full/details.json"
 
+      - name: Audit real bassist work with production labeler
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { detectLabels, ensureTokenizer } from './scripts/lib/analysis-core-safe.mjs';
+          await ensureTokenizer();
+          const payload = JSON.parse(fs.readFileSync('data/catalog/full/details.json', 'utf8'));
+          const item = Object.values(payload).find((row) => row?.product_id === 'RJ01690068');
+          if (!item) throw new Error('RJ01690068 missing from full catalog');
+          const labels = detectLabels(item).map((row) => row.label);
+          console.log('RJ01690068 production labels:', labels.join(', '));
+          if (!labels.includes('恋人')) throw new Error('RJ01690068 must keep 恋人');
+          for (const bad of ['幼馴染', '先輩後輩', '再会']) {
+            if (labels.includes(bad)) throw new Error(`RJ01690068 must not keep ${bad}`);
+          }
+          NODE
+
       - name: Rebuild otome catalog and insights
         working-directory: work
         run: bash scripts/ci/run-f.sh
