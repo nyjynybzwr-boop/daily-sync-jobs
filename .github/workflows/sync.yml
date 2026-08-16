@@ -191,9 +191,9 @@ jobs:
       - name: Push results (F)
         if: steps.target.outputs.target == 'f'
         working-directory: work
-        run: bash scripts/ci/push.sh "web/data/catalog/summary.json web/data/catalog/search-index.json web/data/catalog/similar-works.json" >/tmp/step.log 2>&1 || (echo 'Push F failed.'; exit 1)
+        run: bash scripts/ci/push.sh "web/data/catalog/summary.json web/data/catalog/search-index.json web/data/catalog/similar-works.json web/data/reports/market-insights.json web/data/reports/market-insights-compact.json" >/tmp/step.log 2>&1 || (echo 'Push F failed.'; exit 1)
 
       - name: Push results (G)
         if: steps.target.outputs.target == 'g'
         working-directory: work
-        run: bash scripts/ci/push.sh "web/data/catalog/bl/summary.json web/data/catalog/bl/search-index.json web/data/catalog/bl/similar-works.json" >/tmp/step.log 2>&1 || (echo 'Push G failed.'; exit 1)
+        run: bash scripts/ci/push.sh "web/data/catalog/bl/summary.json web/data/catalog/bl/search-index.json web/data/catalog/bl/similar-works.json web/data/reports/bl/market-insights.json web/data/reports/bl/market-insights-compact.json" >/tmp/step.log 2>&1 || (echo 'Push G failed.'; exit 1)
