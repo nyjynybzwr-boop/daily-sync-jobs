@@ -12,6 +12,7 @@ on:
           - c
           - d
           - e
+          - f
         default: a
   schedule:
     - cron: '0 14 * * *'
@@ -27,7 +28,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Determine target
         id: target
@@ -70,10 +71,15 @@ jobs:
           npx playwright install --with-deps chromium >>/tmp/step.log 2>&1 || (echo 'Browser installation failed.'; exit 1)
 
       - name: Materialize catalog data
-        if: steps.target.outputs.target == 'e'
+        if: steps.target.outputs.target == 'e' || steps.target.outputs.target == 'f'
         working-directory: work
         run: |
-          git lfs pull --include="data/catalog/full/details.json,data/catalog/bl/full/details.json" >/tmp/step.log 2>&1 || (echo 'Catalog materialization failed.'; exit 1)
+          if [ "${{ steps.target.outputs.target }}" = "e" ]; then
+            INCLUDE="data/catalog/full/details.json,data/catalog/bl/full/details.json"
+          else
+            INCLUDE="data/catalog/full/details.json"
+          fi
+          git lfs pull --include="$INCLUDE" >/tmp/step.log 2>&1 || (echo 'Catalog materialization failed.'; exit 1)
 
       - name: Run job A
         if: steps.target.outputs.target == 'a'
@@ -102,6 +108,11 @@ jobs:
           node scripts/audit-lover-label.mjs >/tmp/step.log 2>&1 || (echo 'Lover audit failed.'; exit 1)
           node scripts/build-bl-role-summary.mjs >>/tmp/step.log 2>&1 || (echo 'BL role build failed.'; exit 1)
 
+      - name: Run job F
+        if: steps.target.outputs.target == 'f'
+        working-directory: work
+        run: bash scripts/ci/run-f.sh >/tmp/step.log 2>&1 || (echo 'Job F failed.'; exit 1)
+
       - name: Push results (A)
         if: steps.target.outputs.target == 'a'
         working-directory: work
@@ -126,3 +137,8 @@ jobs:
         if: steps.target.outputs.target == 'e'
         working-directory: work
         run: bash scripts/ci/push.sh "analysis/lover-label-audit.json web/data/catalog/bl/summary.json" >/tmp/step.log 2>&1 || (echo 'Push E failed.'; exit 1)
+
+      - name: Push results (F)
+        if: steps.target.outputs.target == 'f'
+        working-directory: work
+        run: bash scripts/ci/push.sh "web/data/catalog/summary.json web/data/catalog/search-index.json" >/tmp/step.log 2>&1 || (echo 'Push F failed.'; exit 1)
