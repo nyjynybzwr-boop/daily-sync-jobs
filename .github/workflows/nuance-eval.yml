@@ -39,6 +39,10 @@ jobs:
         working-directory: work
         run: npm install --no-save @huggingface/transformers@3.8.1 >/tmp/step.log 2>&1 || (echo 'Embedding dependency installation failed.'; exit 1)
 
+      - name: Check evaluator syntax
+        working-directory: work
+        run: node --check scripts/poc-nuance-embedding-search-v7.mjs
+
       - name: Materialize otome catalog
         working-directory: work
         run: git lfs pull --include="data/catalog/full/details.json" >/tmp/step.log 2>&1 || (echo 'Catalog materialization failed.'; exit 1)
