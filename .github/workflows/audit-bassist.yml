@@ -1,0 +1,107 @@
+name: Audit bassist relationship labels
+
+on:
+  push:
+    paths:
+      - '.github/workflows/audit-bassist.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Materialize catalog
+        working-directory: work
+        run: git lfs pull --include="data/catalog/full/details.json"
+
+      - name: Audit RJ01690068
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
+          import { detectLabels, ensureTokenizer } from './scripts/lib/analysis-core.mjs';
+
+          await ensureTokenizer();
+          const raw = JSON.parse(await fs.readFile('data/catalog/full/details.json', 'utf8'));
+          const items = Array.isArray(raw) ? raw : Object.values(raw || {});
+          const item = items.find((x) => x?.product_id === 'RJ01690068');
+          if (!item) throw new Error('RJ01690068 not found');
+
+          const labels = detectLabels(item).filter((x) => x.category === 'relationship');
+          const targetLabels = new Set(['先輩後輩', '再会', '幼馴染']);
+          const target = labels.filter((x) => targetLabels.has(x.label));
+          const needles = [...new Set(target.flatMap((x) => x.matched_keywords || []))];
+
+          const sources = [];
+          const add = (name, text) => {
+            const value = String(text || '').replace(/\s+/g, ' ').trim();
+            if (value) sources.push({ name, text: value });
+          };
+          add('title', item.title);
+          add('description', item.description);
+          add('description_long', item.description_long);
+          for (const [i, text] of (item.content_sections || []).entries()) add(`content_sections[${i}]`, text);
+          for (const [i, block] of (item.introductions || []).entries()) {
+            add(`introductions[${i}].title`, block?.title);
+            for (const [j, row] of (block?.body || []).entries()) add(`introductions[${i}].body[${j}]`, row?.intro);
+          }
+          for (const [i, track] of (item.tracks || []).entries()) {
+            add(`tracks[${i}].title`, track?.title);
+            add(`tracks[${i}].source_text`, track?.source_text);
+          }
+          add('tags', (item.tags || []).join(' / '));
+
+          const evidence = [];
+          for (const needle of needles) {
+            for (const source of sources) {
+              let from = 0;
+              while (true) {
+                const idx = source.text.indexOf(needle, from);
+                if (idx < 0) break;
+                evidence.push({
+                  keyword: needle,
+                  source: source.name,
+                  snippet: source.text.slice(Math.max(0, idx - 140), Math.min(source.text.length, idx + needle.length + 180)),
+                });
+                from = idx + needle.length;
+              }
+            }
+          }
+
+          const report = {
+            generated_at: new Date().toISOString(),
+            product_id: item.product_id,
+            title: item.title,
+            circle: item.circle,
+            relationship_labels: labels,
+            target_labels: target,
+            evidence,
+          };
+          await fs.mkdir('analysis', { recursive: true });
+          await fs.writeFile('analysis/rj01690068-relationship-audit.json', JSON.stringify(report, null, 2) + '\n');
+          console.log(JSON.stringify(report, null, 2));
+          NODE
+
+      - name: Push audit result
+        working-directory: work
+        run: bash scripts/ci/push.sh "analysis/rj01690068-relationship-audit.json"
