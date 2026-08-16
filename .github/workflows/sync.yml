@@ -11,6 +11,7 @@ on:
           - b
           - c
           - d
+          - e
         default: a
   schedule:
     - cron: '0 14 * * *'
@@ -62,11 +63,17 @@ jobs:
         run: npm ci >/tmp/step.log 2>&1 || (echo 'Dependency installation failed.'; exit 1)
 
       - name: Install browser
-        if: steps.target.outputs.target != 'd'
+        if: steps.target.outputs.target == 'a' || steps.target.outputs.target == 'b' || steps.target.outputs.target == 'c'
         working-directory: work
         run: |
           npm install --no-save playwright devalue >/tmp/step.log 2>&1 || (echo 'Browser dependency installation failed.'; exit 1)
           npx playwright install --with-deps chromium >>/tmp/step.log 2>&1 || (echo 'Browser installation failed.'; exit 1)
+
+      - name: Materialize catalog data
+        if: steps.target.outputs.target == 'e'
+        working-directory: work
+        run: |
+          git lfs pull --include="data/catalog/full/details.json,data/catalog/bl/full/details.json" >/tmp/step.log 2>&1 || (echo 'Catalog materialization failed.'; exit 1)
 
       - name: Run job A
         if: steps.target.outputs.target == 'a'
@@ -88,6 +95,13 @@ jobs:
         working-directory: work
         run: node scripts/postprocess-catalog-sensitive-labels.mjs >/tmp/step.log 2>&1 || (echo 'Job D failed.'; exit 1)
 
+      - name: Run job E
+        if: steps.target.outputs.target == 'e'
+        working-directory: work
+        run: |
+          node scripts/audit-lover-label.mjs >/tmp/step.log 2>&1 || (echo 'Lover audit failed.'; exit 1)
+          node scripts/build-bl-role-summary.mjs >>/tmp/step.log 2>&1 || (echo 'BL role build failed.'; exit 1)
+
       - name: Push results (A)
         if: steps.target.outputs.target == 'a'
         working-directory: work
@@ -107,3 +121,8 @@ jobs:
         if: steps.target.outputs.target == 'd'
         working-directory: work
         run: bash scripts/ci/push.sh "web/data/catalog/summary.json web/data/catalog/search-index.json" >/tmp/step.log 2>&1 || (echo 'Push D failed.'; exit 1)
+
+      - name: Push results (E)
+        if: steps.target.outputs.target == 'e'
+        working-directory: work
+        run: bash scripts/ci/push.sh "analysis/lover-label-audit.json web/data/catalog/bl/summary.json" >/tmp/step.log 2>&1 || (echo 'Push E failed.'; exit 1)
