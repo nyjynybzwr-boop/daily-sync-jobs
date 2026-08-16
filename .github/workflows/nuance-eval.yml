@@ -52,6 +52,7 @@ jobs:
         working-directory: work
         run: git lfs pull --include="data/catalog/full/details.json" >/tmp/step.log 2>&1 || (echo 'Catalog materialization failed.'; exit 1)
 
+      # Re-run marker: passive/active touch discrimination changed in the shared v6 engine.
       - name: Run broader gold evaluation
         working-directory: work
         env:
