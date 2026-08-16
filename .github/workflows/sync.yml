@@ -17,6 +17,7 @@ on:
           - h
           - i
           - j
+          - k
         default: a
   schedule:
     - cron: '0 14 * * *'
@@ -68,7 +69,7 @@ jobs:
         run: npm ci >/tmp/step.log 2>&1 || (echo 'Dependency installation failed.'; exit 1)
 
       - name: Install embedding dependency
-        if: steps.target.outputs.target == 'h' || steps.target.outputs.target == 'i' || steps.target.outputs.target == 'j'
+        if: steps.target.outputs.target == 'h' || steps.target.outputs.target == 'i' || steps.target.outputs.target == 'j' || steps.target.outputs.target == 'k'
         working-directory: work
         run: npm install --no-save @huggingface/transformers@3.8.1 >/tmp/step.log 2>&1 || (echo 'Embedding dependency installation failed.'; exit 1)
 
@@ -80,7 +81,7 @@ jobs:
           npx playwright install --with-deps chromium >>/tmp/step.log 2>&1 || (echo 'Browser installation failed.'; exit 1)
 
       - name: Materialize catalog data
-        if: steps.target.outputs.target == 'e' || steps.target.outputs.target == 'f' || steps.target.outputs.target == 'g' || steps.target.outputs.target == 'h' || steps.target.outputs.target == 'i' || steps.target.outputs.target == 'j'
+        if: steps.target.outputs.target == 'e' || steps.target.outputs.target == 'f' || steps.target.outputs.target == 'g' || steps.target.outputs.target == 'h' || steps.target.outputs.target == 'i' || steps.target.outputs.target == 'j' || steps.target.outputs.target == 'k'
         working-directory: work
         run: |
           if [ "${{ steps.target.outputs.target }}" = "e" ]; then
@@ -153,6 +154,14 @@ jobs:
           EMBED_BATCH: '64'
           EMBED_SCENES_PER_WORK: '6'
         run: node scripts/poc-nuance-embedding-search-v5.mjs
+
+      - name: Run job K
+        if: steps.target.outputs.target == 'k'
+        working-directory: work
+        env:
+          EMBED_BATCH: '64'
+          EMBED_SCENES_PER_WORK: '6'
+        run: node scripts/poc-nuance-embedding-search-v6.mjs
 
       - name: Push results (A)
         if: steps.target.outputs.target == 'a'
