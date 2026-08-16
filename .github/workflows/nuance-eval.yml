@@ -46,20 +46,19 @@ jobs:
 
       - name: Check evaluator syntax
         working-directory: work
-        run: node --check scripts/poc-nuance-embedding-search-v7.mjs
+        run: node --check scripts/poc-nuance-embedding-search-v8.mjs
 
       - name: Materialize otome catalog
         working-directory: work
         run: git lfs pull --include="data/catalog/full/details.json" >/tmp/step.log 2>&1 || (echo 'Catalog materialization failed.'; exit 1)
 
-      # Re-run marker: passive/active touch discrimination changed in the shared v6 engine.
-      - name: Run broader gold evaluation
+      - name: Run actor-aware concept evaluation
         working-directory: work
         env:
           EMBED_BATCH: '64'
           EMBED_SCENES_PER_WORK: '6'
-        run: node scripts/poc-nuance-embedding-search-v7.mjs
+        run: node scripts/poc-nuance-embedding-search-v8.mjs
 
       - name: Push evaluation result
         working-directory: work
-        run: bash scripts/ci/push.sh "analysis/nuance-search-v7-eval.json" >/tmp/step.log 2>&1 || (echo 'Push evaluation failed.'; exit 1)
+        run: bash scripts/ci/push.sh "analysis/nuance-search-v8-eval.json" >/tmp/step.log 2>&1 || (echo 'Push evaluation failed.'; exit 1)
