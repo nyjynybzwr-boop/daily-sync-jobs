@@ -80,6 +80,27 @@ jobs:
         working-directory: work
         run: bash scripts/ci/run-f.sh
 
+      - name: Audit rebuilt label-only search index
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const index = JSON.parse(fs.readFileSync('web/data/catalog/search-index.json', 'utf8'));
+          const workIndex = index.works.findIndex((row) => row?.product_id === 'RJ01690068');
+          if (workIndex < 0) throw new Error('RJ01690068 missing from rebuilt search index');
+          const work = index.works[workIndex];
+          if (!work.labels.includes('恋人')) throw new Error('rebuilt RJ01690068 must keep 恋人');
+          for (const bad of ['幼馴染', '先輩後輩', '再会']) {
+            if (work.labels.includes(bad)) throw new Error(`rebuilt RJ01690068 must not keep ${bad}`);
+          }
+          const sentinel = '\u2063';
+          const loverIds = index.postings[`${sentinel}恋人`] || [];
+          const childhoodIds = index.postings[`${sentinel}幼馴染`] || [];
+          if (!loverIds.includes(workIndex)) throw new Error('guided 恋人 posting must contain RJ01690068');
+          if (childhoodIds.includes(workIndex)) throw new Error('guided 幼馴染 posting must exclude RJ01690068');
+          console.log('guided label-only search audit OK:', { workIndex, labels: work.labels });
+          NODE
+
       - name: Push refreshed data
         working-directory: work
         run: bash scripts/ci/push.sh "web/data/catalog/summary.json web/data/catalog/search-index.json web/data/catalog/similar-works.json web/data/reports/market-insights.json web/data/reports/market-insights-compact.json"
