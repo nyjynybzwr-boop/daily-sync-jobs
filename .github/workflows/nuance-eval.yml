@@ -1,0 +1,55 @@
+name: Nuance search evaluation
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          if ! git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work >/tmp/step.log 2>&1; then
+            echo 'Source checkout failed.'
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci >/tmp/step.log 2>&1 || (echo 'Dependency installation failed.'; exit 1)
+
+      - name: Install embedding dependency
+        working-directory: work
+        run: npm install --no-save @huggingface/transformers@3.8.1 >/tmp/step.log 2>&1 || (echo 'Embedding dependency installation failed.'; exit 1)
+
+      - name: Materialize otome catalog
+        working-directory: work
+        run: git lfs pull --include="data/catalog/full/details.json" >/tmp/step.log 2>&1 || (echo 'Catalog materialization failed.'; exit 1)
+
+      - name: Run broader gold evaluation
+        working-directory: work
+        env:
+          EMBED_BATCH: '64'
+          EMBED_SCENES_PER_WORK: '6'
+        run: node scripts/poc-nuance-embedding-search-v7.mjs
+
+      - name: Push evaluation result
+        working-directory: work
+        run: bash scripts/ci/push.sh "analysis/nuance-search-v7-eval.json" >/tmp/step.log 2>&1 || (echo 'Push evaluation failed.'; exit 1)
