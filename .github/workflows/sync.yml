@@ -84,7 +84,9 @@ jobs:
         working-directory: work
         run: |
           if [ "${{ steps.target.outputs.target }}" = "e" ]; then
-            INCLUDE="data/catalog/full/details.json,data/catalog/bl/full/details.json"
+            INCLUDE="data/catalog/full/details.json,data/bl/catalog/full/details.json"
+          elif [ "${{ steps.target.outputs.target }}" = "g" ]; then
+            INCLUDE="data/bl/catalog/full/details.json"
           else
             INCLUDE="data/catalog/full/details.json"
           fi
@@ -125,7 +127,7 @@ jobs:
       - name: Run job G
         if: steps.target.outputs.target == 'g'
         working-directory: work
-        run: node scripts/poc-nuance-search.mjs "男も興奮して喘ぎながら自分のちんぽを触って、女の子を煽ってる" --market=otome --top=10 --expect=RJ01200426
+        run: bash scripts/ci/run-g.sh >/tmp/step.log 2>&1 || (echo 'Job G failed.'; exit 1)
 
       - name: Run job H
         if: steps.target.outputs.target == 'h'
@@ -181,3 +183,8 @@ jobs:
         if: steps.target.outputs.target == 'f'
         working-directory: work
         run: bash scripts/ci/push.sh "web/data/catalog/summary.json web/data/catalog/search-index.json web/data/catalog/similar-works.json" >/tmp/step.log 2>&1 || (echo 'Push F failed.'; exit 1)
+
+      - name: Push results (G)
+        if: steps.target.outputs.target == 'g'
+        working-directory: work
+        run: bash scripts/ci/push.sh "web/data/catalog/bl/summary.json web/data/catalog/bl/search-index.json web/data/catalog/bl/similar-works.json" >/tmp/step.log 2>&1 || (echo 'Push G failed.'; exit 1)
