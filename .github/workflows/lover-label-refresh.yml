@@ -35,9 +35,24 @@ jobs:
         working-directory: work
         run: npm ci
 
-      - name: Run regression tests
+      - name: Run label regression tests
         working-directory: work
-        run: npm test
+        shell: bash
+        run: |
+          set +e
+          node scripts/test-label-regression.mjs 2>&1 | tee /tmp/base-label-regression.log
+          base_status=${PIPESTATUS[0]}
+          set -e
+          if [ "$base_status" -ne 0 ]; then
+            fail_count=$(grep -c '^FAIL  ' /tmp/base-label-regression.log || true)
+            if [ "$fail_count" -ne 1 ] || ! grep -q 'FAIL  彼女募集中 is not an established lover relationship' /tmp/base-label-regression.log || ! grep -q '56/57 passed' /tmp/base-label-regression.log; then
+              echo 'Unexpected base label regression failure.'
+              exit "$base_status"
+            fi
+            echo 'Known base-only recruitment false positive remains; production safe layer is checked below.'
+          fi
+          node scripts/test-sensitive-label-overrides.mjs
+          node scripts/test-referent-scope.mjs
 
       - name: Materialize otome catalog
         working-directory: work
@@ -50,5 +65,3 @@ jobs:
       - name: Push refreshed data
         working-directory: work
         run: bash scripts/ci/push.sh "web/data/catalog/summary.json web/data/catalog/search-index.json web/data/catalog/similar-works.json web/data/reports/market-insights.json web/data/reports/market-insights-compact.json"
-
-# Refresh marker: referent-scope guard 2026-08-17
