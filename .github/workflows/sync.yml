@@ -16,6 +16,7 @@ on:
           - g
           - h
           - i
+          - j
         default: a
   schedule:
     - cron: '0 14 * * *'
@@ -31,7 +32,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Determine target
         id: target
@@ -67,7 +68,7 @@ jobs:
         run: npm ci >/tmp/step.log 2>&1 || (echo 'Dependency installation failed.'; exit 1)
 
       - name: Install embedding dependency
-        if: steps.target.outputs.target == 'h' || steps.target.outputs.target == 'i'
+        if: steps.target.outputs.target == 'h' || steps.target.outputs.target == 'i' || steps.target.outputs.target == 'j'
         working-directory: work
         run: npm install --no-save @huggingface/transformers@3.8.1 >/tmp/step.log 2>&1 || (echo 'Embedding dependency installation failed.'; exit 1)
 
@@ -79,7 +80,7 @@ jobs:
           npx playwright install --with-deps chromium >>/tmp/step.log 2>&1 || (echo 'Browser installation failed.'; exit 1)
 
       - name: Materialize catalog data
-        if: steps.target.outputs.target == 'e' || steps.target.outputs.target == 'f' || steps.target.outputs.target == 'g' || steps.target.outputs.target == 'h' || steps.target.outputs.target == 'i'
+        if: steps.target.outputs.target == 'e' || steps.target.outputs.target == 'f' || steps.target.outputs.target == 'g' || steps.target.outputs.target == 'h' || steps.target.outputs.target == 'i' || steps.target.outputs.target == 'j'
         working-directory: work
         run: |
           if [ "${{ steps.target.outputs.target }}" = "e" ]; then
@@ -142,6 +143,14 @@ jobs:
           EMBED_PRESELECT_PER_WORK: '7'
           EMBED_TEMPLATE_MIN_WORKS: '4'
         run: node scripts/poc-nuance-embedding-search-v4.mjs
+
+      - name: Run job J
+        if: steps.target.outputs.target == 'j'
+        working-directory: work
+        env:
+          EMBED_BATCH: '64'
+          EMBED_SCENES_PER_WORK: '6'
+        run: node scripts/poc-nuance-embedding-search-v5.mjs
 
       - name: Push results (A)
         if: steps.target.outputs.target == 'a'
