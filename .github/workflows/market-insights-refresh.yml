@@ -1,0 +1,56 @@
+name: Market insights refresh
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 00:00 JST. Shared concurrency queues behind the 23:00/23:30 JST ranking syncs if needed.
+    - cron: '0 15 * * *'
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          if ! git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work >/tmp/step.log 2>&1; then
+            echo 'Source checkout failed.'
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci >/tmp/step.log 2>&1 || (echo 'Dependency installation failed.'; exit 1)
+
+      - name: Materialize catalogs
+        working-directory: work
+        run: git lfs pull --include="data/catalog/full/details.json,data/bl/catalog/full/details.json" >/tmp/step.log 2>&1 || (echo 'Catalog materialization failed.'; exit 1)
+
+      - name: Rebuild otome insights
+        working-directory: work
+        run: bash scripts/ci/run-f.sh >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Otome rebuild failed.'; exit 1)
+
+      - name: Rebuild BL insights
+        working-directory: work
+        run: bash scripts/ci/run-g.sh >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'BL rebuild failed.'; exit 1)
+
+      - name: Push static outputs
+        working-directory: work
+        run: |
+          bash scripts/ci/push.sh "web/data/catalog/summary.json web/data/catalog/search-index.json web/data/catalog/similar-works.json web/data/reports/market-insights.json web/data/reports/market-insights-compact.json web/data/catalog/bl/summary.json web/data/catalog/bl/search-index.json web/data/catalog/bl/similar-works.json web/data/reports/bl/market-insights.json web/data/reports/bl/market-insights-compact.json" >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Push failed.'; exit 1)
