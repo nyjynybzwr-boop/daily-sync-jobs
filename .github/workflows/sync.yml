@@ -117,7 +117,7 @@ jobs:
       - name: Run job G
         if: steps.target.outputs.target == 'g'
         working-directory: work
-        run: node scripts/poc-nuance-search.mjs "男も興奮して喘ぎながら自分のちんぽを触って、女の子を煽ってる" --market=otome --top=10
+        run: node scripts/poc-nuance-search.mjs "男も興奮して喘ぎながら自分のちんぽを触って、女の子を煽ってる" --market=otome --top=10 --expect=RJ01200426
 
       - name: Push results (A)
         if: steps.target.outputs.target == 'a'
@@ -147,4 +147,4 @@ jobs:
       - name: Push results (F)
         if: steps.target.outputs.target == 'f'
         working-directory: work
-        run: bash scripts/ci/push.sh "web/data/catalog/summary.json web/data/catalog/search-index.json" >/tmp/step.log 2>&1 || (echo 'Push F failed.'; exit 1)
+        run: bash scripts/ci/push.sh "web/data/catalog/summary.json web/data/catalog/search-index.json web/data/catalog/similar-works.json" >/tmp/step.log 2>&1 || (echo 'Push F failed.'; exit 1)
