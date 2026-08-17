@@ -5,7 +5,7 @@ on:
     inputs:
       max_pages:
         description: 'Max listing pages to walk this run'
-        default: '1000'
+        default: '60'
       batch_size:
         description: 'Max product details to enrich this run'
         default: '100'
@@ -55,7 +55,7 @@ jobs:
       - name: Crawl BL manga through Tokyo relay
         working-directory: work
         env:
-          INPUT_MAX_PAGES: ${{ github.event.inputs.max_pages || '1000' }}
+          INPUT_MAX_PAGES: ${{ github.event.inputs.max_pages || '60' }}
           INPUT_BATCH_SIZE: ${{ github.event.inputs.batch_size || '100' }}
         run: |
           set -euo pipefail
@@ -79,7 +79,7 @@ jobs:
         working-directory: work
         env:
           GH_TOKEN: ${{ github.token }}
-          NEXT_MAX_PAGES: ${{ github.event.inputs.max_pages || '1000' }}
+          NEXT_MAX_PAGES: ${{ github.event.inputs.max_pages || '60' }}
           NEXT_BATCH_SIZE: ${{ github.event.inputs.batch_size || '100' }}
         run: |
           set -euo pipefail
