@@ -1,0 +1,58 @@
+name: Manga catalog public fallback
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_pages:
+        description: 'Max listing pages to walk this run'
+        default: '60'
+      batch_size:
+        description: 'Max product details to enrich this run'
+        default: '700'
+
+concurrency:
+  group: manga-catalog-public-fallback
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: |
+          npm ci
+          npm install --no-save devalue
+
+      - name: Materialize existing manga details
+        working-directory: work
+        run: git lfs pull --include="data/manga/catalog/full/details.json" || true
+
+      - name: Crawl manga catalog chunk
+        working-directory: work
+        env:
+          MAX_PAGES_PER_RUN: ${{ github.event.inputs.max_pages || '60' }}
+          BATCH_SIZE: ${{ github.event.inputs.batch_size || '700' }}
+          DETAIL_DELAY_MS: '800'
+        run: bash scripts/ci/run-h.sh
+
+      - name: Push manga crawl progress to private main
+        working-directory: work
+        run: bash scripts/ci/push.sh "data/manga/catalog/index data/manga/catalog/full/details.json"
