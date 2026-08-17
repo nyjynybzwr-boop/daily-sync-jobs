@@ -14,17 +14,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Wait for Vercel deployment and inspect probe
+      - name: Inspect deployed Tokyo probe
         run: |
           set -e
           URL='https://dlsite-trend-radar.vercel.app/api/manga-region-probe'
-          for i in $(seq 1 12); do
-            echo "probe attempt $i"
-            CODE=$(curl -sS -o /tmp/probe.json -w '%{http_code}' "$URL" || true)
-            echo "http=$CODE"
-            cat /tmp/probe.json || true
-            echo
-            if [ "$CODE" = "200" ] && grep -q '"region"' /tmp/probe.json; then exit 0; fi
-            sleep 10
-          done
-          exit 1
+          CODE=$(curl -sS -o /tmp/probe.json -w '%{http_code}' "$URL")
+          echo "http=$CODE"
+          cat /tmp/probe.json
+          echo
+          test "$CODE" = "200"
+          grep -q '"region"' /tmp/probe.json
