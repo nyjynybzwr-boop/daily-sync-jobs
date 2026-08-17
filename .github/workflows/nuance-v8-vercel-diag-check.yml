@@ -15,24 +15,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Read production diagnostic endpoint
+      - name: Wait for healthy production diagnostic endpoint
         run: |
           node --input-type=module <<'NODE'
           const url='https://dlsite-trend-radar.vercel.app/api/nuance-diag';
           for(let i=1;i<=36;i++){
             try{
-              const r=await fetch(url,{cache:'no-store',signal:AbortSignal.timeout(30000)});
+              const r=await fetch(`${url}?t=${Date.now()}`,{cache:'no-store',signal:AbortSignal.timeout(30000)});
               const text=await r.text();
               console.log(`attempt ${i}: HTTP ${r.status}`);
               if(r.ok && text.trim().startsWith('{')){
-                console.log(text);
                 const p=JSON.parse(text);
-                if(!Array.isArray(p.results))throw new Error('diagnostic payload malformed');
-                process.exit(0);
-              }
-              console.log(text.slice(0,300));
+                console.log(text);
+                const byLabel=new Map((p.results||[]).map(x=>[x.label,x]));
+                if(byLabel.get('files')?.ok && byLabel.get('onnxruntime-node')?.ok && byLabel.get('sharp-import')?.ok && byLabel.get('transformers-import')?.ok){
+                  console.log('Vercel native runtime healthy');
+                  process.exit(0);
+                }
+                console.log('runtime not healthy yet');
+              }else console.log(text.slice(0,300));
             }catch(e){console.log(`attempt ${i} error: ${e.message}`);}
             await new Promise(r=>setTimeout(r,10000));
           }
-          throw new Error('diagnostic endpoint never became available');
+          throw new Error('Vercel native runtime did not become healthy');
           NODE
