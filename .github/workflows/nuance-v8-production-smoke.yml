@@ -13,7 +13,7 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout live private main
         env:
@@ -42,6 +42,18 @@ jobs:
       - name: Run web syntax checker
         working-directory: work
         run: node scripts/check-web-syntax.mjs
+      - name: Reproduce exact Vercel static build and verify nuance UI output
+        working-directory: work
+        run: |
+          node scripts/check-web-syntax.mjs
+          node scripts/build-dashboard-semantic-v53.mjs
+          node scripts/apply-melosignal-brand.mjs
+          node scripts/inject-page-jump.mjs
+          node scripts/check-web-syntax.mjs --site
+          test -f site/all-nuance-search.js
+          grep -q "all-nuance-search.js" site/all.js
+          grep -q "あいまい検索" site/all-nuance-search.js
+          echo 'Vercel static build contains nuance-search UI.'
       - name: Materialize production indices
         working-directory: work
         run: git lfs pull --include="api/data/nuance-v8-meta.json,api/data/nuance-v8-vectors.bin,api/data/nuance-v8-bl-meta.json,api/data/nuance-v8-bl-vectors.bin"
