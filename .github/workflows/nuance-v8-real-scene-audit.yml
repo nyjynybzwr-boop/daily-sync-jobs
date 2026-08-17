@@ -1,0 +1,55 @@
+name: Nuance v8 real scene audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nuance-v8-real-scene-audit.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Materialize otome catalog
+        working-directory: work
+        run: git lfs pull --include="data/catalog/full/details.json"
+      - name: Inspect real selected scenes
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import {candidateFragments,selectDiverse,sceneProfile} from './scripts/lib/nuance-search-v8-core.mjs';
+          const raw=JSON.parse(fs.readFileSync('data/catalog/full/details.json','utf8'));
+          const byId=new Map(Object.values(raw).filter(Boolean).map(x=>[String(x.product_id||x.id||''),x]));
+          const ids=['RJ01066791','RJ01200426','RJ01093983','RJ01226462'];
+          for(const id of ids){
+            const item=byId.get(id); if(!item)throw new Error(`missing ${id}`);
+            const scenes=selectDiverse(candidateFragments(item),6);
+            console.log(`\n=== ${id} selected=${scenes.length} ===`);
+            scenes.forEach((s,i)=>{
+              const p=sceneProfile(s.embed_text||s.text,item.labels||[]);
+              console.log(`#${i+1} ${s.source} profile=${JSON.stringify(p)} text=${String(s.embed_text||s.text).replace(/\s+/g,' ').slice(0,260)}`);
+            });
+            if(id==='RJ01066791'){
+              const masturbation=scenes.filter(s=>/オナニ|自慰|マスターベーション|シコ/.test(String(s.embed_text||s.text)));
+              if(!masturbation.length)throw new Error('RJ01066791 selected scenes lost masturbation evidence');
+              for(const s of masturbation){
+                const p=sceneProfile(s.embed_text||s.text,item.labels||[]);
+                if(p.femaleMasturbationOnly)throw new Error(`RJ01066791 still female-only: ${s.embed_text}`);
+                if(!p.selfTouch)throw new Error(`RJ01066791 male masturbation not selfTouch: ${s.embed_text}`);
+              }
+              console.log(`RJ01066791 real-scene actor gate OK: masturbation scenes=${masturbation.length}, femaleOnly=0, selfTouch=${masturbation.length}`);
+            }
+          }
+          NODE
