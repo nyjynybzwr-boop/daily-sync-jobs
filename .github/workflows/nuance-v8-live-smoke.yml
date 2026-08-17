@@ -1,0 +1,70 @@
+name: Nuance v8 live candidate smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nuance-v8-live-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private live candidate
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch agent/nuance-v8-live-final --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install and audit
+        working-directory: work
+        run: |
+          npm ci
+          npm audit --omit=dev
+      - name: Syntax and regressions
+        working-directory: work
+        run: |
+          node --check api/nuance-search.js
+          node --check web/all-nuance-search.js
+          node --check web/all.js
+          npm test
+      - name: Materialize production nuance indexes
+        working-directory: work
+        run: git lfs pull --include="api/data/nuance-v8-vectors.bin,api/data/nuance-v8-bl-vectors.bin"
+      - name: End-to-end API calls for otome and BL
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import handler from './api/nuance-search.js';
+          async function call(q,market){
+            let code=200,headers={},payload;
+            const res={
+              status(n){code=n;return this;},
+              setHeader(k,v){headers[k]=v;return this;},
+              json(v){payload=v;return v;},
+            };
+            const started=Date.now();
+            await handler({method:'GET',query:{q,market}},res);
+            const ms=Date.now()-started;
+            if(code!==200)throw new Error(`${market} HTTP ${code}: ${JSON.stringify(payload)}`);
+            if(!Array.isArray(payload?.results)||payload.results.length!==30)throw new Error(`${market} result count=${payload?.results?.length}`);
+            console.log(`${market} e2e ok: works=${payload.total_works} results=${payload.results.length} ms=${ms} top=${payload.results[0]?.product_id}`);
+            return payload;
+          }
+          const otome=await call('男が目の前でオナニーを見せつけて、だんだん我慢できなくなって襲ってくる','otome');
+          if(otome.total_works<13000)throw new Error(`otome works too low: ${otome.total_works}`);
+          const gold=otome.results.find(x=>x.product_id==='RJ01066791');
+          if(!gold||gold.rank>20)throw new Error(`otome gold missing/regressed: ${gold?.rank}`);
+          console.log(`otome gold RJ01066791 #${gold.rank}`);
+          const bl=await call('相手に触られて男が余裕をなくして喘ぐ','bl');
+          if(bl.total_works<2000)throw new Error(`BL works too low: ${bl.total_works}`);
+          NODE
