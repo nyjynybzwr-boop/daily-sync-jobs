@@ -44,7 +44,7 @@ jobs:
         working-directory: work
         run: git lfs pull --include="data/manga/catalog/full/details.json" || true
 
-      - name: Crawl first 60 manga listing pages and first detail batch
+      - name: Crawl next 60 manga listing pages and first detail batch
         working-directory: work
         env:
           MAX_PAGES_PER_RUN: '60'
@@ -70,15 +70,29 @@ jobs:
             node scripts/collect-catalog-details-batch.mjs
           done
 
-      - name: Verify manga catalog state
+      - name: Verify and audit manga catalog state
         working-directory: work
         run: |
-          ENRICHED=$(node -e "const fs=require('fs'); const p='data/manga/catalog/full/details.json'; console.log(fs.existsSync(p)?Object.keys(JSON.parse(fs.readFileSync(p))).length:0)")
-          TOTAL=$(node -e "const fs=require('fs'); const p='data/manga/catalog/index/ids.json'; console.log(fs.existsSync(p)?Object.keys(JSON.parse(fs.readFileSync(p))).length:0)")
-          echo "manga catalog: enriched=$ENRICHED total_indexed=$TOTAL"
-          test "$TOTAL" -gt 0
-          test "$ENRICHED" -ge "$TOTAL"
+          node - <<'NODE'
+          const fs = require('fs');
+          const ids = JSON.parse(fs.readFileSync('data/manga/catalog/index/ids.json'));
+          const details = JSON.parse(fs.readFileSync('data/manga/catalog/full/details.json'));
+          const checkpoint = JSON.parse(fs.readFileSync('data/manga/catalog/index/checkpoint.json'));
+          const rows = Object.values(details);
+          const stats = {
+            indexed: Object.keys(ids).length,
+            processed: rows.length,
+            manga: rows.filter(x => !x.excluded_work_type && x.work_type_value === 'MNG').length,
+            excluded_non_mng: rows.filter(x => x.excluded_work_type).length,
+            detail_errors: rows.filter(x => x.detail_error).length,
+            last_page: checkpoint.last_page,
+            done: checkpoint.done,
+            stopped_reason: checkpoint.stopped_reason,
+          };
+          console.log('MANGA_AUDIT ' + JSON.stringify(stats));
+          if (stats.indexed <= 0 || stats.processed < stats.indexed || stats.detail_errors !== 0) process.exit(1);
+          NODE
 
       - name: Push manga catalog to private main
         working-directory: work
-        run: bash scripts/ci/push.sh "data/manga/catalog/index/ids.json data/manga/catalog/full/details.json"
+        run: bash scripts/ci/push.sh "data/manga/catalog/index data/manga/catalog/full/details.json"
