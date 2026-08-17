@@ -1,0 +1,63 @@
+name: Nuance v8 runtime package
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nuance-v8-runtime-package.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Pin production runtime and regression test
+        working-directory: work
+        run: |
+          npm ci
+          npm pkg set overrides.sharp=0.35.0
+          npm install --save @huggingface/transformers@3.8.1
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const path='package.json';
+          const p=JSON.parse(fs.readFileSync(path,'utf8'));
+          const nuance='node scripts/test-nuance-v8-core.mjs';
+          if(!String(p.scripts?.test||'').includes(nuance))p.scripts.test=`${p.scripts.test} && ${nuance}`;
+          fs.writeFileSync(path,JSON.stringify(p,null,2)+'\n');
+          NODE
+          npm install --package-lock-only
+
+      - name: Validate safe runtime
+        working-directory: work
+        run: |
+          npm ci
+          npm audit --omit=dev
+          npm test
+          node --input-type=module <<'NODE'
+          import { pipeline } from '@huggingface/transformers';
+          const extractor=await pipeline('feature-extraction','Xenova/multilingual-e5-small',{dtype:'q8'});
+          const out=await extractor('query: 男が自分で自慰を見せつける',{pooling:'mean',normalize:true});
+          if(out.dims.at(-1)!==384)throw new Error(`unexpected embedding dims: ${out.dims.at(-1)}`);
+          console.log('nuance v8 safe runtime smoke: 384 dims');
+          await extractor.dispose?.();
+          NODE
+
+      - name: Push safe package files
+        working-directory: work
+        run: bash scripts/ci/push.sh "package.json package-lock.json"
