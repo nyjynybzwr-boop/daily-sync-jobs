@@ -66,7 +66,7 @@ jobs:
           page.on('pageerror',err=>console.log('BROWSER_PAGE_ERROR',err.message));
 
           async function waitHome(market){
-            await page.waitForSelector('#marketSelector [data-market].active');
+            await page.waitForSelector('#marketSelector [data-market].active',{state:'attached'});
             await page.waitForFunction((m)=>document.body.dataset.market===m,market);
             const active=await page.locator('#marketSelector [data-market].active').getAttribute('data-market');
             assert.equal(active,market,'active market button must match body market');
@@ -74,13 +74,19 @@ jobs:
             assert.match(hero, market==='bl'?/BL/:/乙女/,'hero market label must match');
           }
 
+          async function chooseMarket(market){
+            const menu=page.locator('.scope-menu');
+            if(!(await menu.evaluate(el=>el.open))) await page.locator('.scope-menu > summary').click();
+            await page.locator(`#marketSelector [data-market="${market}"]`).click();
+            await waitHome(market);
+          }
+
           await page.goto(`${base}/index.html?market=otome`,{waitUntil:'networkidle'});
           await page.evaluate(()=>localStorage.setItem('trendRadarMarket','bl'));
           await page.reload({waitUntil:'networkidle'});
           await waitHome('otome');
 
-          await page.locator('#marketSelector [data-market="bl"]').click();
-          await waitHome('bl');
+          await chooseMarket('bl');
           assert.equal(new URL(page.url()).searchParams.get('market'),'bl');
           assert.equal(await page.evaluate(()=>localStorage.getItem('trendRadarMarket')),'bl');
 
@@ -97,8 +103,7 @@ jobs:
           await waitHome('bl');
           assert.equal(new URL(page.url()).searchParams.get('market'),'bl');
 
-          await page.locator('#marketSelector [data-market="otome"]').click();
-          await waitHome('otome');
+          await chooseMarket('otome');
           assert.equal(new URL(page.url()).searchParams.get('market'),'otome');
           const otomeAll=await page.locator('a[href*="all.html"]').first().getAttribute('href');
           assert.equal(new URL(otomeAll,page.url()).searchParams.get('market'),'otome');
