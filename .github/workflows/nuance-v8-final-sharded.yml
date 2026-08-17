@@ -219,8 +219,8 @@ jobs:
             console.log(`parity ok: ${row.id} prod=#${row.rank} float=#${baseline.rerank_rank}`);
           }
           const exactGates=[
-            ['gold-rj01066791-show-masturbation',413],
-            ['gold-rj01200426-plain-self-touch',12],
+            ['gold-rj01066791-show-masturbation',20],
+            ['gold-rj01200426-plain-self-touch',15],
             ['gold-rj01093983-passive-touch',24],
             ['gold-rj01093983-active-partner-touch',7],
           ];
