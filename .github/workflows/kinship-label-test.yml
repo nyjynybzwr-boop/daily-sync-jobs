@@ -1,0 +1,82 @@
+name: Kinship label test
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/kinship-label-test.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: kinship-label-test
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout fix branch
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --branch agent/fix-kinship-official-tag --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Run full regression suite
+        working-directory: work
+        run: npm test
+
+      - name: Materialize otome catalog
+        working-directory: work
+        run: git lfs pull --include="data/catalog/full/details.json"
+
+      - name: Verify all exact kinship tags receive label
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { detectLabels, ensureTokenizer } from './scripts/lib/analysis-core-safe.mjs';
+          await ensureTokenizer();
+
+          const payload = JSON.parse(fs.readFileSync('data/catalog/full/details.json', 'utf8'));
+          const rows = Array.isArray(payload) ? payload : Object.values(payload);
+          const tagged = rows.filter((item) => Array.isArray(item?.tags) && item.tags.some((tag) => String(tag || '').trim() === '近親もの'));
+          if (!tagged.length) throw new Error('No 近親もの-tagged works found in materialized catalog');
+
+          const failures = [];
+          for (const item of tagged) {
+            const labels = detectLabels(item).map((row) => row.label);
+            if (!labels.includes('近親もの')) failures.push(item.product_id || item.title || '(unknown)');
+          }
+          console.log(`近親もの exact-tag coverage: ${tagged.length - failures.length}/${tagged.length}`);
+          if (failures.length) throw new Error(`近親もの missing on ${failures.length} works: ${failures.slice(0, 20).join(', ')}`);
+
+          const control = {
+            product_id: 'SYNTHETIC-RELATIONSHIP-TAG-CONTROL',
+            title: 'テスト作品',
+            description: '二人が出会う物語。',
+            description_long: '二人が出会う物語。',
+            tags: ['恋人同士', '夫婦', '同棲'],
+            introductions: [],
+          };
+          const controlLabels = detectLabels(control).map((row) => row.label);
+          for (const bad of ['恋人', '夫婦', '同棲']) {
+            if (controlLabels.includes(bad)) throw new Error(`Generic marketplace relationship tag leaked into starting-state label: ${bad}`);
+          }
+          console.log('Generic relationship-tag skepticism preserved.');
+          NODE
