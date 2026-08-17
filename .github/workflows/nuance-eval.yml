@@ -1,5 +1,6 @@
 name: Nuance search evaluation
 
+# Re-run marker: actor-aware v8 after the previous queued run was cancelled.
 on:
   workflow_dispatch:
   push:
