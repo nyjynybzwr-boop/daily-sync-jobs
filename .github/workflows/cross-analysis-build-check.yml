@@ -1,0 +1,63 @@
+name: Cross analysis build check
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/cross-analysis-build-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Build site
+        working-directory: work
+        run: npm run build:site
+
+      - name: Verify cross analysis output
+        working-directory: work
+        run: |
+          set -euo pipefail
+          test -f site/cross.html
+          test -f site/cross.js
+          test -f site/cross.css
+          test -f site/data/cross/otome.json
+          node - <<'NODE'
+          const fs=require('fs');
+          const x=JSON.parse(fs.readFileSync('site/data/cross/otome.json','utf8'));
+          if(!Number.isFinite(x.market_structure?.spearman)) throw new Error('missing market structure Spearman');
+          if(!(x.labels?.length>0)) throw new Error('missing cross labels');
+          console.log(JSON.stringify({
+            common_labels:x.market_structure.common_labels,
+            analyzed_labels:x.market_structure.analyzed_labels,
+            spearman:x.market_structure.spearman,
+            share_pearson:x.market_structure.share_pearson,
+            years:x.long_term.years,
+            realtime_days:x.realtime.days_available,
+            same_day_ready:x.realtime.same_day_ready,
+            lag_ready:x.realtime.lag_ready,
+            top_resonance:(x.market_structure.groups.resonance||[]).slice(0,5).map(k=>x.labels.find(r=>r.key===k)?.label),
+            top_comic:(x.market_structure.groups.comic_dominant||[]).slice(0,5).map(k=>x.labels.find(r=>r.key===k)?.label),
+            top_audio:(x.market_structure.groups.audio_dominant||[]).slice(0,5).map(k=>x.labels.find(r=>r.key===k)?.label)
+          },null,2));
+          NODE
