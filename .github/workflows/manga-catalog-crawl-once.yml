@@ -16,7 +16,7 @@ permissions:
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 300
     steps:
       - name: Checkout private source
         env:
@@ -24,10 +24,7 @@ jobs:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
           GIT_LFS_SKIP_SMUDGE: '1'
         run: |
-          if ! git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work; then
-            echo 'Source checkout failed.'
-            exit 1
-          fi
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -40,37 +37,60 @@ jobs:
           npm ci
           npm install --no-save devalue
 
-      - name: Materialize existing manga catalog if present
+      - name: Materialize existing manga catalog
         working-directory: work
-        run: git lfs pull --include="data/manga/catalog/full/details.json" || true
+        run: git lfs pull --include="data/manga/catalog/full/details.json"
 
-      - name: Crawl next 60 manga listing pages and first detail batch
+      - name: Continue manga catalog until end
         working-directory: work
         env:
           MAX_PAGES_PER_RUN: '60'
           BATCH_SIZE: '700'
           DETAIL_DELAY_MS: '800'
-        run: bash scripts/ci/run-h.sh
-
-      - name: Finish detail backlog from this index crawl
-        working-directory: work
-        env:
           DATA_ROOT: data/manga/catalog
           WORK_TYPE_FILTER: MNG
-          BATCH_SIZE: '700'
-          DETAIL_DELAY_MS: '800'
         run: |
-          for i in $(seq 1 12); do
-            ENRICHED=$(node -e "const fs=require('fs'); const p='data/manga/catalog/full/details.json'; console.log(fs.existsSync(p)?Object.keys(JSON.parse(fs.readFileSync(p))).length:0)")
-            TOTAL=$(node -e "const fs=require('fs'); const p='data/manga/catalog/index/ids.json'; console.log(fs.existsSync(p)?Object.keys(JSON.parse(fs.readFileSync(p))).length:0)")
-            echo "before batch $i: enriched=$ENRICHED total=$TOTAL"
-            if [ "$ENRICHED" -ge "$TOTAL" ]; then
+          set -e
+          for wave in $(seq 1 4); do
+            echo "=== manga crawl wave $wave ==="
+            bash scripts/ci/run-h.sh
+
+            while true; do
+              ENRICHED=$(node -e "const fs=require('fs'); console.log(Object.keys(JSON.parse(fs.readFileSync('data/manga/catalog/full/details.json'))).length)")
+              TOTAL=$(node -e "const fs=require('fs'); console.log(Object.keys(JSON.parse(fs.readFileSync('data/manga/catalog/index/ids.json'))).length)")
+              echo "wave $wave detail state: enriched=$ENRICHED indexed=$TOTAL"
+              if [ "$ENRICHED" -ge "$TOTAL" ]; then break; fi
+              node scripts/collect-catalog-details-batch.mjs
+            done
+
+            node - <<'NODE'
+          const fs = require('fs');
+          const ids = JSON.parse(fs.readFileSync('data/manga/catalog/index/ids.json'));
+          const details = JSON.parse(fs.readFileSync('data/manga/catalog/full/details.json'));
+          const checkpoint = JSON.parse(fs.readFileSync('data/manga/catalog/index/checkpoint.json'));
+          const rows = Object.values(details);
+          console.log('MANGA_AUDIT ' + JSON.stringify({
+            indexed: Object.keys(ids).length,
+            processed: rows.length,
+            manga: rows.filter(x => !x.excluded_work_type && x.work_type_value === 'MNG').length,
+            excluded_non_mng: rows.filter(x => x.excluded_work_type).length,
+            detail_errors: rows.filter(x => x.detail_error).length,
+            last_page: checkpoint.last_page,
+            done: checkpoint.done,
+            stopped_reason: checkpoint.stopped_reason,
+          }));
+          NODE
+
+            bash scripts/ci/push.sh "data/manga/catalog/index data/manga/catalog/full/details.json"
+
+            DONE=$(node -e "const fs=require('fs'); console.log(JSON.parse(fs.readFileSync('data/manga/catalog/index/checkpoint.json')).done ? 'true' : 'false')")
+            if [ "$DONE" = "true" ]; then
+              echo "Manga listing fully walked."
               break
             fi
-            node scripts/collect-catalog-details-batch.mjs
           done
 
-      - name: Verify and audit manga catalog state
+      - name: Final manga catalog audit
         working-directory: work
         run: |
           node - <<'NODE'
@@ -89,10 +109,6 @@ jobs:
             done: checkpoint.done,
             stopped_reason: checkpoint.stopped_reason,
           };
-          console.log('MANGA_AUDIT ' + JSON.stringify(stats));
-          if (stats.indexed <= 0 || stats.processed < stats.indexed || stats.detail_errors !== 0) process.exit(1);
+          console.log('FINAL_MANGA_AUDIT ' + JSON.stringify(stats));
+          if (!stats.done || stats.processed < stats.indexed || stats.detail_errors !== 0) process.exit(1);
           NODE
-
-      - name: Push manga catalog to private main
-        working-directory: work
-        run: bash scripts/ci/push.sh "data/manga/catalog/index data/manga/catalog/full/details.json"
