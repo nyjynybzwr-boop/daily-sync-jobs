@@ -223,6 +223,8 @@ jobs:
           cp analysis/nuance-search-v8-production-eval.json /tmp/nuance/analysis/
           git fetch origin main
           git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+          git reset --hard HEAD
+          git clean -fd
           git checkout --quiet -B main origin/main
           cp /tmp/nuance/api/data/* api/data/
           cp /tmp/nuance/analysis/* analysis/
