@@ -56,6 +56,7 @@ jobs:
           const all=[...(x.directions?.audio_to_comic||[]),...(x.directions?.comic_to_audio||[])];
           if(all.some(r=>!['high','medium'].includes(r.confidence))) throw new Error('unpublished confidence band leaked');
           if(all.some(r=>!(r.event_total>=6))) throw new Error('weak event count leaked');
+          if(all.some(r=>r.confidence==='high' && Math.min(r.audio_works||0,r.comic_works||0)<50)) throw new Error('high confidence lacks sample support');
           console.log(JSON.stringify({period:x.period,coverage:x.coverage,status_counts:x.status_counts,next:{audio_to_comic:x.next_wave.audio_to_comic.map(r=>r.label),comic_to_audio:x.next_wave.comic_to_audio.map(r=>r.label)}},null,2));
           NODE
 
