@@ -1,4 +1,4 @@
-name: Inspect manga listing scope once
+name: Compare manga catalog routes once
 
 on:
   push:
@@ -17,60 +17,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Inspect live DLsite manga listing scope
+      - name: Compare DLsite girls manga routes
         run: |
           npm install --no-save cheerio
           node --input-type=module <<'NODE'
           import * as cheerio from 'cheerio';
-          const base = 'https://www.dlsite.com/girls-touch/works/type/=/work_type_category/comic';
-          const variants = [
-            { name:'iphone', ua:'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1' },
-            { name:'desktop', ua:'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36' },
-            { name:'iphone_adultchecked', ua:'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1', cookie:'adultchecked=1; over18=1' },
+          const UA='Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+          const bases=[
+            ['girls-touch','https://www.dlsite.com/girls-touch/works/type/=/work_type_category/comic'],
+            ['girls','https://www.dlsite.com/girls/works/type/=/work_type_category/comic'],
+            ['girls-pro-touch','https://www.dlsite.com/girls-pro-touch/works/type/=/work_type_category/comic'],
           ];
-          const idOf = (href='') => (href.match(/product_id\/(RJ\d+|VJ\d+|BJ\d+|AJ\d+)/i)?.[1] || '').toUpperCase();
-          function mainIds($) {
-            const out=[];
-            $('ul.n_work_list.type_grid.type_horizontal').not('.type_grid_min').first().find('a[href*="/work/=/product_id/"]').each((_,a)=>{ const id=idOf($(a).attr('href')); if(id&&!out.includes(id)) out.push(id); });
-            return out;
-          }
-          for (const v of variants) {
-            const headers={
-              'User-Agent':v.ua,
-              'Accept-Language':'ja-JP,ja;q=0.9',
-              'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            };
-            if(v.cookie) headers.Cookie=v.cookie;
-            const res=await fetch(base+'/page/1',{headers,redirect:'follow'});
-            const html=await res.text();
-            const $=cheerio.load(html);
-            const ids=mainIds($);
-            const pageText=$('body').text().replace(/\s+/g,' ').trim();
-            const countContexts=[];
-            for(const re of [/\d[\d,]*\s*件中\s*\d[\d,]*\s*[-−ー]\s*\d[\d,]*\s*件目/g,/\d[\d,]*\s*件/g]) {
-              for(const m of pageText.matchAll(re)) {
-                countContexts.push(pageText.slice(Math.max(0,m.index-100),Math.min(pageText.length,m.index+m[0].length+100)));
-                if(countContexts.length>=20) break;
-              }
-              if(countContexts.length>=20) break;
-            }
-            const main=$('ul.n_work_list.type_grid.type_horizontal').not('.type_grid_min').first();
-            const ancestors=[];
-            let p=main;
-            for(let d=0;d<7&&p.length;d++,p=p.parent()) ancestors.push({tag:p.get(0)?.tagName||'',id:p.attr('id')||'',class:p.attr('class')||''});
-            const form=main.closest('form');
-            const formInfo=form.length?{
-              action:form.attr('action')||'',method:form.attr('method')||'',
-              inputs:form.find('input,select').toArray().slice(0,100).map(el=>({tag:el.tagName,name:$(el).attr('name')||'',value:$(el).attr('value')||'',type:$(el).attr('type')||'',selected:$(el).is(':selected'),text:$(el).text().trim()})).filter(x=>x.name||x.value)
-            }:null;
-            const paging=$('a[href*="/page/"]').toArray().map(a=>({text:$(a).text().replace(/\s+/g,' ').trim(),href:$(a).attr('href')||''}));
-            const categoryLinks=$('a').toArray().map(a=>({text:$(a).text().replace(/\s+/g,' ').trim(),href:$(a).attr('href')||''})).filter(x=>/乙女向け|TL|マンガ|ノベル/.test(x.text)).slice(0,80);
-            const selectedControls=$('option:selected,input:checked').toArray().map(el=>({tag:el.tagName,name:$(el).attr('name')||'',value:$(el).attr('value')||'',text:$(el).text().replace(/\s+/g,' ').trim()}));
-            console.log('SCOPE_VARIANT '+JSON.stringify({
-              name:v.name,status:res.status,final_url:res.url,title:$('title').text().trim(),
-              canonical:$('link[rel="canonical"]').attr('href')||'',og_url:$('meta[property="og:url"]').attr('content')||'',
-              main_count:ids.length,first_ids:ids.slice(0,5),set_cookie:res.headers.get('set-cookie')||'',
-              count_contexts:countContexts,ancestors,form:formInfo,paging:paging.slice(0,30),category_links:categoryLinks,selected_controls:selectedControls.slice(0,50)
-            }));
+          const pages=[1,240,241,259,260];
+          const idOf=(h='')=>(h.match(/product_id\/(RJ\d+|VJ\d+|BJ\d+|AJ\d+)/i)?.[1]||'').toUpperCase();
+          for(const [name,base] of bases) for(const page of pages) {
+            const res=await fetch(`${base}/page/${page}`,{headers:{'User-Agent':UA,'Accept-Language':'ja-JP,ja;q=0.9'},redirect:'follow'});
+            const html=await res.text(); const $=cheerio.load(html);
+            const ids=[];
+            $('ul.n_work_list.type_grid.type_horizontal').not('.type_grid_min').first().find('a[href*="/work/=/product_id/"]').each((_,a)=>{const id=idOf($(a).attr('href'));if(id&&!ids.includes(id))ids.push(id)});
+            const text=$('body').text().replace(/\s+/g,' ').trim();
+            const count=text.match(/([\d,]+)\s*件中\s*([\d,]+)\s*[-−ー]\s*([\d,]+)\s*件目/)?.[0]||'';
+            console.log('ROUTE_CHECK '+JSON.stringify({name,page,status:res.status,final_url:res.url,title:$('title').text().trim(),count_text:count,main_count:ids.length,first:ids.slice(0,3),canonical:$('link[rel="canonical"]').attr('href')||''}));
           }
           NODE
