@@ -1,0 +1,36 @@
+name: Visual production smoke
+
+on:
+  push:
+    paths:
+      - '.github/workflows/visual-production-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Check production visual guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://dlsite-trend-radar.pages.dev'
+          for i in $(seq 1 30); do
+            html="$(curl -LfsS --retry 2 --retry-delay 1 "$base/all.html" || true)"
+            css="$(curl -LfsS --retry 2 --retry-delay 1 "$base/visual-guard.css?v=20260818-0526" || true)"
+            if printf '%s' "$html" | grep -Fq 'visual-guard.css?v=20260818-0526' \
+              && printf '%s' "$css" | grep -Fq -- '--surface-line' \
+              && printf '%s' "$css" | grep -Fq '#allScopeToggle' \
+              && printf '%s' "$css" | grep -Fq '.catalog-table .catalog-table-row'; then
+              echo 'Production visual guard is live.'
+              exit 0
+            fi
+            echo "Waiting for Pages deploy: attempt $i/30"
+            sleep 10
+          done
+          echo 'Production visual guard did not appear in time.' >&2
+          exit 1
