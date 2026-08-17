@@ -5,23 +5,46 @@ on:
     paths:
       - '.github/workflows/cross-production-smoke.yml'
   workflow_dispatch:
+  workflow_run:
+    workflows:
+      - 'Cross market production build'
+    types:
+      - completed
 
 permissions:
   contents: read
 
 jobs:
   smoke:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - name: Check production cross page
         shell: bash
         run: |
           set -euo pipefail
           base='https://dlsite-trend-radar.pages.dev'
-          html="$(curl -LfsS --retry 3 --retry-delay 2 "$base/cross.html")"
-          printf '%s' "$html" | grep -Fq 'どちらが先に動く？'
-          printf '%s' "$html" | grep -Fq '次に波及しそうなもの'
-          printf '%s' "$html" | grep -Fq 'cross-leadlag-ui.js'
-          json="$(curl -LfsS --retry 3 --retry-delay 2 "$base/data/cross/otome.json")"
-          printf '%s' "$json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const x=JSON.parse(s); if(!x.lead_lag?.available) throw new Error('lead_lag unavailable'); if((x.lead_lag.coverage?.high_confidence||0)<1) throw new Error('no high confidence signals'); console.log(JSON.stringify({generated_at:x.lead_lag.generated_at,coverage:x.lead_lag.coverage,next:x.lead_lag.next_wave},null,2));})"
+
+          ok=0
+          for attempt in $(seq 1 24); do
+            echo "production check attempt ${attempt}/24"
+            if html="$(curl -LfsS --max-time 20 "$base/cross.html" 2>/tmp/cross-html.err)" \
+              && printf '%s' "$html" | grep -Fq 'どちらが先に動く？' \
+              && printf '%s' "$html" | grep -Fq '次に波及しそうなもの' \
+              && printf '%s' "$html" | grep -Fq 'cross-leadlag-ui.js' \
+              && json="$(curl -LfsS --max-time 20 "$base/data/cross/otome.json" 2>/tmp/cross-json.err)" \
+              && printf '%s' "$json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const x=JSON.parse(s); if(!x.lead_lag?.available) process.exit(2); if((x.lead_lag.coverage?.high_confidence||0)<1) process.exit(3); console.log(JSON.stringify({generated_at:x.lead_lag.generated_at,coverage:x.lead_lag.coverage,next:x.lead_lag.next_wave},null,2));})"
+            then
+              ok=1
+              break
+            fi
+            sleep 20
+          done
+
+          if [[ "$ok" != 1 ]]; then
+            echo 'Production cross page did not become healthy within the retry window.' >&2
+            cat /tmp/cross-html.err 2>/dev/null || true
+            cat /tmp/cross-json.err 2>/dev/null || true
+            exit 1
+          fi
