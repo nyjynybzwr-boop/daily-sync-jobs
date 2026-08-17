@@ -24,33 +24,29 @@ jobs:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
           GIT_LFS_SKIP_SMUDGE: '1'
-        run: |
-          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Install dependencies and embedding runtime
+      - name: Install safe runtime and run regressions
         working-directory: work
         run: |
           npm ci
-          npm install --no-save @huggingface/transformers@3.8.1
-
-      - name: Run actor-target regression tests
-        working-directory: work
-        run: node scripts/test-nuance-v8-core.mjs
+          npm audit --omit=dev
+          npm test
 
       - name: Materialize BL catalog
         working-directory: work
         run: git lfs pull --include="data/bl/catalog/full/details.json"
 
-      - name: Build BL production index
+      - name: Build BL production index with final core
         working-directory: work
         env:
-          EMBED_BATCH: '64'
-        run: node scripts/build-nuance-search-v8-index-bl.mjs
+          EMBED_BATCH: '256'
+        run: node scripts/build-nuance-search-v8-index-bl-final.mjs
 
       - name: Validate BL index
         working-directory: work
@@ -62,7 +58,7 @@ jobs:
           if(meta.total_works<2000)throw new Error(`too few BL works: ${meta.total_works}`);
           if(meta.total_scenes<meta.total_works*2)throw new Error(`too few BL scenes: ${meta.total_scenes}`);
           if(bytes!==meta.total_scenes*meta.dimensions)throw new Error(`BL vector byte mismatch: ${bytes} vs ${meta.total_scenes*meta.dimensions}`);
-          console.log(`BL index ok: works=${meta.total_works} scenes=${meta.total_scenes} dims=${meta.dimensions} bytes=${bytes}`);
+          console.log(`BL final index ok: works=${meta.total_works} scenes=${meta.total_scenes} dims=${meta.dimensions} bytes=${bytes}`);
           NODE
 
       - name: Push BL production index
