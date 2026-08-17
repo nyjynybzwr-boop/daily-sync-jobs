@@ -1,4 +1,4 @@
-name: Inspect manga language filters once
+name: Count manga languages once
 
 on:
   push:
@@ -17,20 +17,25 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Inspect manga language filter controls
+      - name: Count DLsite manga by language option
         run: |
           npm install --no-save cheerio
           node --input-type=module <<'NODE'
           import * as cheerio from 'cheerio';
-          const url='https://www.dlsite.com/girls-touch/works/type/=/work_type_category/comic/page/1';
-          const res=await fetch(url,{headers:{'User-Agent':'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1','Accept-Language':'ja-JP,ja;q=0.9'}});
-          const html=await res.text(); const $=cheerio.load(html);
-          const controls=$('input,option,select').toArray().map(el=>({tag:el.tagName,name:$(el).attr('name')||'',value:$(el).attr('value')||'',checked:$(el).is(':checked'),selected:$(el).is(':selected'),id:$(el).attr('id')||'',parent:$(el).parent().text().replace(/\s+/g,' ').trim().slice(0,150)})).filter(x=>/option|lang|language/i.test(x.name)||/JPN|NM|ENG|CHI|KOR|日本語|英語|中国語|韓国語/.test(x.value+' '+x.parent));
-          const links=$('a').toArray().map(a=>({text:$(a).text().replace(/\s+/g,' ').trim(),href:$(a).attr('href')||''})).filter(x=>/言語|日本語|英語|中国語|韓国語|lang_options|options%5B/.test(x.text+' '+x.href)).slice(0,200);
-          const text=$('body').text().replace(/\s+/g,' ').trim();
-          const snippets=[];
-          for(const word of ['言語','日本語','英語','中国語','韓国語']) { let pos=0; while((pos=text.indexOf(word,pos))>=0 && snippets.length<50){snippets.push(text.slice(Math.max(0,pos-120),Math.min(text.length,pos+260)));pos+=word.length;} }
-          console.log('LANG_CONTROLS '+JSON.stringify(controls.slice(0,300)));
-          console.log('LANG_LINKS '+JSON.stringify(links));
-          console.log('LANG_SNIPPETS '+JSON.stringify(snippets));
+          const prefix='https://www.dlsite.com/girls-touch/works/type/=/language/jp/sex_category%5B0%5D/female/sex_category%5B1%5D/gay/work_category%5B0%5D/doujin/order/trend/work_type_category%5B0%5D/comic/work_type_category_name%5B0%5D/%E3%83%9E%E3%83%B3%E3%82%AC/options_and_or/and';
+          const suffix='/per_page/30/page/1/is_tl/1/show_type/3';
+          const sets=[
+            ['JPN+NM',['JPN','NM']],['JPN',['JPN']],['NM',['NM']],['ENG',['ENG']],['CHI',['CHI']],['CHI_HANS',['CHI_HANS']],['CHI_HANT',['CHI_HANT']],['KO_KR',['KO_KR']],['SPA',['SPA']],['GER',['GER']],['FRE',['FRE']],['IND',['IND']],['ITA',['ITA']],['POR',['POR']],['SWE',['SWE']],['THA',['THA']],['VIE',['VIE']],['OTL',['OTL']],['DOT',['DOT']],
+            ['ALL',['JPN','ENG','CHI','CHI_HANS','CHI_HANT','KO_KR','SPA','GER','FRE','IND','ITA','POR','SWE','THA','VIE','OTL','NM','DOT']]
+          ];
+          const UA='Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+          for(const [name,opts] of sets){
+            const optPath=opts.map((v,i)=>`/options%5B${i}%5D/${encodeURIComponent(v)}`).join('');
+            const url=prefix+optPath+suffix;
+            const res=await fetch(url,{headers:{'User-Agent':UA,'Accept-Language':'ja-JP,ja;q=0.9'},redirect:'follow'});
+            const html=await res.text(); const $=cheerio.load(html); const text=$('body').text().replace(/\s+/g,' ').trim();
+            const m=text.match(/([\d,]+)\s*件中\s*([\d,]+)\s*[-−ー]\s*([\d,]+)\s*件目/);
+            const checked=$('input[name="options[]"]:checked').toArray().map(x=>$(x).attr('value'));
+            console.log('LANG_COUNT '+JSON.stringify({name,opts,status:res.status,final_url:res.url,count:m?.[1]||null,checked,title:$('title').text().trim()}));
+          }
           NODE
