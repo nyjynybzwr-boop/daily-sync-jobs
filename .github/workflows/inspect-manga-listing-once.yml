@@ -1,4 +1,4 @@
-name: Call Tokyo manga probe once
+name: Test US detail parser on Japan-only manga once
 
 on:
   push:
@@ -14,17 +14,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Call deployed Tokyo Vercel probe
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install parser dependency
+        working-directory: work
+        run: npm install --no-save devalue
+      - name: Parse Japan-only product directly from US runner
+        working-directory: work
         run: |
-          set -e
-          URL='https://dlsite-trend-radar.vercel.app/api/manga-region-probe'
-          echo "Calling $URL"
-          BODY=$(curl -fsSL --retry 2 --retry-delay 2 "$URL")
-          echo "TOKYO_PROBE_RESPONSE $BODY"
-          node -e '
-            const x=JSON.parse(process.argv[1]);
-            console.log("TOKYO_PROBE_AUDIT "+JSON.stringify({region:x.region,listing:x.listing,missing:x.missing,known:x.known}));
-            if (x.region !== "hnd1") throw new Error(`Expected hnd1, got ${x.region}`);
-            if (String(x.listing?.count) !== "7743") throw new Error(`Expected listing count 7743, got ${x.listing?.count}`);
-            if (x.missing?.geo_blocked) throw new Error("RJ01512512 is still geo-blocked from Tokyo probe");
-          ' "$BODY"
+          node --input-type=module <<'NODE'
+          import { fetchDlsiteProductPlain } from './scripts/lib/dlsite-fetch-detail.mjs';
+          const seed={product_id:'RJ01512512',url:'https://www.dlsite.com/girls-touch/work/=/product_id/RJ01512512.html',title:'茅原啓佑の×恋'};
+          try {
+            const row=await fetchDlsiteProductPlain(seed);
+            console.log('US_DETAIL_PARSE '+JSON.stringify({ok:true,product_id:row.product_id,title:row.title,work_type_value:row.work_type_value,work_type_name:row.work_type_name,detail_error:row.detail_error||null,description:(row.description||'').slice(0,120),tags:row.tags?.slice?.(0,10)||[],sales_count:row.sales_count??null,price_yen:row.price_yen??null,detail_parser_version:row.detail_parser_version??null}));
+          } catch (e) {
+            console.log('US_DETAIL_PARSE '+JSON.stringify({ok:false,error:String(e?.message||e)}));
+          }
+          NODE
