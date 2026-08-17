@@ -57,6 +57,7 @@ jobs:
         env:
           INPUT_MAX_PAGES: ${{ github.event.inputs.max_pages || '60' }}
           INPUT_BATCH_SIZE: ${{ github.event.inputs.batch_size || '100' }}
+          DLSITE_JP_RELAY_ORIGIN: ${{ vars.DLSITE_JP_RELAY_ORIGIN }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == 'schedule' ]]; then
