@@ -43,9 +43,11 @@ jobs:
           const raw = JSON.parse(fs.readFileSync('data/catalog/full/details.json','utf8'));
           const items = Array.isArray(raw) ? raw : Object.values(raw);
 
-          function labelNames(detected){
-            if (!Array.isArray(detected)) return [];
-            return detected.map(x => typeof x === 'string' ? x : x?.label).filter(Boolean);
+          function containsExactString(value,target){
+            if (value === target) return true;
+            if (Array.isArray(value)) return value.some(v=>containsExactString(v,target));
+            if (value && typeof value === 'object') return Object.values(value).some(v=>containsExactString(v,target));
+            return false;
           }
           function flattenStrings(value, path='$', out=[]){
             if (typeof value === 'string') out.push([path,value]);
@@ -68,11 +70,16 @@ jobs:
             return out;
           }
 
+          let printedShape=false;
           const hits=[];
           for (const item of items) {
-            let detected=[];
+            let detected;
             try { detected=detectLabels(item); } catch(e) { continue; }
-            if (!labelNames(detected).includes('脚')) continue;
+            if (!printedShape) {
+              console.log('DETECT_SHAPE '+JSON.stringify(detected).slice(0,1200));
+              printedShape=true;
+            }
+            if (!containsExactString(detected,'脚')) continue;
             hits.push({
               product_id:item.product_id,
               title:item.title,
