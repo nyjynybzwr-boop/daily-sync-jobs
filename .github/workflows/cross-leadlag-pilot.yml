@@ -22,11 +22,16 @@ jobs:
         run: |
           git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
 
+      - name: Materialize manga release dates
+        working-directory: work
+        run: git lfs pull --include="data/manga/catalog/full/details.json"
+
       - name: Check inputs
         working-directory: work
         run: |
           test -s web/data/catalog/search-index.json
           test -s web/data/catalog/manga/search-index.json
+          test -s data/manga/catalog/full/details.json
           node --check scripts/poc-cross-leadlag.mjs
 
       - name: Run lead-lag pilot
