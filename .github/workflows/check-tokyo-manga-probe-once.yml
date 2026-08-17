@@ -1,0 +1,30 @@
+name: Check Tokyo manga probe once
+
+on:
+  push:
+    paths:
+      - '.github/workflows/check-tokyo-manga-probe-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Wait for Vercel deployment and inspect probe
+        run: |
+          set -e
+          URL='https://dlsite-trend-radar.vercel.app/api/manga-region-probe'
+          for i in $(seq 1 12); do
+            echo "probe attempt $i"
+            CODE=$(curl -sS -o /tmp/probe.json -w '%{http_code}' "$URL" || true)
+            echo "http=$CODE"
+            cat /tmp/probe.json || true
+            echo
+            if [ "$CODE" = "200" ] && grep -q '"region"' /tmp/probe.json; then exit 0; fi
+            sleep 10
+          done
+          exit 1
