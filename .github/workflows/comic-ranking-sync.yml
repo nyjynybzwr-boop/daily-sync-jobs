@@ -46,10 +46,12 @@ jobs:
 
       - name: Collect and analyze Japan-visible manga rankings
         working-directory: work
+        env:
+          DLSITE_JP_RELAY_ORIGIN: ${{ vars.DLSITE_JP_RELAY_ORIGIN }}
         run: |
           set -euo pipefail
           # GitHub-hosted runners are outside Japan. Route ranking HTML and
-          # detail requests through the authenticated hnd1 relay so the daily,
+          # detail requests through the authenticated Tokyo relay so the daily,
           # weekly, and monthly manga rankings include Japan-only works.
           source scripts/ci/dlsite-jp-relay-env.sh
           bash scripts/ci/run-manga.sh
