@@ -16,16 +16,18 @@ jobs:
         env:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
         run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install runtime with patched image dependency
+      - name: Install runtime with patched transitive image dependency
         working-directory: work
         run: |
           npm ci
-          npm install --save @huggingface/transformers@3.8.1 sharp@latest
+          npm pkg set 'overrides.sharp=0.35.3'
+          npm install --save @huggingface/transformers@3.8.1
           npm ls @huggingface/transformers sharp
       - name: Audit production dependencies
         working-directory: work
