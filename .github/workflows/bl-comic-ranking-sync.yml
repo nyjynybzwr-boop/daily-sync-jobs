@@ -46,6 +46,8 @@ jobs:
 
       - name: Collect and analyze Japan-visible BL manga rankings
         working-directory: work
+        env:
+          DLSITE_JP_RELAY_ORIGIN: ${{ vars.DLSITE_JP_RELAY_ORIGIN }}
         run: |
           set -euo pipefail
           source scripts/ci/dlsite-jp-relay-env.sh
