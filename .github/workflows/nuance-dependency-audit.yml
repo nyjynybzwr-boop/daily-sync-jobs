@@ -13,7 +13,7 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout private source
         env:
@@ -25,11 +25,24 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install saved Transformers.js dependency
+      - name: Install Transformers.js with patched sharp override
         working-directory: work
         run: |
           npm ci
+          npm pkg set overrides.sharp=0.35.0
           npm install --save @huggingface/transformers@3.8.1
-      - name: Print production audit
+      - name: Require clean production audit
         working-directory: work
-        run: npm audit --omit=dev || true
+        run: npm audit --omit=dev
+      - name: Smoke-test text embedding with override
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import { pipeline } from '@huggingface/transformers';
+          const extractor=await pipeline('feature-extraction','Xenova/multilingual-e5-small',{dtype:'q8'});
+          const out=await extractor('query: 男が自分で自慰を見せつける',{pooling:'mean',normalize:true});
+          const dims=out.dims.at(-1);
+          if(dims!==384)throw new Error(`unexpected embedding dims: ${dims}`);
+          console.log(`patched runtime embedding ok: dims=${dims}`);
+          await extractor.dispose?.();
+          NODE
