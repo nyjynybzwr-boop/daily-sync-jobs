@@ -1,0 +1,38 @@
+name: Nuance v8 Vercel diagnostics
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nuance-v8-vercel-diag-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Read production diagnostic endpoint
+        run: |
+          node --input-type=module <<'NODE'
+          const url='https://dlsite-trend-radar.vercel.app/api/nuance-diag';
+          for(let i=1;i<=36;i++){
+            try{
+              const r=await fetch(url,{cache:'no-store',signal:AbortSignal.timeout(30000)});
+              const text=await r.text();
+              console.log(`attempt ${i}: HTTP ${r.status}`);
+              if(r.ok && text.trim().startsWith('{')){
+                console.log(text);
+                const p=JSON.parse(text);
+                if(!Array.isArray(p.results))throw new Error('diagnostic payload malformed');
+                process.exit(0);
+              }
+              console.log(text.slice(0,300));
+            }catch(e){console.log(`attempt ${i} error: ${e.message}`);}
+            await new Promise(r=>setTimeout(r,10000));
+          }
+          throw new Error('diagnostic endpoint never became available');
+          NODE
