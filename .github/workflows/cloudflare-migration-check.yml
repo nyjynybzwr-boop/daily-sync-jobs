@@ -40,7 +40,7 @@ jobs:
         run: |
           node --check functions/api/nuance-search.js
           node --check scripts/index-cloudflare-nuance.mjs
-          node --check scripts/eval-cloudflare-nuance.mjs
+          node --check scripts/eval-cloudflare-nuance-http.mjs
           node --check cloudflare/workers/dlsite-relay/src/index.js
 
       - name: Bundle Pages Functions
