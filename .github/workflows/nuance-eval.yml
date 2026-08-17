@@ -1,6 +1,6 @@
 name: Nuance search evaluation
 
-# Re-run marker: actor-aware v8 after the previous queued run was cancelled.
+# Re-run marker: scene-local actor evidence v8-final.
 on:
   workflow_dispatch:
   push:
@@ -47,18 +47,18 @@ jobs:
 
       - name: Check evaluator syntax
         working-directory: work
-        run: node --check scripts/poc-nuance-embedding-search-v8.mjs
+        run: node --check scripts/poc-nuance-embedding-search-v8-final.mjs
 
       - name: Materialize otome catalog
         working-directory: work
         run: git lfs pull --include="data/catalog/full/details.json" >/tmp/step.log 2>&1 || (echo 'Catalog materialization failed.'; exit 1)
 
-      - name: Run actor-aware concept evaluation
+      - name: Run scene-local actor evaluation
         working-directory: work
         env:
           EMBED_BATCH: '64'
           EMBED_SCENES_PER_WORK: '6'
-        run: node scripts/poc-nuance-embedding-search-v8.mjs
+        run: node scripts/poc-nuance-embedding-search-v8-final.mjs
 
       - name: Push evaluation result
         working-directory: work
