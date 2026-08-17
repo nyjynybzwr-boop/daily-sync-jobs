@@ -1,0 +1,56 @@
+name: BL manga ranking sync
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/bl-comic-ranking-sync.yml'
+  schedule:
+    - cron: '20 16 * * *'
+
+concurrency:
+  group: bl-manga-ranking-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci >/tmp/step.log 2>&1
+
+      - name: Install browser
+        working-directory: work
+        run: |
+          npm install --no-save playwright devalue >/tmp/step.log 2>&1
+          npx playwright install --with-deps chromium >>/tmp/step.log 2>&1
+
+      - name: Collect and analyze Japan-visible BL manga rankings
+        working-directory: work
+        run: |
+          set -euo pipefail
+          source scripts/ci/dlsite-jp-relay-env.sh
+          bash scripts/ci/run-manga-bl.sh
+
+      - name: Push BL manga ranking data
+        working-directory: work
+        run: bash scripts/ci/push.sh "data/manga/bl/raw data/manga/bl/labeled data/manga/bl/reports data/manga/bl/windows"
