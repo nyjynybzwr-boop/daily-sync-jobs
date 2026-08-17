@@ -1,4 +1,4 @@
-name: Probe manga counts through real search endpoint
+name: Inspect manga count contexts once
 
 on:
   push:
@@ -17,31 +17,31 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Compare works/type and fsr manga counts
+      - name: Inspect count and filter contexts
         run: |
           npm install --no-save cheerio
           node --input-type=module <<'NODE'
           import * as cheerio from 'cheerio';
-          const UA='Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
-          const prefix='https://www.dlsite.com/girls-touch/fsr/=/language/jp/sex_category%5B0%5D/female/sex_category%5B1%5D/gay';
-          const tail='/order%5B0%5D/trend/work_type_category%5B0%5D/comic/work_type_category_name%5B0%5D/%E3%83%9E%E3%83%B3%E3%82%AC/options_and_or/and/options%5B0%5D/JPN/options%5B1%5D/NM/per_page/30/page/1/is_tl/1/show_type/3';
-          const urls=[
-            ['works-type','https://www.dlsite.com/girls-touch/works/type/=/work_type_category/comic/page/1'],
-            ['fsr-no-target',prefix+tail],
-            ['fsr-doujin',prefix+'/work_category%5B0%5D/doujin'+tail],
-            ['fsr-books',prefix+'/work_category%5B0%5D/books'+tail],
-            ['fsr-drama',prefix+'/work_category%5B0%5D/drama'+tail],
-            ['fsr-pc',prefix+'/work_category%5B0%5D/pc'+tail],
-            ['fsr-doujin-books',prefix+'/work_category%5B0%5D/doujin/work_category%5B1%5D/books'+tail],
-            ['fsr-all-targets',prefix+'/work_category%5B0%5D/doujin/work_category%5B1%5D/drama/work_category%5B2%5D/books/work_category%5B3%5D/pc'+tail],
-          ];
-          for(const [name,url] of urls){
-            const res=await fetch(url,{headers:{'User-Agent':UA,'Accept-Language':'ja-JP,ja;q=0.9'},redirect:'follow'});
-            const html=await res.text(); const $=cheerio.load(html); const text=$('body').text().replace(/\s+/g,' ').trim();
-            const m=text.match(/([\d,]+)\s*件中\s*([\d,]+)\s*[-−ー]\s*([\d,]+)\s*件目/);
-            const summary=(text.match(/作品カテゴリ:[^検索条件]{0,500}/)||[])[0]||'';
-            const main=$('ul.n_work_list.type_grid.type_horizontal').filter((_,el)=>!$(el).hasClass('type_grid_min')).first();
-            const ids=[...new Set(main.find('a[href*="product_id/"]').toArray().map(a=>($(a).attr('href')||'').match(/product_id\/(RJ\d+|VJ\d+|BJ\d+|AJ\d+)/i)?.[1]).filter(Boolean))];
-            console.log('MANGA_COUNT '+JSON.stringify({name,status:res.status,final_url:res.url,count:m?.[1]||null,grid_ids:ids.length,summary:summary.slice(0,500),title:$('title').text().trim()}));
+          const mobile='Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+          const desktop='Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+          const url='https://www.dlsite.com/girls-touch/works/type/=/work_type_category/comic/page/1';
+          for (const [profile,headers] of [
+            ['mobile',{'User-Agent':mobile,'Accept-Language':'ja-JP,ja;q=0.9'}],
+            ['desktop',{'User-Agent':desktop,'Accept-Language':'ja-JP,ja;q=0.9'}],
+            ['mobile-adultchecked',{'User-Agent':mobile,'Accept-Language':'ja-JP,ja;q=0.9','Cookie':'adultchecked=1; locale=ja_JP'}],
+          ]) {
+            const res=await fetch(url,{headers,redirect:'follow'});
+            const html=await res.text(); const $=cheerio.load(html); const body=$('body').text().replace(/\s+/g,' ').trim();
+            const count=body.match(/([\d,]+)\s*件中\s*([\d,]+)\s*[-−ー]\s*([\d,]+)\s*件目/)?.[1]||null;
+            const summary=(body.match(/作品カテゴリ:[^検索条件]{0,700}/)||[])[0]||'';
+            const raw7743=[]; let pos=-1; while((pos=html.indexOf('7743',pos+1))>=0 && raw7743.length<10) raw7743.push(html.slice(Math.max(0,pos-220),pos+220).replace(/\s+/g,' '));
+            const nearCounts=[];
+            for(const m of body.matchAll(/\b([7-8][\d,]{3,5})\s*件/g)){
+              const n=Number(m[1].replace(/,/g,'')); if(n>=7000&&n<=9000) nearCounts.push({n,context:body.slice(Math.max(0,m.index-120),m.index+180)});
+              if(nearCounts.length>=30) break;
+            }
+            const labels=$('label').toArray().map(el=>$(el).text().replace(/\s+/g,' ').trim()).filter(t=>/AI|販売終了|予告|翻訳|同人|商業|電子書籍|対象作品|日本語|言語/.test(t)).slice(0,80);
+            const inputs=$('input,select,option').toArray().map(el=>({tag:el.tagName,name:$(el).attr('name')||'',value:$(el).attr('value')||'',checked:$(el).is(':checked'),text:$(el).text().replace(/\s+/g,' ').trim().slice(0,80)})).filter(x=>/ai|sale|end|announce|work_category|language|option|translation/i.test(`${x.name} ${x.value} ${x.text}`)).slice(0,100);
+            console.log('PROFILE '+JSON.stringify({profile,status:res.status,count,summary:summary.slice(0,700),raw7743,nearCounts,labels,inputs}));
           }
           NODE
