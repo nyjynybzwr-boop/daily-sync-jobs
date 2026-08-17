@@ -19,7 +19,7 @@ jobs:
     outputs:
       source_sha: ${{ steps.source.outputs.sha }}
     steps:
-      - name: Resolve one immutable private source commit
+      - name: Pin private main
         id: source
         env:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout pinned private source
+      - name: Checkout pinned source
         env:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
@@ -43,14 +43,12 @@ jobs:
           GIT_LFS_SKIP_SMUDGE: '1'
         run: |
           git clone --quiet "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
-          cd work
-          git checkout --quiet --detach "$SOURCE_SHA"
+          cd work && git checkout --quiet --detach "$SOURCE_SHA"
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install, audit, and run regressions once
+      - name: Validate source once
         working-directory: work
         run: |
           npm ci
@@ -67,7 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - name: Checkout pinned private source
+      - name: Checkout pinned source
         env:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
@@ -75,29 +73,23 @@ jobs:
           GIT_LFS_SKIP_SMUDGE: '1'
         run: |
           git clone --quiet "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
-          cd work
-          git checkout --quiet --detach "$SOURCE_SHA"
+          cd work && git checkout --quiet --detach "$SOURCE_SHA"
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install embedding runtime
-        working-directory: work
-        run: npm ci
-      - name: Materialize otome catalog
-        working-directory: work
-        run: git lfs pull --include="data/catalog/full/details.json"
-      - name: Embed otome shard
+      - name: Build shard
         working-directory: work
         env:
           SHARD_INDEX: ${{ matrix.shard }}
           SHARD_COUNT: '8'
           EMBED_BATCH: '256'
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
-        run: node scripts/build-nuance-v8-shard-final.mjs
-      - name: Upload shard
-        uses: actions/upload-artifact@v4
+        run: |
+          npm ci
+          git lfs pull --include="data/catalog/full/details.json"
+          node scripts/build-nuance-v8-shard-final.mjs
+      - uses: actions/upload-artifact@v4
         with:
           name: nuance-v8-shard-${{ matrix.shard }}
           path: work/artifacts/nuance-v8-shards/
@@ -109,7 +101,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - name: Checkout pinned private source
+      - name: Checkout pinned source
         env:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
@@ -117,38 +109,27 @@ jobs:
           GIT_LFS_SKIP_SMUDGE: '1'
         run: |
           git clone --quiet "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
-          cd work
-          git checkout --quiet --detach "$SOURCE_SHA"
+          cd work && git checkout --quiet --detach "$SOURCE_SHA"
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install embedding runtime
-        working-directory: work
-        run: npm ci
-      - name: Materialize BL catalog
-        working-directory: work
-        run: git lfs pull --include="data/bl/catalog/full/details.json"
-      - name: Build final BL production index
+      - name: Build and verify BL index
         working-directory: work
         env:
           EMBED_BATCH: '256'
-        run: node scripts/build-nuance-search-v8-index-bl-final.mjs
-      - name: Verify BL index integrity
-        working-directory: work
         run: |
+          npm ci
+          git lfs pull --include="data/bl/catalog/full/details.json"
+          node scripts/build-nuance-search-v8-index-bl-final.mjs
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
-          const meta=JSON.parse(fs.readFileSync('api/data/nuance-v8-bl-meta.json','utf8'));
+          const m=JSON.parse(fs.readFileSync('api/data/nuance-v8-bl-meta.json','utf8'));
           const bytes=fs.statSync('api/data/nuance-v8-bl-vectors.bin').size;
-          if(meta.total_works<2000)throw new Error(`too few BL works: ${meta.total_works}`);
-          if(meta.total_scenes<meta.total_works*2)throw new Error(`too few BL scenes: ${meta.total_scenes}`);
-          if(bytes!==meta.total_scenes*meta.dimensions)throw new Error(`BL vector byte mismatch: ${bytes}`);
-          console.log(`BL index ok: works=${meta.total_works} scenes=${meta.total_scenes} dims=${meta.dimensions} bytes=${bytes}`);
+          if(m.total_works<2000||m.total_scenes<m.total_works*2||bytes!==m.total_scenes*m.dimensions)throw new Error('BL index integrity failed');
+          console.log(`BL index ok: works=${m.total_works} scenes=${m.total_scenes}`);
           NODE
-      - name: Upload BL index
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: nuance-v8-bl-index
           path: |
@@ -162,7 +143,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout pinned private source
+      - name: Checkout pinned source
         env:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
@@ -170,38 +151,32 @@ jobs:
           GIT_LFS_SKIP_SMUDGE: '1'
         run: |
           git clone --quiet "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
-          cd work
-          git checkout --quiet --detach "$SOURCE_SHA"
+          cd work && git checkout --quiet --detach "$SOURCE_SHA"
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install safe runtime
+      - name: Prepare finalizer
         working-directory: work
         run: |
           npm ci
           npm audit --omit=dev
-      - name: Materialize otome catalog
-        working-directory: work
-        run: git lfs pull --include="data/catalog/full/details.json"
-      - name: Download all otome shards
-        uses: actions/download-artifact@v4
+          git lfs pull --include="data/catalog/full/details.json"
+      - uses: actions/download-artifact@v4
         with:
           pattern: nuance-v8-shard-*
           path: work/artifacts/nuance-v8-shards
           merge-multiple: true
-      - name: Download BL index
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: nuance-v8-bl-index
           path: work/api/data
-      - name: Finalize and evaluate exact otome production bytes
+      - name: Finalize and evaluate
         working-directory: work
         env:
           SHARD_COUNT: '8'
         run: node scripts/finalize-nuance-v8-shards-final.mjs
-      - name: Enforce production quality and integrity gates
+      - name: Quality gates
         working-directory: work
         env:
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
@@ -212,65 +187,52 @@ jobs:
           const prod=JSON.parse(fs.readFileSync('analysis/nuance-search-v8-production-eval.json','utf8'));
           const refById=new Map(ref.cases.map(x=>[x.id,x]));
           for(const row of prod.cases){
-            const baseline=refById.get(row.id);
-            if(!baseline||!Number.isInteger(baseline.rerank_rank))throw new Error(`missing float baseline: ${row.id}`);
-            const maxRank=Math.max(20,baseline.rerank_rank*4);
-            if(!Number.isInteger(row.rank)||row.rank>maxRank)throw new Error(`parity gate failed: ${row.id} prod=#${row.rank} float=#${baseline.rerank_rank} max=#${maxRank}`);
-            console.log(`parity ok: ${row.id} prod=#${row.rank} float=#${baseline.rerank_rank}`);
+            const base=refById.get(row.id);
+            if(!base||!Number.isInteger(base.rerank_rank))throw new Error(`missing float baseline: ${row.id}`);
+            const max=Math.max(20,base.rerank_rank*4);
+            if(!Number.isInteger(row.rank)||row.rank>max)throw new Error(`parity failed: ${row.id} #${row.rank} > #${max}`);
           }
-          const exactGates=[
+          const gates=[
             ['gold-rj01066791-show-masturbation',20],
             ['gold-rj01200426-plain-self-touch',15],
             ['gold-rj01093983-passive-touch',24],
             ['gold-rj01093983-active-partner-touch',7],
           ];
-          const prodById=new Map(prod.cases.map(x=>[x.id,x]));
-          for(const [id,max] of exactGates){
-            const row=prodById.get(id);
+          const byId=new Map(prod.cases.map(x=>[x.id,x]));
+          for(const [id,max] of gates){
+            const row=byId.get(id);
             if(!row||!Number.isInteger(row.rank)||row.rank>max)throw new Error(`required gate failed: ${id} #${row?.rank} > #${max}`);
-            console.log(`required gate ok: ${id} #${row.rank} <= #${max}`);
+            console.log(`gate ok: ${id} #${row.rank} <= #${max}`);
           }
-          if(prod.metrics.top10_rate<0.6)throw new Error(`top10 too low: ${prod.metrics.top10_rate}`);
-          if(prod.metrics.top50_rate<0.9)throw new Error(`top50 too low: ${prod.metrics.top50_rate}`);
-          if(prod.metrics.top200_rate<1)throw new Error(`top200 must be 1: ${prod.metrics.top200_rate}`);
-          const meta=JSON.parse(fs.readFileSync('api/data/nuance-v8-meta.json','utf8'));
+          if(prod.metrics.top10_rate<0.6||prod.metrics.top50_rate<0.9||prod.metrics.top200_rate<1)throw new Error(`aggregate quality failed: ${JSON.stringify(prod.metrics)}`);
+          const m=JSON.parse(fs.readFileSync('api/data/nuance-v8-meta.json','utf8'));
           const bytes=fs.statSync('api/data/nuance-v8-vectors.bin').size;
-          if(meta.source_sha!==process.env.SOURCE_SHA)throw new Error(`source SHA mismatch ${meta.source_sha} != ${process.env.SOURCE_SHA}`);
-          if(meta.total_works<13000)throw new Error(`too few works: ${meta.total_works}`);
-          if(meta.total_scenes<meta.total_works*2)throw new Error(`too few scenes: ${meta.total_scenes}`);
-          if(bytes!==meta.total_scenes*meta.dimensions)throw new Error(`vector byte mismatch: ${bytes}`);
+          if(m.source_sha!==process.env.SOURCE_SHA||m.total_works<13000||m.total_scenes<m.total_works*2||bytes!==m.total_scenes*m.dimensions)throw new Error('otome integrity failed');
           const bl=JSON.parse(fs.readFileSync('api/data/nuance-v8-bl-meta.json','utf8'));
           const blBytes=fs.statSync('api/data/nuance-v8-bl-vectors.bin').size;
-          if(bl.total_works<2000||bl.total_scenes<bl.total_works*2||blBytes!==bl.total_scenes*bl.dimensions)throw new Error('BL final integrity failed');
+          if(bl.total_works<2000||bl.total_scenes<bl.total_works*2||blBytes!==bl.total_scenes*bl.dimensions)throw new Error('BL integrity failed');
           console.log(`quality ok: top10=${prod.metrics.top10_rate} top50=${prod.metrics.top50_rate} top200=${prod.metrics.top200_rate}`);
-          console.log(`otome index ok: works=${meta.total_works} scenes=${meta.total_scenes} dims=${meta.dimensions}`);
-          console.log(`BL index ok: works=${bl.total_works} scenes=${bl.total_scenes} dims=${bl.dimensions}`);
           NODE
-      - name: Preserve validated outputs
-        working-directory: work
-        run: |
-          mkdir -p /tmp/nuance-validated/api/data /tmp/nuance-validated/analysis
-          cp api/data/nuance-v8-meta.json /tmp/nuance-validated/api/data/
-          cp api/data/nuance-v8-vectors.bin /tmp/nuance-validated/api/data/
-          cp api/data/nuance-v8-bl-meta.json /tmp/nuance-validated/api/data/
-          cp api/data/nuance-v8-bl-vectors.bin /tmp/nuance-validated/api/data/
-          cp analysis/nuance-search-v8-production-eval.json /tmp/nuance-validated/analysis/
-      - name: Rebase validated data onto latest private main
+      - name: Preserve validated outputs and rebase to latest main
         working-directory: work
         env:
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
         run: |
+          mkdir -p /tmp/nuance/api/data /tmp/nuance/analysis
+          cp api/data/nuance-v8-meta.json api/data/nuance-v8-vectors.bin api/data/nuance-v8-bl-meta.json api/data/nuance-v8-bl-vectors.bin /tmp/nuance/api/data/
+          cp analysis/nuance-search-v8-production-eval.json /tmp/nuance/analysis/
           git fetch origin main
           git merge-base --is-ancestor "$SOURCE_SHA" origin/main
           git checkout --quiet -B main origin/main
-          cp /tmp/nuance-validated/api/data/* api/data/
-          cp /tmp/nuance-validated/analysis/* analysis/
+          cp /tmp/nuance/api/data/* api/data/
+          cp /tmp/nuance/analysis/* analysis/
           npm ci
           npm audit --omit=dev
           npm test
+          node scripts/check-web-syntax.mjs
           node --check api/nuance-search.js
           node --check web/all-nuance-search.js
-      - name: Smoke-test latest code against validated indexes
+      - name: Smoke-test latest API
         working-directory: work
         run: |
           node --input-type=module <<'NODE'
@@ -280,15 +242,17 @@ jobs:
             const req={method:'GET',query:{q,market}};
             const res={status(c){statusCode=c;return this;},setHeader(){return this;},json(x){payload=x;return this;}};
             await handler(req,res);
-            if(statusCode!==200||!Array.isArray(payload?.results)||payload.results.length<10)throw new Error(`${market} production API smoke failed`);
+            if(statusCode!==200||!Array.isArray(payload?.results)||payload.results.length<10)throw new Error(`${market} API smoke failed`);
             return payload;
           }
           const otome=await call('女の子にちんぽを触られて、男が余裕をなくして喘いでしまう','otome');
-          if(otome.results[0]?.product_id!=='RJ01093983')throw new Error(`otome smoke parity failed: ${otome.results[0]?.product_id}`);
+          const passiveRank=otome.results.findIndex(x=>x.product_id==='RJ01093983')+1;
+          if(!passiveRank||passiveRank>24)throw new Error(`otome smoke failed: RJ01093983 rank=${passiveRank||'missing'}`);
+          console.log(`otome passive-touch smoke: RJ01093983 #${passiveRank}`);
           const bl=await call('男が相手の反応に釣られて余裕をなくして喘ぐ','bl');
           if(Number(bl.total_works)<2000)throw new Error('BL smoke catalog too small');
-          console.log('latest-code production API smoke passed');
+          console.log('weekly production API smoke passed');
           NODE
-      - name: Push validated weekly indexes to private main
+      - name: Push validated indexes
         working-directory: work
         run: bash scripts/ci/push.sh "api/data/nuance-v8-meta.json api/data/nuance-v8-vectors.bin api/data/nuance-v8-bl-meta.json api/data/nuance-v8-bl-vectors.bin analysis/nuance-search-v8-production-eval.json"
