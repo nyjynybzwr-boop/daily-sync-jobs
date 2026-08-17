@@ -41,9 +41,9 @@ jobs:
         working-directory: work
         run: npm test
 
-      - name: Materialize otome catalog
+      - name: Materialize otome and BL catalogs
         working-directory: work
-        run: git lfs pull --include="data/catalog/full/details.json"
+        run: git lfs pull --include="data/catalog/full/details.json,data/bl/catalog/full/details.json"
 
       - name: Verify all exact kinship tags receive label
         working-directory: work
@@ -53,18 +53,25 @@ jobs:
           import { detectLabels, ensureTokenizer } from './scripts/lib/analysis-core-safe.mjs';
           await ensureTokenizer();
 
-          const payload = JSON.parse(fs.readFileSync('data/catalog/full/details.json', 'utf8'));
-          const rows = Array.isArray(payload) ? payload : Object.values(payload);
-          const tagged = rows.filter((item) => Array.isArray(item?.tags) && item.tags.some((tag) => String(tag || '').trim() === '近親もの'));
-          if (!tagged.length) throw new Error('No 近親もの-tagged works found in materialized catalog');
+          function auditCatalog(name, file) {
+            const payload = JSON.parse(fs.readFileSync(file, 'utf8'));
+            const rows = Array.isArray(payload) ? payload : Object.values(payload);
+            const tagged = rows.filter((item) => Array.isArray(item?.tags) && item.tags.some((tag) => String(tag || '').trim() === '近親もの'));
+            if (!tagged.length) throw new Error(`No 近親もの-tagged works found in ${name} catalog`);
 
-          const failures = [];
-          for (const item of tagged) {
-            const labels = detectLabels(item).map((row) => row.label);
-            if (!labels.includes('近親もの')) failures.push(item.product_id || item.title || '(unknown)');
+            const failures = [];
+            for (const item of tagged) {
+              const labels = detectLabels(item).map((row) => row.label);
+              if (!labels.includes('近親もの')) failures.push(item.product_id || item.title || '(unknown)');
+            }
+            console.log(`${name} 近親もの exact-tag coverage: ${tagged.length - failures.length}/${tagged.length}`);
+            if (failures.length) throw new Error(`${name}: 近親もの missing on ${failures.length} works: ${failures.slice(0, 20).join(', ')}`);
+            return tagged.length;
           }
-          console.log(`近親もの exact-tag coverage: ${tagged.length - failures.length}/${tagged.length}`);
-          if (failures.length) throw new Error(`近親もの missing on ${failures.length} works: ${failures.slice(0, 20).join(', ')}`);
+
+          const otomeCount = auditCatalog('otome', 'data/catalog/full/details.json');
+          const blCount = auditCatalog('BL', 'data/bl/catalog/full/details.json');
+          console.log(`combined 近親もの exact-tag coverage: ${otomeCount + blCount}/${otomeCount + blCount}`);
 
           const control = {
             product_id: 'SYNTHETIC-RELATIONSHIP-TAG-CONTROL',
