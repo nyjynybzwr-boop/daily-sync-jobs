@@ -1,0 +1,100 @@
+name: Nuance v8 fast final
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nuance-v8-fast-final.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install safe runtime
+        working-directory: work
+        run: |
+          npm ci
+          npm audit --omit=dev
+      - name: Materialize otome catalog
+        working-directory: work
+        run: git lfs pull --include="data/catalog/full/details.json"
+      - name: Run v8-final evaluator at larger batch
+        working-directory: work
+        env:
+          EMBED_BATCH: '256'
+          EMBED_SCENES_PER_WORK: '6'
+        run: node scripts/poc-nuance-embedding-search-v8-final.mjs
+      - name: Push final evaluation
+        working-directory: work
+        run: bash scripts/ci/push.sh "analysis/nuance-search-v8-eval.json"
+
+  production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install safe runtime
+        working-directory: work
+        run: |
+          npm ci
+          npm audit --omit=dev
+          node scripts/test-nuance-v8-core.mjs
+      - name: Materialize otome catalog
+        working-directory: work
+        run: git lfs pull --include="data/catalog/full/details.json"
+      - name: Build production index at larger batch
+        working-directory: work
+        env:
+          EMBED_BATCH: '256'
+        run: node scripts/build-nuance-search-v8-index.mjs
+      - name: Enforce production gates
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const p=JSON.parse(fs.readFileSync('analysis/nuance-search-v8-production-eval.json','utf8'));
+          const byId=new Map(p.cases.map(x=>[x.id,x]));
+          const gates=[
+            ['gold-rj01066791-show-masturbation',413],
+            ['gold-rj01200426-plain-self-touch',12],
+            ['gold-rj01093983-passive-touch',24],
+            ['gold-rj01093983-active-partner-touch',7],
+          ];
+          for(const [id,max] of gates){
+            const row=byId.get(id);
+            if(!row||!Number.isInteger(row.rank)||row.rank>max)throw new Error(`gate failed: ${id} rank=${row?.rank} max=${max}`);
+            console.log(`gate ok: ${id} #${row.rank} <= #${max}`);
+          }
+          const meta=JSON.parse(fs.readFileSync('api/data/nuance-v8-meta.json','utf8'));
+          const bytes=fs.statSync('api/data/nuance-v8-vectors.bin').size;
+          if(meta.total_works<13000)throw new Error(`too few works: ${meta.total_works}`);
+          if(bytes!==meta.total_scenes*meta.dimensions)throw new Error(`vector byte mismatch: ${bytes}`);
+          console.log(`index ok: works=${meta.total_works} scenes=${meta.total_scenes} dims=${meta.dimensions} bytes=${bytes}`);
+          NODE
+      - name: Push production index
+        working-directory: work
+        run: bash scripts/ci/push.sh "api/data/nuance-v8-meta.json api/data/nuance-v8-vectors.bin analysis/nuance-search-v8-production-eval.json"
