@@ -61,3 +61,22 @@ jobs:
             top_audio:(x.market_structure.groups.audio_dominant||[]).slice(0,5).map(k=>x.labels.find(r=>r.key===k)?.label)
           },null,2));
           NODE
+
+      - name: Deploy production if Vercel token is configured
+        working-directory: work
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ACCESS_TOKEN: ${{ secrets.VERCEL_ACCESS_TOKEN }}
+          VERCEL_API_TOKEN: ${{ secrets.VERCEL_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          TOKEN="${VERCEL_TOKEN:-${VERCEL_ACCESS_TOKEN:-${VERCEL_API_TOKEN:-}}}"
+          if [[ -z "$TOKEN" ]]; then
+            echo 'No Vercel deployment token is configured; validated build only.'
+            exit 0
+          fi
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"orgId":"team_cPibSyqDbVSVeTeWKezlvrYX","projectId":"prj_id4jFtrUzrTy6DYpTPMw4CDndk2R"}
+          JSON
+          npx --yes vercel@latest deploy --prod --yes --token="$TOKEN" --scope=hal-s-projects4
