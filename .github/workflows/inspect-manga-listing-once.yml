@@ -1,4 +1,4 @@
-name: Compare manga catalog routes once
+name: Inspect manga language filters once
 
 on:
   push:
@@ -17,26 +17,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Compare DLsite girls manga routes
+      - name: Inspect manga language filter controls
         run: |
           npm install --no-save cheerio
           node --input-type=module <<'NODE'
           import * as cheerio from 'cheerio';
-          const UA='Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
-          const bases=[
-            ['girls-touch','https://www.dlsite.com/girls-touch/works/type/=/work_type_category/comic'],
-            ['girls','https://www.dlsite.com/girls/works/type/=/work_type_category/comic'],
-            ['girls-pro-touch','https://www.dlsite.com/girls-pro-touch/works/type/=/work_type_category/comic'],
-          ];
-          const pages=[1,240,241,259,260];
-          const idOf=(h='')=>(h.match(/product_id\/(RJ\d+|VJ\d+|BJ\d+|AJ\d+)/i)?.[1]||'').toUpperCase();
-          for(const [name,base] of bases) for(const page of pages) {
-            const res=await fetch(`${base}/page/${page}`,{headers:{'User-Agent':UA,'Accept-Language':'ja-JP,ja;q=0.9'},redirect:'follow'});
-            const html=await res.text(); const $=cheerio.load(html);
-            const ids=[];
-            $('ul.n_work_list.type_grid.type_horizontal').not('.type_grid_min').first().find('a[href*="/work/=/product_id/"]').each((_,a)=>{const id=idOf($(a).attr('href'));if(id&&!ids.includes(id))ids.push(id)});
-            const text=$('body').text().replace(/\s+/g,' ').trim();
-            const count=text.match(/([\d,]+)\s*件中\s*([\d,]+)\s*[-−ー]\s*([\d,]+)\s*件目/)?.[0]||'';
-            console.log('ROUTE_CHECK '+JSON.stringify({name,page,status:res.status,final_url:res.url,title:$('title').text().trim(),count_text:count,main_count:ids.length,first:ids.slice(0,3),canonical:$('link[rel="canonical"]').attr('href')||''}));
-          }
+          const url='https://www.dlsite.com/girls-touch/works/type/=/work_type_category/comic/page/1';
+          const res=await fetch(url,{headers:{'User-Agent':'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1','Accept-Language':'ja-JP,ja;q=0.9'}});
+          const html=await res.text(); const $=cheerio.load(html);
+          const controls=$('input,option,select').toArray().map(el=>({tag:el.tagName,name:$(el).attr('name')||'',value:$(el).attr('value')||'',checked:$(el).is(':checked'),selected:$(el).is(':selected'),id:$(el).attr('id')||'',parent:$(el).parent().text().replace(/\s+/g,' ').trim().slice(0,150)})).filter(x=>/option|lang|language/i.test(x.name)||/JPN|NM|ENG|CHI|KOR|日本語|英語|中国語|韓国語/.test(x.value+' '+x.parent));
+          const links=$('a').toArray().map(a=>({text:$(a).text().replace(/\s+/g,' ').trim(),href:$(a).attr('href')||''})).filter(x=>/言語|日本語|英語|中国語|韓国語|lang_options|options%5B/.test(x.text+' '+x.href)).slice(0,200);
+          const text=$('body').text().replace(/\s+/g,' ').trim();
+          const snippets=[];
+          for(const word of ['言語','日本語','英語','中国語','韓国語']) { let pos=0; while((pos=text.indexOf(word,pos))>=0 && snippets.length<50){snippets.push(text.slice(Math.max(0,pos-120),Math.min(text.length,pos+260)));pos+=word.length;} }
+          console.log('LANG_CONTROLS '+JSON.stringify(controls.slice(0,300)));
+          console.log('LANG_LINKS '+JSON.stringify(links));
+          console.log('LANG_SNIPPETS '+JSON.stringify(snippets));
           NODE
