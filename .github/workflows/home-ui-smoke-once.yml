@@ -1,0 +1,45 @@
+name: Home UI smoke once
+
+on:
+  push:
+    paths:
+      - '.github/workflows/home-ui-smoke-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Check changed UI modules
+        working-directory: work
+        run: |
+          node --check web/home-ui-navigation.js
+          node --check web/refine-v4.js
+          node --check web/all-market-switch.js
+          grep -q "import './home-ui-navigation.js';" web/refine-v4.js
+          grep -q "home-view-enter-right" web/home-ui-navigation.js
+          grep -q "scrollToViewTop" web/home-ui-navigation.js
+          grep -q "setMarketInUrl" web/home-ui-navigation.js
+          grep -q "brand.href = homeUrl" web/all-market-switch.js
+
+      - name: Check all web JavaScript syntax
+        working-directory: work
+        run: node scripts/check-web-syntax.mjs
