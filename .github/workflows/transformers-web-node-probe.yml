@@ -1,4 +1,4 @@
-name: Transformers web runtime Node probe
+name: ONNX native runtime file probe
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - name: Checkout private source
         env:
@@ -28,23 +28,23 @@ jobs:
       - name: Install dependencies
         working-directory: work
         run: npm ci
-      - name: Probe injected web/WASM build under Node
+      - name: Inspect ONNX native files and linkage
         working-directory: work
         run: |
+          echo '--- onnxruntime-node files ---'
+          find node_modules/onnxruntime-node/bin -type f -printf '%p %s bytes\n' | sort
+          echo '--- disk usage ---'
+          du -ah node_modules/onnxruntime-node/bin | sort -h | tail -30
+          echo '--- binding linkage ---'
+          binding=$(find node_modules/onnxruntime-node/bin -name 'onnxruntime_binding.node' | head -1)
+          test -n "$binding"
+          echo "binding=$binding"
+          ldd "$binding" || true
+          echo '--- direct imports ---'
           node --input-type=module <<'NODE'
-          import path from 'node:path';
-          import {pathToFileURL} from 'node:url';
-          const ort=await import('onnxruntime-web');
-          globalThis[Symbol.for('onnxruntime')]=ort;
-          const mod=await import(pathToFileURL(path.resolve('node_modules/@huggingface/transformers/dist/transformers.web.js')).href);
-          const {pipeline,env}=mod;
-          env.allowLocalModels=false;
-          env.useBrowserCache=false;
-          console.log('web import ok', typeof pipeline, typeof ort.InferenceSession?.create);
-          const t=Date.now();
-          const extractor=await pipeline('feature-extraction','Xenova/multilingual-e5-small',{dtype:'q8'});
-          console.log('pipeline loaded',Date.now()-t);
-          const tensor=await extractor('query: 男が興奮して喘ぐ',{pooling:'mean',normalize:true});
-          console.log('embedding ok',tensor.dims, tensor.data.length, Date.now()-t);
-          if(tensor.data.length!==384)throw new Error(`unexpected embedding dim ${tensor.data.length}`);
+          for(const name of ['onnxruntime-node','@huggingface/transformers','sharp']){
+            const t=Date.now();
+            try{const m=await import(name);console.log(name,'OK',Date.now()-t,typeof m.InferenceSession?.create,typeof m.pipeline,typeof m.default);}
+            catch(e){console.log(name,'FAIL',e.code,e.message);process.exitCode=1;}
+          }
           NODE
