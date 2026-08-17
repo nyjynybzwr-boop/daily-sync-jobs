@@ -1,0 +1,39 @@
+name: Nuance runtime size check
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nuance-runtime-size-check.yml'
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Transformers runtime
+        working-directory: work
+        run: |
+          npm ci
+          npm install --no-save @huggingface/transformers@3.8.1
+      - name: Report runtime sizes
+        working-directory: work
+        run: |
+          echo '--- transformers ---'
+          du -sh node_modules/@huggingface/transformers || true
+          echo '--- onnxruntime-node ---'
+          du -sh node_modules/onnxruntime-node || true
+          echo '--- linux x64 files ---'
+          find node_modules/onnxruntime-node/bin -type f -printf '%s %p\n' 2>/dev/null | sort -nr | head -30
+          echo '--- sharp ---'
+          du -sh node_modules/sharp node_modules/@img 2>/dev/null || true
