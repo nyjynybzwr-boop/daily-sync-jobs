@@ -26,6 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           source scripts/ci/dlsite-jp-relay-env.sh
+          # Re-run after the Vercel deployment containing kind=ranking is live.
           node --input-type=module <<'NODE'
           const relay=process.env.DLSITE_JP_RELAY_BASE;
           const token=process.env.DLSITE_JP_RELAY_TOKEN;
@@ -37,7 +38,7 @@ jobs:
             const unique=[...new Set(ids)];
             const title=(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]||'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
             console.log('TOKYO_RANKING_HTML '+JSON.stringify({period,status:res.status,title,unique_count:unique.length,first:unique.slice(0,40),has_screenshot_work:unique.includes('RJ01512512'),html_length:html.length}));
-            if(!res.ok) throw new Error(`${period} relay HTTP ${res.status}`);
+            if(!res.ok) throw new Error(`${period} relay HTTP ${res.status}: ${html.slice(0,200)}`);
             if(unique.length<30) throw new Error(`${period} raw HTML has too few product IDs: ${unique.length}`);
           }
           NODE
