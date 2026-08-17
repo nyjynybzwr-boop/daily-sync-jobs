@@ -34,11 +34,9 @@ jobs:
         run: |
           npm ci
           npm audit --omit=dev
-      - name: Run base and named-male regressions
+      - name: Run full regressions including named-male v8
         working-directory: work
-        run: |
-          node scripts/test-nuance-v8-core.mjs
-          node scripts/test-nuance-v8-named-male.mjs
+        run: npm test
       - name: Materialize otome catalog
         working-directory: work
         run: git lfs pull --include="data/catalog/full/details.json"
