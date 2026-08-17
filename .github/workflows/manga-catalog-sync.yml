@@ -1,0 +1,81 @@
+name: Manga catalog continuation
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Continue the bounded full-catalog walk once per day until checkpoint.done=true.
+    # Offset from the existing audio jobs so DLsite is not hit at the same time.
+    - cron: '0 17 * * *'
+
+concurrency:
+  group: manga-catalog-continuation
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: |
+          npm ci
+          npm install --no-save devalue
+
+      - name: Materialize existing manga details
+        working-directory: work
+        run: git lfs pull --include="data/manga/catalog/full/details.json" || true
+
+      - name: Continue up to 60 listing pages and first detail batch
+        working-directory: work
+        env:
+          MAX_PAGES_PER_RUN: '60'
+          BATCH_SIZE: '700'
+          PAGE_DELAY_MS: '2000'
+          DETAIL_DELAY_MS: '800'
+        run: bash scripts/ci/run-h.sh
+
+      - name: Finish detail backlog from this index batch
+        working-directory: work
+        env:
+          DATA_ROOT: data/manga/catalog
+          WORK_TYPE_FILTER: MNG
+          BATCH_SIZE: '700'
+          DETAIL_DELAY_MS: '800'
+        run: |
+          for i in $(seq 1 12); do
+            ENRICHED=$(node -e "const fs=require('fs');const p='data/manga/catalog/full/details.json';console.log(fs.existsSync(p)?Object.keys(JSON.parse(fs.readFileSync(p))).length:0)")
+            TOTAL=$(node -e "const fs=require('fs');const p='data/manga/catalog/index/ids.json';console.log(fs.existsSync(p)?Object.keys(JSON.parse(fs.readFileSync(p))).length:0)")
+            echo "before batch $i: enriched=$ENRICHED total=$TOTAL"
+            [ "$ENRICHED" -ge "$TOTAL" ] && break
+            node scripts/collect-catalog-details-batch.mjs
+          done
+
+      - name: Verify batch state
+        working-directory: work
+        run: |
+          ENRICHED=$(node -e "const fs=require('fs');const p='data/manga/catalog/full/details.json';console.log(fs.existsSync(p)?Object.keys(JSON.parse(fs.readFileSync(p))).length:0)")
+          TOTAL=$(node -e "const fs=require('fs');const p='data/manga/catalog/index/ids.json';console.log(fs.existsSync(p)?Object.keys(JSON.parse(fs.readFileSync(p))).length:0)")
+          CHECKPOINT=$(node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('data/manga/catalog/index/checkpoint.json'));console.log(JSON.stringify(p))")
+          echo "manga catalog: enriched=$ENRICHED total_indexed=$TOTAL checkpoint=$CHECKPOINT"
+          test "$TOTAL" -gt 0
+          test "$ENRICHED" -ge "$TOTAL"
+
+      - name: Push checkpoint and catalog
+        working-directory: work
+        run: bash scripts/ci/push.sh "data/manga/catalog/index/checkpoint.json data/manga/catalog/index/ids.json data/manga/catalog/full/details.json"
