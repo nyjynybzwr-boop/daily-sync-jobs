@@ -8,7 +8,7 @@ on:
         default: '60'
       batch_size:
         description: 'Max product details to enrich this run'
-        default: '700'
+        default: '100'
 
 concurrency:
   group: manga-catalog-public-fallback
@@ -16,6 +16,7 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   crawl:
@@ -45,13 +46,16 @@ jobs:
         working-directory: work
         run: git lfs pull --include="data/manga/catalog/full/details.json" || true
 
-      - name: Crawl manga catalog chunk
+      - name: Crawl manga catalog chunk through Tokyo relay
         working-directory: work
         env:
           MAX_PAGES_PER_RUN: ${{ github.event.inputs.max_pages || '60' }}
-          BATCH_SIZE: ${{ github.event.inputs.batch_size || '700' }}
+          BATCH_SIZE: ${{ github.event.inputs.batch_size || '100' }}
           DETAIL_DELAY_MS: '800'
-        run: bash scripts/ci/run-h.sh
+        run: |
+          set -euo pipefail
+          source scripts/ci/dlsite-jp-relay-env.sh
+          bash scripts/ci/run-h.sh
 
       - name: Push manga crawl progress to private main
         working-directory: work
