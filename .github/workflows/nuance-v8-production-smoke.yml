@@ -1,0 +1,42 @@
+name: Nuance v8 production smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nuance-v8-production-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout staged private branch
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch agent/nuance-v8-production --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        working-directory: work
+        run: npm ci
+      - name: Syntax check production files
+        working-directory: work
+        run: |
+          node --check api/nuance-search.js
+          node --check web/all-nuance-search.js
+          node --check web/all.js
+      - name: Run regressions
+        working-directory: work
+        run: npm test
+      - name: Run web syntax checker
+        working-directory: work
+        run: node scripts/check-web-syntax.mjs
