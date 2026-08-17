@@ -1,4 +1,4 @@
-name: Verify fixed manga catalog index once
+name: Audit existing manga work types once
 
 on:
   push:
@@ -10,9 +10,9 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout private source
         env:
@@ -20,24 +20,23 @@ jobs:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
           GIT_LFS_SKIP_SMUDGE: '1'
         run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Run fixed collector against one live comic page
+      - name: Materialize manga details
         working-directory: work
-        env:
-          DLSITE_CATALOG_BASE: https://www.dlsite.com/girls-touch/works/type/=/work_type_category/comic
-          DATA_ROOT: /tmp/manga-index-check
-          MAX_PAGES_PER_RUN: '1'
-          PAGE_DELAY_MS: '0'
+        run: git lfs pull --include="data/manga/catalog/full/details.json"
+      - name: Count current work types
+        working-directory: work
         run: |
-          node scripts/collect-catalog-index.mjs
           node - <<'NODE'
           const fs=require('fs');
-          const ids=JSON.parse(fs.readFileSync('/tmp/manga-index-check/index/ids.json'));
-          const cp=JSON.parse(fs.readFileSync('/tmp/manga-index-check/index/checkpoint.json'));
-          const count=Object.keys(ids).length;
-          console.log('FIXED_MANGA_INDEX_VERIFY '+JSON.stringify({count,last_page:cp.last_page,done:cp.done,stopped_reason:cp.stopped_reason,sample:Object.values(ids).slice(0,5)}));
-          if(count !== 30) throw new Error(`Expected exactly 30 result-grid works on page 1, got ${count}`);
-          if(cp.last_page !== 1 || cp.done) throw new Error(`Unexpected checkpoint ${JSON.stringify(cp)}`);
+          const ids=JSON.parse(fs.readFileSync('data/manga/catalog/index/ids.json'));
+          const details=JSON.parse(fs.readFileSync('data/manga/catalog/full/details.json'));
+          const groups=new Map();
+          for(const [id,row] of Object.entries(details)) {
+            const key=`${row.work_type_value ?? 'null'}|${row.work_type_name ?? 'null'}|excluded=${Boolean(row.excluded_work_type)}|error=${Boolean(row.detail_error)}`;
+            if(!groups.has(key)) groups.set(key,{key,count:0,samples:[]});
+            const g=groups.get(key); g.count++;
+            if(g.samples.length<8) g.samples.push({id,title:ids[id]?.title||row.title||'',url:ids[id]?.url||row.url||''});
+          }
+          const sorted=[...groups.values()].sort((a,b)=>b.count-a.count);
+          console.log('MANGA_WORK_TYPE_DISTRIBUTION '+JSON.stringify({indexed:Object.keys(ids).length,details:Object.keys(details).length,groups:sorted}));
           NODE
