@@ -2,6 +2,10 @@ name: Nuance v8 production index
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nuance-v8-production-index.yml'
 
 concurrency:
   group: nuance-v8-production-index
