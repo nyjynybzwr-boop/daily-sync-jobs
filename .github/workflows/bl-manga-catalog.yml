@@ -8,7 +8,7 @@ on:
         default: '60'
       batch_size:
         description: 'Max product details to enrich this run'
-        default: '100'
+        default: '1000'
   push:
     paths:
       - '.github/workflows/bl-manga-catalog.yml'
@@ -56,7 +56,7 @@ jobs:
         working-directory: work
         env:
           INPUT_MAX_PAGES: ${{ github.event.inputs.max_pages || '60' }}
-          INPUT_BATCH_SIZE: ${{ github.event.inputs.batch_size || '100' }}
+          INPUT_BATCH_SIZE: ${{ github.event.inputs.batch_size || '1000' }}
           DLSITE_JP_RELAY_ORIGIN: ${{ vars.DLSITE_JP_RELAY_ORIGIN }}
         run: |
           set -euo pipefail
@@ -81,7 +81,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NEXT_MAX_PAGES: ${{ github.event.inputs.max_pages || '60' }}
-          NEXT_BATCH_SIZE: ${{ github.event.inputs.batch_size || '100' }}
+          NEXT_BATCH_SIZE: ${{ github.event.inputs.batch_size || '1000' }}
         run: |
           set -euo pipefail
           CHECKPOINT='data/manga/bl/catalog/index/checkpoint.json'
