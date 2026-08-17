@@ -1,0 +1,186 @@
+name: Nuance v8 final production parallel
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nuance-v8-production-parallel.yml'
+
+concurrency:
+  group: nuance-v8-final-production-parallel
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    outputs:
+      build_branch: ${{ steps.freeze.outputs.build_branch }}
+      source_sha: ${{ steps.freeze.outputs.source_sha }}
+    steps:
+      - name: Freeze latest private source on temporary branch
+        id: freeze
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          BUILD_BRANCH: nuance-v8-shards-${{ github.run_id }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+          cd work
+          SOURCE_SHA=$(git rev-parse HEAD)
+          git checkout -b "$BUILD_BRANCH"
+          git push origin "HEAD:$BUILD_BRANCH"
+          echo "build_branch=$BUILD_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "frozen source=$SOURCE_SHA branch=$BUILD_BRANCH"
+
+  embed:
+    needs: init
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        shard: [0,1,2,3,4,5,6,7]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout frozen private build branch
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          BUILD_BRANCH: ${{ needs.init.outputs.build_branch }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch "$BUILD_BRANCH" --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install safe runtime
+        working-directory: work
+        run: |
+          npm ci
+          npm audit --omit=dev
+      - name: Materialize otome details
+        working-directory: work
+        run: git lfs pull --include="data/catalog/full/details.json"
+      - name: Embed one eighth with final scene logic
+        working-directory: work
+        env:
+          SHARD_INDEX: ${{ matrix.shard }}
+          SHARD_COUNT: '8'
+          EMBED_BATCH: '64'
+          SHARD_OUT_DIR: /tmp/nuance-v8-shard
+          SOURCE_SHA: ${{ needs.init.outputs.source_sha }}
+        run: node scripts/build-nuance-v8-shard-final.mjs
+      - name: Push private vector shard with race-safe retry
+        working-directory: work
+        env:
+          BUILD_BRANCH: ${{ needs.init.outputs.build_branch }}
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: |
+          PAD=$(printf '%02d' "$SHARD_INDEX")
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for i in 1 2 3 4 5 6 7 8; do
+            git fetch origin "$BUILD_BRANCH"
+            git reset --hard "origin/$BUILD_BRANCH"
+            mkdir -p artifacts/nuance-v8-shards
+            cp "/tmp/nuance-v8-shard/shard-${PAD}.bin" artifacts/nuance-v8-shards/
+            cp "/tmp/nuance-v8-shard/shard-${PAD}.json" artifacts/nuance-v8-shards/
+            git add "artifacts/nuance-v8-shards/shard-${PAD}.bin" "artifacts/nuance-v8-shards/shard-${PAD}.json"
+            if git diff --cached --quiet; then echo "shard already present"; exit 0; fi
+            git commit -m "tmp: nuance v8 vector shard ${PAD}"
+            if git push origin "HEAD:$BUILD_BRANCH"; then exit 0; fi
+            echo "shard push race, retry $i"
+            sleep $((i * 2))
+          done
+          echo 'failed to push shard after retries' >&2
+          exit 1
+
+  finalize:
+    needs: [init, embed]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout completed private shard branch
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          BUILD_BRANCH: ${{ needs.init.outputs.build_branch }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch "$BUILD_BRANCH" --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install safe runtime and regressions
+        working-directory: work
+        run: |
+          npm ci
+          npm audit --omit=dev
+          npm test
+      - name: Materialize otome details
+        working-directory: work
+        run: git lfs pull --include="data/catalog/full/details.json"
+      - name: Combine signed int8 shards and evaluate final production behavior
+        working-directory: work
+        env:
+          SHARD_COUNT: '8'
+          SHARD_DIR: artifacts/nuance-v8-shards
+          OUT_ROOT: /tmp/nuance-v8-final
+        run: node scripts/finalize-nuance-v8-shards-final.mjs
+      - name: Enforce final production gates
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const p=JSON.parse(fs.readFileSync('/tmp/nuance-v8-final/analysis/nuance-search-v8-production-eval.json','utf8'));
+          const byId=new Map(p.cases.map(row=>[row.id,row]));
+          const requireRank=(id,max)=>{
+            const row=byId.get(id);
+            if(!row||!Number.isInteger(row.rank)||row.rank>max)throw new Error(`${id}: rank=${row?.rank} max=${max}`);
+            return row;
+          };
+          const show=requireRank('gold-rj01066791-show-masturbation',50);
+          const self=requireRank('gold-rj01200426-plain-self-touch',12);
+          const passive=requireRank('gold-rj01093983-passive-touch',24);
+          const active=requireRank('gold-rj01093983-active-partner-touch',7);
+          if(!show.reasons.some(x=>x.startsWith('male-self-touch+')))throw new Error('show-masturbation lost male-self-touch evidence');
+          if(!self.reasons.some(x=>x.startsWith('male-self-touch+')))throw new Error('plain self-touch lost male-self-touch evidence');
+          if(!passive.reasons.some(x=>x.startsWith('partner-touch+'))||passive.reasons.some(x=>x.startsWith('male-self-touch+')))throw new Error('passive-touch actor/target regression');
+          if(!active.reasons.some(x=>x.startsWith('partner-touch+')))throw new Error('active partner-touch lost partner evidence');
+          if((p.metrics?.top50_rate??0)<0.8)throw new Error(`top50 rate too low: ${p.metrics?.top50_rate}`);
+          console.log('final gates ok',JSON.stringify({show:show.rank,self:self.rank,passive:passive.rank,active:active.rank,metrics:p.metrics}));
+          NODE
+      - name: Publish final index to latest private main with retry
+        working-directory: work
+        env:
+          BUILD_BRANCH: ${{ needs.init.outputs.build_branch }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for i in 1 2 3 4 5 6; do
+            git fetch origin main
+            git checkout -B main origin/main
+            mkdir -p api/data analysis
+            cp /tmp/nuance-v8-final/api/data/nuance-v8-meta.json api/data/nuance-v8-meta.json
+            cp /tmp/nuance-v8-final/api/data/nuance-v8-vectors.bin api/data/nuance-v8-vectors.bin
+            cp /tmp/nuance-v8-final/analysis/nuance-search-v8-production-eval.json analysis/nuance-search-v8-production-eval.json
+            git add api/data/nuance-v8-meta.json api/data/nuance-v8-vectors.bin analysis/nuance-search-v8-production-eval.json
+            if git diff --cached --quiet; then echo 'final index already current'; exit 0; fi
+            git commit -m '[skip actions] data: final nuance v8 production index'
+            if git push origin main; then exit 0; fi
+            echo "main push race, retry $i"
+            sleep $((i * 3))
+          done
+          echo 'failed to publish final index' >&2
+          exit 1
+      - name: Delete temporary private shard branch
+        if: always()
+        working-directory: work
+        env:
+          BUILD_BRANCH: ${{ needs.init.outputs.build_branch }}
+        run: git push origin --delete "$BUILD_BRANCH" || true
