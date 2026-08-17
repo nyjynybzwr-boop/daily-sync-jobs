@@ -1,0 +1,61 @@
+name: Scan raw 脚 contexts once
+
+on:
+  push:
+    paths:
+      - '.github/workflows/scan-leg-context-raw-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+          cd work
+          git lfs pull --include="data/catalog/full/details.json"
+
+      - name: Print raw 脚 contexts
+        working-directory: work
+        run: |
+          python3 - <<'PY'
+          import json,re
+          p='data/catalog/full/details.json'
+          with open(p,encoding='utf-8') as f: raw=json.load(f)
+          items=list(raw.values()) if isinstance(raw,dict) else raw
+          def strings(v,path='$'):
+              if isinstance(v,str): yield path,v
+              elif isinstance(v,list):
+                  for i,x in enumerate(v): yield from strings(x,f'{path}[{i}]')
+              elif isinstance(v,dict):
+                  for k,x in v.items(): yield from strings(x,f'{path}.{k}')
+          hits=[]
+          for it in items:
+              contexts=[]
+              for path,text in strings(it):
+                  start=0
+                  while True:
+                      i=text.find('脚',start)
+                      if i<0: break
+                      a=max(0,i-55); b=min(len(text),i+56)
+                      contexts.append({'path':path,'snippet':re.sub(r'\s+',' ',text[a:b])})
+                      start=i+1
+              if contexts:
+                  hits.append({'product_id':it.get('product_id'),'title':it.get('title'),'circle':it.get('circle'),'contexts':contexts})
+          print('RAW_LEG_ITEM_TOTAL='+str(len(hits)))
+          # Print a broad deterministic sample across the catalog rather than only the first IDs.
+          if len(hits)<=40: sample=hits
+          else:
+              idx=sorted(set(round(i*(len(hits)-1)/39) for i in range(40)))
+              sample=[hits[i] for i in idx]
+          for h in sample: print('RAW_LEG_HIT '+json.dumps(h,ensure_ascii=False))
+          PY
