@@ -1,0 +1,52 @@
+name: Nuance v8 Vercel runtime check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nuance-v8-vercel-runtime-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Probe deployment and production alias
+        run: |
+          node --input-type=module <<'NODE'
+          const deployment='https://dlsite-trend-radar-git-agent-nuance-v8-l-ad6b8b-hal-s-projects4.vercel.app';
+          const production='https://dlsite-trend-radar.vercel.app';
+          async function probeBase(base){
+            try{
+              const r=await fetch(base,{redirect:'follow',signal:AbortSignal.timeout(30000)});
+              console.log(`base ${base} -> ${r.status} final=${r.url}`);
+              return r.status<500;
+            }catch(e){console.log(`base ${base} failed: ${e.message}`);return false;}
+          }
+          await probeBase(deployment);
+          await probeBase(production);
+
+          async function api(base,q,market){
+            const u=new URL('/api/nuance-search',base);
+            u.searchParams.set('q',q);u.searchParams.set('market',market);
+            const t=Date.now();
+            const r=await fetch(u,{redirect:'follow',signal:AbortSignal.timeout(90000)});
+            const text=await r.text();
+            console.log(`${market} ${base} -> ${r.status} ${Date.now()-t}ms final=${r.url}`);
+            if(!r.ok)throw new Error(`${market} live HTTP ${r.status}: ${text.slice(0,500)}`);
+            const p=JSON.parse(text);
+            if(!Array.isArray(p.results)||p.results.length!==30)throw new Error(`${market} bad result count ${p.results?.length}`);
+            console.log(`${market} live ok works=${p.total_works} top=${p.results[0]?.product_id}`);
+            return p;
+          }
+          const otome=await api(deployment,'男が目の前でオナニーを見せつけて、だんだん我慢できなくなって襲ってくる','otome');
+          const gold=otome.results.find(x=>x.product_id==='RJ01066791');
+          if(!gold||gold.rank>20)throw new Error(`live otome gold regressed: ${gold?.rank}`);
+          console.log(`live otome gold RJ01066791 #${gold.rank}`);
+          const bl=await api(deployment,'相手に触られて男が余裕をなくして喘ぐ','bl');
+          if(bl.total_works<2000)throw new Error(`live BL works too low ${bl.total_works}`);
+          NODE
