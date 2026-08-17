@@ -1,0 +1,53 @@
+name: Cloudflare migration build check
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/cloudflare-migration-check.yml'
+
+concurrency:
+  group: cloudflare-migration-build-check
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install project dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Check Cloudflare migration scripts
+        working-directory: work
+        run: |
+          node --check functions/api/nuance-search.js
+          node --check scripts/index-cloudflare-nuance.mjs
+          node --check scripts/eval-cloudflare-nuance.mjs
+          node --check cloudflare/workers/dlsite-relay/src/index.js
+
+      - name: Bundle Pages Functions
+        working-directory: work
+        run: npx --yes wrangler@latest pages functions build functions --outfile=/tmp/melosignal-pages-worker.js
+
+      - name: Verify bundle
+        run: |
+          test -s /tmp/melosignal-pages-worker.js
+          wc -c /tmp/melosignal-pages-worker.js
