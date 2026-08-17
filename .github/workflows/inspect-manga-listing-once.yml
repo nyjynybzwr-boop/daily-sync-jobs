@@ -20,9 +20,9 @@ jobs:
       - name: Inspect DLsite comic listing structure
         run: |
           npm install --no-save cheerio
-          node <<'NODE'
-          const fs = require('fs');
-          const cheerio = require('cheerio');
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import * as cheerio from 'cheerio';
           const url = 'https://www.dlsite.com/girls-touch/works/type/=/work_type_category/comic/page/1';
           const headers = {
             'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
