@@ -2,10 +2,6 @@ name: Nuance v8 production index
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/nuance-v8-production-index.yml'
 
 concurrency:
   group: nuance-v8-production-index
@@ -24,19 +20,20 @@ jobs:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
           GIT_LFS_SKIP_SMUDGE: '1'
-        run: |
-          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Install dependencies and production embedding runtime
+      - name: Install safe production embedding runtime
         working-directory: work
         run: |
           npm ci
-          npm install --save @huggingface/transformers@3.8.1
+          npm pkg set 'overrides.sharp=0.35.3'
+          npm install --no-save @huggingface/transformers@3.8.1
+          npm audit --omit=dev
 
       - name: Run actor-target regression tests
         working-directory: work
@@ -80,6 +77,6 @@ jobs:
           console.log(`index ok: works=${meta.total_works} scenes=${meta.total_scenes} dims=${meta.dimensions} bytes=${bytes}`);
           NODE
 
-      - name: Push production index and runtime dependency
+      - name: Push production index
         working-directory: work
-        run: bash scripts/ci/push.sh "package.json package-lock.json api/data/nuance-v8-meta.json api/data/nuance-v8-vectors.bin analysis/nuance-search-v8-production-eval.json"
+        run: bash scripts/ci/push.sh "api/data/nuance-v8-meta.json api/data/nuance-v8-vectors.bin analysis/nuance-search-v8-production-eval.json"
