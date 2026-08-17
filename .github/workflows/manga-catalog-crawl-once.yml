@@ -1,4 +1,4 @@
-name: Manga catalog crawl once
+name: Manga catalog clean recrawl once
 
 on:
   push:
@@ -37,60 +37,96 @@ jobs:
           npm ci
           npm install --no-save devalue
 
-      - name: Materialize existing manga catalog
+      - name: Materialize existing manga details
         working-directory: work
         run: git lfs pull --include="data/manga/catalog/full/details.json"
 
-      - name: Continue manga catalog until end
+      - name: Reset corrupted manga index and keep only reusable MNG details
+        working-directory: work
+        run: |
+          mkdir -p data/manga/catalog/index data/manga/catalog/full
+          printf '{}\n' > data/manga/catalog/index/ids.json
+          cat > data/manga/catalog/index/checkpoint.json <<'JSON'
+          {
+            "last_page": 0,
+            "done": false,
+            "stopped_reason": null,
+            "consecutive_empty_pages": 0
+          }
+          JSON
+          node - <<'NODE'
+          const fs = require('fs');
+          const file = 'data/manga/catalog/full/details.json';
+          const all = JSON.parse(fs.readFileSync(file));
+          const clean = {};
+          for (const [id, row] of Object.entries(all)) {
+            if (!row.excluded_work_type && !row.detail_error && row.work_type_value === 'MNG') clean[id] = row;
+          }
+          console.log(`Reusable valid MNG details: ${Object.keys(clean).length}/${Object.keys(all).length}`);
+          fs.writeFileSync(file, JSON.stringify(clean, null, 2) + '\n');
+          NODE
+
+      - name: Rebuild manga listing index from the real 30-work result grid
         working-directory: work
         env:
+          DLSITE_CATALOG_BASE: https://www.dlsite.com/girls-touch/works/type/=/work_type_category/comic
+          DATA_ROOT: data/manga/catalog
           MAX_PAGES_PER_RUN: '60'
+          PAGE_DELAY_MS: '2000'
+        run: |
+          set -e
+          for wave in $(seq 1 6); do
+            echo "=== clean manga index wave $wave ==="
+            node scripts/collect-catalog-index.mjs
+            DONE=$(node -e "const fs=require('fs'); console.log(JSON.parse(fs.readFileSync('data/manga/catalog/index/checkpoint.json')).done ? 'true' : 'false')")
+            COUNT=$(node -e "const fs=require('fs'); console.log(Object.keys(JSON.parse(fs.readFileSync('data/manga/catalog/index/ids.json'))).length)")
+            PAGE=$(node -e "const fs=require('fs'); console.log(JSON.parse(fs.readFileSync('data/manga/catalog/index/checkpoint.json')).last_page)")
+            echo "index state: count=$COUNT last_page=$PAGE done=$DONE"
+            if [ "$DONE" = "true" ]; then break; fi
+          done
+          node - <<'NODE'
+          const fs = require('fs');
+          const ids = JSON.parse(fs.readFileSync('data/manga/catalog/index/ids.json'));
+          const cp = JSON.parse(fs.readFileSync('data/manga/catalog/index/checkpoint.json'));
+          const count = Object.keys(ids).length;
+          console.log('CLEAN_MANGA_INDEX_AUDIT ' + JSON.stringify({count,last_page:cp.last_page,done:cp.done,stopped_reason:cp.stopped_reason}));
+          if (!cp.done) throw new Error('Manga listing did not reach its end within 6 waves');
+          if (count < 7000 || count > 8500) throw new Error(`Manga index count ${count} is outside the expected 7k-8.5k range`);
+          if (cp.last_page < 250) throw new Error(`Manga listing ended suspiciously early at page ${cp.last_page}`);
+          NODE
+
+      - name: Prune reusable details to the rebuilt index
+        working-directory: work
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const ids = JSON.parse(fs.readFileSync('data/manga/catalog/index/ids.json'));
+          const file = 'data/manga/catalog/full/details.json';
+          const old = JSON.parse(fs.readFileSync(file));
+          const keep = {};
+          for (const [id, row] of Object.entries(old)) if (ids[id]) keep[id] = row;
+          console.log(`Reusable details inside clean index: ${Object.keys(keep).length}/${Object.keys(ids).length}`);
+          fs.writeFileSync(file, JSON.stringify(keep, null, 2) + '\n');
+          NODE
+
+      - name: Enrich every missing manga work
+        working-directory: work
+        env:
           BATCH_SIZE: '700'
           DETAIL_DELAY_MS: '800'
           DATA_ROOT: data/manga/catalog
           WORK_TYPE_FILTER: MNG
         run: |
           set -e
-          for wave in $(seq 1 4); do
-            echo "=== manga crawl wave $wave ==="
-            bash scripts/ci/run-h.sh
-
-            while true; do
-              ENRICHED=$(node -e "const fs=require('fs'); console.log(Object.keys(JSON.parse(fs.readFileSync('data/manga/catalog/full/details.json'))).length)")
-              TOTAL=$(node -e "const fs=require('fs'); console.log(Object.keys(JSON.parse(fs.readFileSync('data/manga/catalog/index/ids.json'))).length)")
-              echo "wave $wave detail state: enriched=$ENRICHED indexed=$TOTAL"
-              if [ "$ENRICHED" -ge "$TOTAL" ]; then break; fi
-              node scripts/collect-catalog-details-batch.mjs
-            done
-
-            node - <<'NODE'
-          const fs = require('fs');
-          const ids = JSON.parse(fs.readFileSync('data/manga/catalog/index/ids.json'));
-          const details = JSON.parse(fs.readFileSync('data/manga/catalog/full/details.json'));
-          const checkpoint = JSON.parse(fs.readFileSync('data/manga/catalog/index/checkpoint.json'));
-          const rows = Object.values(details);
-          console.log('MANGA_AUDIT ' + JSON.stringify({
-            indexed: Object.keys(ids).length,
-            processed: rows.length,
-            manga: rows.filter(x => !x.excluded_work_type && x.work_type_value === 'MNG').length,
-            excluded_non_mng: rows.filter(x => x.excluded_work_type).length,
-            detail_errors: rows.filter(x => x.detail_error).length,
-            last_page: checkpoint.last_page,
-            done: checkpoint.done,
-            stopped_reason: checkpoint.stopped_reason,
-          }));
-          NODE
-
-            bash scripts/ci/push.sh "data/manga/catalog/index data/manga/catalog/full/details.json"
-
-            DONE=$(node -e "const fs=require('fs'); console.log(JSON.parse(fs.readFileSync('data/manga/catalog/index/checkpoint.json')).done ? 'true' : 'false')")
-            if [ "$DONE" = "true" ]; then
-              echo "Manga listing fully walked."
-              break
-            fi
+          for batch in $(seq 1 12); do
+            PROCESSED=$(node -e "const fs=require('fs'); console.log(Object.keys(JSON.parse(fs.readFileSync('data/manga/catalog/full/details.json'))).length)")
+            TOTAL=$(node -e "const fs=require('fs'); console.log(Object.keys(JSON.parse(fs.readFileSync('data/manga/catalog/index/ids.json'))).length)")
+            echo "detail state before batch $batch: processed=$PROCESSED indexed=$TOTAL"
+            if [ "$PROCESSED" -ge "$TOTAL" ]; then break; fi
+            node scripts/collect-catalog-details-batch.mjs
           done
 
-      - name: Final manga catalog audit
+      - name: Final clean manga catalog audit
         working-directory: work
         run: |
           node - <<'NODE'
@@ -98,9 +134,10 @@ jobs:
           const ids = JSON.parse(fs.readFileSync('data/manga/catalog/index/ids.json'));
           const details = JSON.parse(fs.readFileSync('data/manga/catalog/full/details.json'));
           const checkpoint = JSON.parse(fs.readFileSync('data/manga/catalog/index/checkpoint.json'));
-          const rows = Object.values(details);
+          const idSet = new Set(Object.keys(ids));
+          const rows = Object.entries(details).filter(([id]) => idSet.has(id)).map(([,row]) => row);
           const stats = {
-            indexed: Object.keys(ids).length,
+            indexed: idSet.size,
             processed: rows.length,
             manga: rows.filter(x => !x.excluded_work_type && x.work_type_value === 'MNG').length,
             excluded_non_mng: rows.filter(x => x.excluded_work_type).length,
@@ -109,6 +146,15 @@ jobs:
             done: checkpoint.done,
             stopped_reason: checkpoint.stopped_reason,
           };
-          console.log('FINAL_MANGA_AUDIT ' + JSON.stringify(stats));
-          if (!stats.done || stats.processed < stats.indexed || stats.detail_errors !== 0) process.exit(1);
+          console.log('FINAL_CLEAN_MANGA_AUDIT ' + JSON.stringify(stats));
+          if (!stats.done) throw new Error('Listing crawl is not marked done');
+          if (stats.indexed < 7000 || stats.indexed > 8500) throw new Error(`Unexpected indexed count ${stats.indexed}`);
+          if (stats.processed !== stats.indexed) throw new Error(`Not all indexed works processed: ${stats.processed}/${stats.indexed}`);
+          if (stats.detail_errors !== 0) throw new Error(`Detail errors remain: ${stats.detail_errors}`);
+          if (stats.manga < 7000) throw new Error(`Too few verified manga works: ${stats.manga}`);
+          if (stats.excluded_non_mng > 200) throw new Error(`Too many non-MNG results leaked into manga listing: ${stats.excluded_non_mng}`);
           NODE
+
+      - name: Push clean manga catalog
+        working-directory: work
+        run: bash scripts/ci/push.sh "data/manga/catalog/index data/manga/catalog/full/details.json"
