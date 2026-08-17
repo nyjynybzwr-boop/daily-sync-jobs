@@ -1,4 +1,4 @@
-name: Trace screenshot manga work once
+name: Count manga sex-category scopes once
 
 on:
   push:
@@ -10,53 +10,40 @@ permissions:
   contents: read
 
 jobs:
-  trace:
+  inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
-      - name: Checkout private source
-        env:
-          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
-          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
-          GIT_LFS_SKIP_SMUDGE: '1'
-        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Materialize manga details
-        working-directory: work
-        run: git lfs pull --include="data/manga/catalog/full/details.json"
-      - name: Find screenshot work in current catalog and live DLsite
-        working-directory: work
+      - name: Compare female and gay manga scopes
         run: |
           npm install --no-save cheerio
           node --input-type=module <<'NODE'
-          import fs from 'node:fs';
           import * as cheerio from 'cheerio';
-          const needle='茅原啓佑';
-          const ids=JSON.parse(fs.readFileSync('data/manga/catalog/index/ids.json'));
-          const details=JSON.parse(fs.readFileSync('data/manga/catalog/full/details.json'));
-          const indexRows=Object.values(ids);
-          const indexMatches=indexRows.map((row,i)=>({i,id:row.product_id,title:row.title,url:row.url})).filter(x=>(x.title||'').includes(needle));
-          const detailMatches=Object.values(details).filter(x=>(x.title||'').includes(needle)).map(x=>({product_id:x.product_id,title:x.title,work_type_value:x.work_type_value,work_type_name:x.work_type_name,release_date_text:x.release_date_text,language_editions:x.language_editions,editions:x.editions,url:x.url}));
-          console.log('PRIVATE_MATCHES '+JSON.stringify({index_count:indexRows.length,index_matches:indexMatches,detail_matches:detailMatches}));
-
           const UA='Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
-          const searchUrls=[
-            'https://www.dlsite.com/girls-touch/fsr/=/keyword/'+encodeURIComponent(needle)+'/order/trend',
-            'https://www.dlsite.com/girls-touch/fsr/=/keyword/'+encodeURIComponent('茅原啓佑の×恋')+'/order/trend',
+          const prefix='https://www.dlsite.com/girls-touch/works/type/=/language/jp';
+          const tail='/work_category%5B0%5D/doujin/order/trend/work_type_category%5B0%5D/comic/work_type_category_name%5B0%5D/%E3%83%9E%E3%83%B3%E3%82%AC/options_and_or/and/options%5B0%5D/JPN/options%5B1%5D/NM/per_page/30/page/1/is_tl/1/show_type/3';
+          const scopes=[
+            ['female-only','/sex_category%5B0%5D/female'],
+            ['female-gay','/sex_category%5B0%5D/female/sex_category%5B1%5D/gay'],
+            ['gay-only','/sex_category%5B0%5D/gay'],
+            ['no-sex',''],
           ];
-          for(const url of searchUrls){
+          for(const [name,scope] of scopes){
+            const url=prefix+scope+tail;
             const res=await fetch(url,{headers:{'User-Agent':UA,'Accept-Language':'ja-JP,ja;q=0.9'},redirect:'follow'});
-            const html=await res.text(); const $=cheerio.load(html);
+            const html=await res.text(); const $=cheerio.load(html); const text=$('body').text().replace(/\s+/g,' ').trim();
+            const count=text.match(/([\d,]+)\s*件中\s*([\d,]+)\s*[-−ー]\s*([\d,]+)\s*件目/)?.[1]||null;
+            const summary=(text.match(/作品カテゴリ:[^検索条件]{0,500}/)||[])[0]||'';
+            const main=$('ul.n_work_list.type_grid.type_horizontal').filter((_,el)=>!$(el).hasClass('type_grid_min')).first();
             const rows=[];
-            $('a[href*="product_id/"]').each((_,a)=>{
-              const href=$(a).attr('href')||''; const m=href.match(/product_id\/(RJ\d+|VJ\d+|BJ\d+|AJ\d+)/i); if(!m)return;
-              const title=($(a).text()||$(a).attr('title')||$(a).find('img').attr('alt')||'').replace(/\s+/g,' ').trim();
-              const id=m[1].toUpperCase(); if(!rows.some(x=>x.id===id)) rows.push({id,title,href});
+            main.find('li.n_work_list_item').each((_,li)=>{
+              const a=$(li).find('a[href*="product_id/"]').first(); const href=a.attr('href')||''; const id=href.match(/product_id\/(RJ\d+|VJ\d+|BJ\d+|AJ\d+)/i)?.[1]||'';
+              const title=$(li).find('.work_name, .work_name a, [class*="work_name"]').first().text().replace(/\s+/g,' ').trim() || a.attr('title') || a.find('img').attr('alt') || '';
+              if(id) rows.push({id:id.toUpperCase(),title});
             });
-            const text=$('body').text().replace(/\s+/g,' ').trim();
-            const count=text.match(/([\d,]+)\s*件中\s*([\d,]+)\s*[-−ー]\s*([\d,]+)\s*件目/)?.[0]||'';
-            console.log('LIVE_SEARCH '+JSON.stringify({url,status:res.status,final_url:res.url,count,rows:rows.slice(0,30)}));
+            console.log('SEX_SCOPE '+JSON.stringify({name,count,status:res.status,final_url:res.url,summary:summary.slice(0,500),rows:rows.slice(0,5)}));
           }
           NODE
