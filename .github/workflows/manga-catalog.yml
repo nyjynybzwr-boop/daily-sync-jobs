@@ -52,6 +52,7 @@ jobs:
           MAX_PAGES_PER_RUN: ${{ github.event.inputs.max_pages || '60' }}
           BATCH_SIZE: ${{ github.event.inputs.batch_size || '100' }}
           DETAIL_DELAY_MS: '800'
+          DLSITE_JP_RELAY_ORIGIN: ${{ vars.DLSITE_JP_RELAY_ORIGIN }}
         run: |
           set -euo pipefail
           source scripts/ci/dlsite-jp-relay-env.sh
