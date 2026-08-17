@@ -1,0 +1,27 @@
+name: Cross production smoke
+
+on:
+  push:
+    paths:
+      - '.github/workflows/cross-production-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check production cross page
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://dlsite-trend-radar.pages.dev'
+          html="$(curl -LfsS --retry 3 --retry-delay 2 "$base/cross.html")"
+          printf '%s' "$html" | grep -Fq 'どちらが先に動く？'
+          printf '%s' "$html" | grep -Fq '次に波及しそうなもの'
+          printf '%s' "$html" | grep -Fq 'cross-leadlag-ui.js'
+          json="$(curl -LfsS --retry 3 --retry-delay 2 "$base/data/cross/otome.json")"
+          printf '%s' "$json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const x=JSON.parse(s); if(!x.lead_lag?.available) throw new Error('lead_lag unavailable'); if((x.lead_lag.coverage?.high_confidence||0)<1) throw new Error('no high confidence signals'); console.log(JSON.stringify({generated_at:x.lead_lag.generated_at,coverage:x.lead_lag.coverage,next:x.lead_lag.next_wave},null,2));})"
