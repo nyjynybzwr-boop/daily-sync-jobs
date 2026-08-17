@@ -1,0 +1,81 @@
+name: Cloudflare MeloSignal bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_relay:
+        description: 'Deploy the Tokyo DLsite relay Worker'
+        type: boolean
+        default: true
+      index_nuance:
+        description: 'Create/refresh both nuance Vectorize indexes'
+        type: boolean
+        default: true
+
+concurrency:
+  group: cloudflare-melosignal-bootstrap
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Require Cloudflare credentials
+        run: |
+          set -euo pipefail
+          if [[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+            echo 'CLOUDFLARE_ACCOUNT_ID secret is missing.' >&2
+            exit 1
+          fi
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+            echo 'CLOUDFLARE_API_TOKEN secret is missing.' >&2
+            exit 1
+          fi
+
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install project dependencies
+        if: ${{ inputs.index_nuance }}
+        working-directory: work
+        run: npm ci
+
+      - name: Deploy Tokyo DLsite relay Worker
+        if: ${{ inputs.deploy_relay }}
+        working-directory: work
+        run: npx --yes wrangler@latest deploy --config cloudflare/workers/dlsite-relay/wrangler.jsonc
+
+      - name: Build Cloudflare nuance indexes
+        if: ${{ inputs.index_nuance }}
+        working-directory: work
+        env:
+          CF_NUANCE_MARKET: all
+        run: npm run index:cloudflare-nuance
+
+      - name: Show Vectorize index status
+        if: ${{ inputs.index_nuance }}
+        working-directory: work
+        run: |
+          npx --yes wrangler@latest vectorize get melosignal-nuance-otome --json
+          npx --yes wrangler@latest vectorize get melosignal-nuance-bl --json
+
+      - name: Done
+        run: echo 'Cloudflare MeloSignal bootstrap completed.'
