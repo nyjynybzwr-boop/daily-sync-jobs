@@ -1,0 +1,91 @@
+name: Inspect manga listing DOM once
+
+on:
+  push:
+    paths:
+      - '.github/workflows/inspect-manga-listing-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Inspect DLsite comic listing structure
+        run: |
+          npm install --no-save cheerio
+          node <<'NODE'
+          const fs = require('fs');
+          const cheerio = require('cheerio');
+          const url = 'https://www.dlsite.com/girls-touch/works/type/=/work_type_category/comic/page/1';
+          const headers = {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+            'Accept-Language': 'ja-JP,ja;q=0.9',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          };
+          const res = await fetch(url, { headers, redirect: 'follow' });
+          const html = await res.text();
+          const $ = cheerio.load(html);
+          const idOf = (href='') => (href.match(/product_id\/(RJ\d+|VJ\d+|BJ\d+|AJ\d+)/i)?.[1] || '').toUpperCase();
+          const idsUnder = (el) => {
+            const s = new Set();
+            $(el).find('a[href*="/work/=/product_id/"]').each((_,a)=>{ const id=idOf($(a).attr('href')); if(id) s.add(id); });
+            return [...s];
+          };
+          const all = new Set();
+          $('a[href*="/work/=/product_id/"]').each((_,a)=>{ const id=idOf($(a).attr('href')); if(id) all.add(id); });
+          const selectorCandidates = [
+            '.work_1col','.work_2col','.search_result_img_box_inner','.n_worklist_item','.worklist_item',
+            '.worklist','ul.worklist','ol.worklist','[class*="worklist"]','[class*="search_result"]','[class*="work_"]',
+            'li','article'
+          ];
+          const selectors = selectorCandidates.map(sel => {
+            const els = $(sel).toArray();
+            const withProducts = els.map(el => ({
+              tag: el.tagName,
+              cls: $(el).attr('class') || '',
+              ids: idsUnder(el),
+              text: $(el).text().replace(/\s+/g,' ').trim().slice(0,180),
+            })).filter(x => x.ids.length);
+            return {
+              selector: sel,
+              matched_elements: els.length,
+              product_elements: withProducts.length,
+              unique_ids: [...new Set(withProducts.flatMap(x=>x.ids))].length,
+              sample: withProducts.slice(0,5),
+            };
+          });
+          const ancestorStats = new Map();
+          $('a[href*="/work/=/product_id/"]').each((_,a)=>{
+            const id=idOf($(a).attr('href')); if(!id) return;
+            let p=$(a).parent();
+            for(let depth=1; depth<=8 && p.length; depth++, p=p.parent()) {
+              const el=p.get(0); if(!el) break;
+              const cls=(p.attr('class')||'').trim().replace(/\s+/g,'.');
+              const key=`${el.tagName}${cls?'.'+cls:''}`;
+              if(!ancestorStats.has(key)) ancestorStats.set(key,{key,depths:new Set(),ids:new Set(),occurrences:0});
+              const row=ancestorStats.get(key); row.depths.add(depth); row.ids.add(id); row.occurrences++;
+            }
+          });
+          const ancestors=[...ancestorStats.values()].map(x=>({key:x.key,depths:[...x.depths],unique_ids:x.ids.size,occurrences:x.occurrences}))
+            .sort((a,b)=>Math.abs(a.unique_ids-30)-Math.abs(b.unique_ids-30) || a.unique_ids-b.unique_ids)
+            .slice(0,80);
+          const countTexts = [...html.matchAll(/([\d,]{3,})\s*件中\s*([\d,]+)\s*[-−ー]\s*([\d,]+)\s*件目/g)].map(m=>m[0]);
+          const out={status:res.status,final_url:res.url,html_length:html.length,all_unique_product_ids:all.size,count_texts:countTexts,selectors,ancestors};
+          fs.writeFileSync('manga-listing-dom.json',JSON.stringify(out,null,2));
+          console.log('MANGA_LISTING_DIAG '+JSON.stringify({status:out.status,all_unique_product_ids:out.all_unique_product_ids,count_texts:out.count_texts}));
+          for (const row of selectors) console.log('SELECTOR '+JSON.stringify({selector:row.selector,product_elements:row.product_elements,unique_ids:row.unique_ids,sample:row.sample.slice(0,2).map(x=>({tag:x.tag,cls:x.cls,ids:x.ids}))}));
+          console.log('ANCESTORS_NEAR_30 '+JSON.stringify(ancestors.slice(0,30)));
+          NODE
+      - name: Upload diagnostic
+        uses: actions/upload-artifact@v4
+        with:
+          name: manga-listing-dom
+          path: manga-listing-dom.json
+          retention-days: 1
