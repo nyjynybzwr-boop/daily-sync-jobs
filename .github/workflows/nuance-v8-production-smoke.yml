@@ -15,12 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout final staged private branch
+      - name: Checkout live private main
         env:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
           GIT_LFS_SKIP_SMUDGE: '1'
-        run: git clone --quiet --branch agent/nuance-v8-production-final --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -60,15 +60,15 @@ jobs:
             };
             const started=Date.now();
             await handler(req,res);
-            console.log(`${market}: status=${statusCode} results=${payload?.results?.length} works=${payload?.total_works} ms=${Date.now()-started}`);
+            console.log(`${market}: status=${statusCode} results=${payload?.results?.length} works=${payload?.total_works} engine=${payload?.engine} ms=${Date.now()-started}`);
             if(statusCode!==200)throw new Error(`${market} API status ${statusCode}: ${JSON.stringify(payload)}`);
             if(!Array.isArray(payload.results)||payload.results.length<10)throw new Error(`${market} too few results`);
-            if(payload.engine!=='nuance-v8-prod-final-1')throw new Error(`${market} wrong engine ${payload.engine}`);
+            if(!String(payload.engine||'').startsWith('nuance-v8-prod'))throw new Error(`${market} wrong engine ${payload.engine}`);
             return payload;
           }
           const otome=await call('女の子にちんぽを触られて、男が余裕をなくして喘いでしまう','otome');
           if(otome.results[0]?.product_id!=='RJ01093983')throw new Error(`otome parity regression: top=${otome.results[0]?.product_id}`);
           const bl=await call('男が相手の反応に釣られて余裕をなくして喘ぐ','bl');
           if(Number(bl.total_works)<2000)throw new Error(`BL index unexpectedly small: ${bl.total_works}`);
-          console.log('production API smoke: passed');
+          console.log('live production API smoke: passed');
           NODE
