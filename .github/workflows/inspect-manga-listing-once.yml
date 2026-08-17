@@ -1,4 +1,4 @@
-name: Strict post-push manga catalog audit once
+name: Probe Tokyo manga ranking HTML once
 
 on:
   push:
@@ -8,9 +8,10 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
-  audit:
+  probe:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -20,9 +21,23 @@ jobs:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
           GIT_LFS_SKIP_SMUDGE: '1'
         run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
-      - name: Materialize pushed manga details
+      - name: Probe raw ranking HTML through Tokyo relay
         working-directory: work
-        run: git lfs pull --include="data/manga/catalog/full/details.json"
-      - name: Run strict catalog audit from fresh clone
-        working-directory: work
-        run: node scripts/audit-manga-catalog.mjs
+        run: |
+          set -euo pipefail
+          source scripts/ci/dlsite-jp-relay-env.sh
+          node --input-type=module <<'NODE'
+          const relay=process.env.DLSITE_JP_RELAY_BASE;
+          const token=process.env.DLSITE_JP_RELAY_TOKEN;
+          const periods=['day','week','month'];
+          for(const period of periods){
+            const res=await fetch(`${relay}?kind=ranking&period=${period}`,{headers:{Authorization:`Bearer ${token}`}});
+            const html=await res.text();
+            const ids=[...html.matchAll(/product_id\/(RJ\d+|VJ\d+|BJ\d+|AJ\d+)/gi)].map(m=>m[1].toUpperCase());
+            const unique=[...new Set(ids)];
+            const title=(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]||'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+            console.log('TOKYO_RANKING_HTML '+JSON.stringify({period,status:res.status,title,unique_count:unique.length,first:unique.slice(0,40),has_screenshot_work:unique.includes('RJ01512512'),html_length:html.length}));
+            if(!res.ok) throw new Error(`${period} relay HTTP ${res.status}`);
+            if(unique.length<30) throw new Error(`${period} raw HTML has too few product IDs: ${unique.length}`);
+          }
+          NODE
