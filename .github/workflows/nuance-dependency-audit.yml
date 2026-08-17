@@ -25,11 +25,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install current project and Transformers.js
+      - name: Install saved Transformers.js dependency
         working-directory: work
         run: |
           npm ci
-          npm install --no-save @huggingface/transformers@3.8.1
+          npm install --save @huggingface/transformers@3.8.1
       - name: Print production audit
         working-directory: work
         run: npm audit --omit=dev || true
