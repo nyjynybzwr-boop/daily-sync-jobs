@@ -25,6 +25,10 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Materialize UI data
+        working-directory: work
+        run: git lfs pull --include="web/data/dashboard.json,web/data/catalog/search-index.json,web/data/catalog/bl/search-index.json,web/data/catalog/summary.json,web/data/catalog/bl/summary.json"
+
       - name: Static checks
         working-directory: work
         run: |
@@ -66,19 +70,16 @@ jobs:
             assert.match(hero, market==='bl'?/BL/:/乙女/,'hero market label must match');
           }
 
-          // URL must beat stale storage on cold entry.
           await page.goto(`${base}/index.html?market=otome`,{waitUntil:'networkidle'});
           await page.evaluate(()=>localStorage.setItem('trendRadarMarket','bl'));
           await page.reload({waitUntil:'networkidle'});
           await waitHome('otome');
 
-          // User switch must synchronize body, URL, storage and visible copy.
           await page.locator('#marketSelector [data-market="bl"]').click();
           await waitHome('bl');
           assert.equal(new URL(page.url()).searchParams.get('market'),'bl');
           assert.equal(await page.evaluate(()=>localStorage.getItem('trendRadarMarket')),'bl');
 
-          // Cross-page link generated on home must carry BL.
           await page.waitForTimeout(500);
           const allHref=await page.locator('a[href*="all.html"]').first().getAttribute('href');
           assert.ok(allHref && new URL(allHref,page.url()).searchParams.get('market')==='bl','all link must preserve BL');
@@ -88,12 +89,10 @@ jobs:
           const homeHref=await page.locator('.all-topbar .brand-lockup').getAttribute('href');
           assert.equal(new URL(homeHref,page.url()).searchParams.get('market'),'bl','catalog home link must preserve BL');
 
-          // Browser back from all-catalog must restore coherent BL state.
           await page.goBack({waitUntil:'networkidle'});
           await waitHome('bl');
           assert.equal(new URL(page.url()).searchParams.get('market'),'bl');
 
-          // Repeat path in otome so blue/BL state cannot leak back.
           await page.locator('#marketSelector [data-market="otome"]').click();
           await waitHome('otome');
           assert.equal(new URL(page.url()).searchParams.get('market'),'otome');
@@ -105,7 +104,6 @@ jobs:
           await page.goBack({waitUntil:'networkidle'});
           await waitHome('otome');
 
-          // Narrative -> works: incoming view slides and scroll resets to category top.
           await page.locator('.view-tab[data-view="narrative"]').click();
           await page.waitForSelector('#view-narrative.active');
           await page.waitForTimeout(30);
@@ -125,7 +123,6 @@ jobs:
           });
           assert.ok(Math.abs(pos.y-pos.expected)<8,`works should reset to view top: y=${pos.y}, expected=${pos.expected}`);
 
-          // Reverse direction should use leftward slide.
           await page.locator('.view-tab[data-view="narrative"]').click();
           await page.waitForTimeout(30);
           assert.ok(await page.locator('#view-narrative').evaluate(el=>el.classList.contains('home-view-enter-left')),'reverse tab switch should slide from left');
