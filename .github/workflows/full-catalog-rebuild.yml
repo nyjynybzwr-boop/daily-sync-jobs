@@ -1,0 +1,96 @@
+name: Full catalog rebuild
+
+on:
+  push:
+    paths:
+      - '.github/workflows/full-catalog-rebuild.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: full-catalog-rebuild
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout source main
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+          cd work
+          echo "source_sha=$(git rev-parse HEAD)"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Run regression suite
+        working-directory: work
+        run: npm test
+
+      - name: Materialize otome and BL catalogs
+        working-directory: work
+        run: git lfs pull --include="data/catalog/full/details.json,data/bl/catalog/full/details.json"
+
+      - name: Rebuild full otome catalog and insights
+        working-directory: work
+        run: bash scripts/ci/run-f.sh
+
+      - name: Rebuild full BL catalog and insights
+        working-directory: work
+        run: bash scripts/ci/run-g.sh
+
+      - name: Audit rebuilt relationship labels and kinship coverage
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          function values(file) {
+            const payload = JSON.parse(fs.readFileSync(file, 'utf8'));
+            return Array.isArray(payload) ? payload : Object.values(payload);
+          }
+
+          function auditMarket(name, detailsFile, indexFile) {
+            const source = values(detailsFile);
+            const index = JSON.parse(fs.readFileSync(indexFile, 'utf8'));
+            const byId = new Map(index.works.map((row) => [row.product_id, row]));
+            const tagged = source.filter((item) => Array.isArray(item?.tags) && item.tags.some((tag) => String(tag || '').trim() === '近親もの'));
+            const missing = tagged.filter((item) => !byId.get(item.product_id)?.labels?.includes('近親もの'));
+            console.log(`${name} rebuilt 近親もの coverage: ${tagged.length - missing.length}/${tagged.length}`);
+            if (missing.length) throw new Error(`${name}: missing 近親もの on ${missing.length} works`);
+            return tagged.length;
+          }
+
+          const otome = auditMarket('otome', 'data/catalog/full/details.json', 'web/data/catalog/search-index.json');
+          const bl = auditMarket('BL', 'data/bl/catalog/full/details.json', 'web/data/catalog/bl/search-index.json');
+          if (otome + bl !== 272) throw new Error(`Expected current combined kinship-tag corpus to be 272, got ${otome + bl}`);
+
+          const otomeIndex = JSON.parse(fs.readFileSync('web/data/catalog/search-index.json', 'utf8'));
+          const bassist = otomeIndex.works.find((row) => row?.product_id === 'RJ01690068');
+          if (!bassist) throw new Error('RJ01690068 missing from rebuilt otome index');
+          if (!bassist.labels.includes('恋人')) throw new Error('RJ01690068 must keep 恋人');
+          for (const bad of ['幼馴染', '先輩後輩', '再会']) {
+            if (bassist.labels.includes(bad)) throw new Error(`RJ01690068 must exclude ${bad}`);
+          }
+          console.log('RJ01690068 scoped relationship labels OK:', bassist.labels);
+          console.log(`combined rebuilt 近親もの coverage: ${otome + bl}/${otome + bl}`);
+          NODE
+
+      - name: Push rebuilt static outputs
+        working-directory: work
+        run: |
+          bash scripts/ci/push.sh "web/data/catalog/summary.json web/data/catalog/search-index.json web/data/catalog/similar-works.json web/data/reports/market-insights.json web/data/reports/market-insights-compact.json web/data/catalog/bl/summary.json web/data/catalog/bl/search-index.json web/data/catalog/bl/similar-works.json web/data/reports/bl/market-insights.json web/data/reports/bl/market-insights-compact.json"
