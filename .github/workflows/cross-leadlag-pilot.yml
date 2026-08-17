@@ -34,6 +34,17 @@ jobs:
           test -s data/manga/catalog/full/details.json
           node --check scripts/poc-cross-leadlag.mjs
 
+      - name: Inspect manga date fields
+        working-directory: work
+        run: |
+          node - <<'NODE'
+          const data=require('./data/manga/catalog/full/details.json');
+          const rows=Object.values(data).slice(0,100);
+          const keys=[...new Set(rows.flatMap(x=>Object.keys(x)).filter(k=>/date|time|year|month|regist|release/i.test(k)))];
+          const sample=rows.find(x=>keys.some(k=>x[k]!=null));
+          console.log(JSON.stringify({keys,sample:Object.fromEntries(keys.map(k=>[k,sample?.[k]]))},null,2));
+          NODE
+
       - name: Run lead-lag pilot
         working-directory: work
         run: node scripts/poc-cross-leadlag.mjs --json=/tmp/cross-leadlag.json
