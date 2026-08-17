@@ -30,15 +30,16 @@ jobs:
         run: |
           npm ci
           npm audit --omit=dev
+          npm test
       - name: Materialize otome catalog
         working-directory: work
         run: git lfs pull --include="data/catalog/full/details.json"
-      - name: Run v8-final evaluator at larger batch
+      - name: Run final named-male evaluator at larger batch
         working-directory: work
         env:
           EMBED_BATCH: '256'
           EMBED_SCENES_PER_WORK: '6'
-        run: node scripts/poc-nuance-embedding-search-v8-final.mjs
+        run: node scripts/poc-nuance-embedding-search-v8-final-named.mjs
       - name: Push final evaluation
         working-directory: work
         run: bash scripts/ci/push.sh "analysis/nuance-search-v8-eval.json"
@@ -62,15 +63,15 @@ jobs:
         run: |
           npm ci
           npm audit --omit=dev
-          node scripts/test-nuance-v8-core.mjs
+          npm test
       - name: Materialize otome catalog
         working-directory: work
         run: git lfs pull --include="data/catalog/full/details.json"
-      - name: Build production index at larger batch
+      - name: Build final production index at larger batch
         working-directory: work
         env:
           EMBED_BATCH: '256'
-        run: node scripts/build-nuance-search-v8-index.mjs
+        run: node scripts/build-nuance-search-v8-index-final.mjs
       - name: Enforce production gates
         working-directory: work
         run: |
