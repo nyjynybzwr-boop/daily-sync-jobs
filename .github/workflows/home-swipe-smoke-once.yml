@@ -1,0 +1,35 @@
+name: Home swipe smoke once
+
+on:
+  push:
+    paths:
+      - '.github/workflows/home-swipe-smoke-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check swipe UI
+        working-directory: work
+        run: |
+          node --check web/home-ui-navigation.js
+          grep -q "touchstart" web/home-ui-navigation.js
+          grep -q "touchend" web/home-ui-navigation.js
+          grep -q "switchViewBySwipe" web/home-ui-navigation.js
+          grep -q "import './home-ui-navigation.js';" web/refine-v4.js
+          node scripts/check-web-syntax.mjs
