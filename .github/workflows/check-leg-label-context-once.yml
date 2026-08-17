@@ -38,10 +38,12 @@ jobs:
         run: |
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
-          import { detectLabels } from './scripts/lib/analysis-core-safe.mjs';
+          import { detectLabels, ensureTokenizer } from './scripts/lib/analysis-core-safe.mjs';
 
+          await ensureTokenizer();
           const raw = JSON.parse(fs.readFileSync('data/catalog/full/details.json','utf8'));
           const items = Array.isArray(raw) ? raw : Object.values(raw);
+          console.log(`CATALOG_ITEMS=${items.length}`);
 
           function containsExactString(value,target){
             if (value === target) return true;
@@ -72,9 +74,10 @@ jobs:
 
           let printedShape=false;
           const hits=[];
+          let errors=0;
           for (const item of items) {
             let detected;
-            try { detected=detectLabels(item); } catch(e) { continue; }
+            try { detected=detectLabels(item); } catch(e) { errors++; continue; }
             if (!printedShape) {
               console.log('DETECT_SHAPE '+JSON.stringify(detected).slice(0,1200));
               printedShape=true;
@@ -88,6 +91,7 @@ jobs:
               contexts:contexts(item),
             });
           }
+          console.log(`DETECT_ERRORS=${errors}`);
           console.log(`LEG_LABEL_TOTAL=${hits.length}`);
           for (const hit of hits) console.log('LEG_HIT '+JSON.stringify(hit));
           NODE
