@@ -1,4 +1,4 @@
-name: Probe desktop manga listing once
+name: Call Tokyo manga probe once
 
 on:
   push:
@@ -14,36 +14,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Compare desktop and touch manga listings
+      - name: Call deployed Tokyo Vercel probe
         run: |
-          npm install --no-save cheerio
-          node --input-type=module <<'NODE'
-          import * as cheerio from 'cheerio';
-          const UAs={
-            mobile:'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
-            desktop:'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
-          };
-          const routes=[
-            ['touch','https://www.dlsite.com/girls-touch/works/type/=/work_type_category/comic'],
-            ['desktop','https://www.dlsite.com/girls/works/type/=/work_type_category/comic'],
-          ];
-          for(const [route,base] of routes) for(const page of [1,240,259,260]) for(const [uaName,ua] of Object.entries(UAs)){
-            const res=await fetch(`${base}/page/${page}`,{headers:{'User-Agent':ua,'Accept-Language':'ja-JP,ja;q=0.9'},redirect:'follow'});
-            const html=await res.text(); const $=cheerio.load(html); const body=$('body').text().replace(/\s+/g,' ').trim();
-            const count=body.match(/([\d,]+)\s*件中\s*([\d,]+)\s*[-−ー]\s*([\d,]+)\s*件目/)?.[0]||'';
-            const all=[];
-            $('a[href*="product_id/"]').each((_,a)=>{const href=$(a).attr('href')||'';const id=href.match(/product_id\/(RJ\d+|VJ\d+|BJ\d+|AJ\d+)/i)?.[1];if(id&&!all.includes(id.toUpperCase()))all.push(id.toUpperCase())});
-            const candidateSelectors=['.work_1col','.work_2col','.search_result_img_box_inner','.n_worklist_item','.n_work_list_item','.worklist_item','li[class*="work"]','article'];
-            const selectorStats=candidateSelectors.map(sel=>{
-              const els=$(sel).toArray(); const ids=[];
-              for(const el of els) $(el).find('a[href*="product_id/"]').each((_,a)=>{const id=($(a).attr('href')||'').match(/product_id\/(RJ\d+|VJ\d+|BJ\d+|AJ\d+)/i)?.[1];if(id&&!ids.includes(id.toUpperCase()))ids.push(id.toUpperCase())});
-              return {sel,elements:els.length,ids:ids.length,sample:ids.slice(0,5)};
-            }).filter(x=>x.ids);
-            const titleMatches=[];
-            $('a[href*="product_id/"]').each((_,a)=>{const t=($(a).text()||$(a).attr('title')||$(a).find('img').attr('alt')||'').replace(/\s+/g,' ').trim(); if(/茅原啓佑/.test(t)) titleMatches.push({t,href:$(a).attr('href')||''})});
-            console.log('DESKTOP_PROBE '+JSON.stringify({route,page,uaName,status:res.status,final_url:res.url,title:$('title').text().trim(),count,all_unique:all.length,all_first:all.slice(0,10),selectorStats,titleMatches,body_has_7743:body.includes('7743'),body_has_7196:body.includes('7196')}));
-          }
-          NODE
+          set -e
+          URL='https://dlsite-trend-radar.vercel.app/api/manga-region-probe'
+          echo "Calling $URL"
+          BODY=$(curl -fsSL --retry 2 --retry-delay 2 "$URL")
+          echo "TOKYO_PROBE_RESPONSE $BODY"
+          node -e '
+            const x=JSON.parse(process.argv[1]);
+            console.log("TOKYO_PROBE_AUDIT "+JSON.stringify({region:x.region,listing:x.listing,missing:x.missing,known:x.known}));
+            if (x.region !== "hnd1") throw new Error(`Expected hnd1, got ${x.region}`);
+            if (String(x.listing?.count) !== "7743") throw new Error(`Expected listing count 7743, got ${x.listing?.count}`);
+            if (x.missing?.geo_blocked) throw new Error("RJ01512512 is still geo-blocked from Tokyo probe");
+          ' "$BODY"
