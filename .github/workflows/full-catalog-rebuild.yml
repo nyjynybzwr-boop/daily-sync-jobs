@@ -14,83 +14,160 @@ permissions:
   contents: read
 
 jobs:
-  rebuild:
+  otome:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 45
     steps:
       - name: Checkout source main
         env:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
           GIT_LFS_SKIP_SMUDGE: '1'
-        run: |
-          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
-          cd work
-          echo "source_sha=$(git rev-parse HEAD)"
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Install dependencies
+      - name: Install and test
         working-directory: work
-        run: npm ci
+        run: |
+          npm ci
+          npm test
 
-      - name: Run regression suite
+      - name: Materialize otome catalog
         working-directory: work
-        run: npm test
+        run: git lfs pull --include="data/catalog/full/details.json"
 
-      - name: Materialize otome and BL catalogs
+      - name: Rebuild otome full-catalog files
         working-directory: work
-        run: git lfs pull --include="data/catalog/full/details.json,data/bl/catalog/full/details.json"
+        run: |
+          node scripts/build-catalog-web.mjs
+          node scripts/postprocess-catalog-sensitive-labels.mjs
+          node scripts/normalize-catalog-summary.mjs
+          node scripts/compact-catalog-search.mjs
+          node scripts/build-similar-works.mjs
 
-      - name: Rebuild full otome catalog and insights
-        working-directory: work
-        run: bash scripts/ci/run-f.sh
-
-      - name: Rebuild full BL catalog and insights
-        working-directory: work
-        run: bash scripts/ci/run-g.sh
-
-      - name: Audit rebuilt relationship labels and kinship coverage
+      - name: Audit otome rebuilt labels
         working-directory: work
         run: |
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
-
-          function values(file) {
-            const payload = JSON.parse(fs.readFileSync(file, 'utf8'));
-            return Array.isArray(payload) ? payload : Object.values(payload);
-          }
-
-          function auditMarket(name, detailsFile, indexFile) {
-            const source = values(detailsFile);
-            const index = JSON.parse(fs.readFileSync(indexFile, 'utf8'));
-            const byId = new Map(index.works.map((row) => [row.product_id, row]));
-            const tagged = source.filter((item) => Array.isArray(item?.tags) && item.tags.some((tag) => String(tag || '').trim() === '近親もの'));
-            const missing = tagged.filter((item) => !byId.get(item.product_id)?.labels?.includes('近親もの'));
-            console.log(`${name} rebuilt 近親もの coverage: ${tagged.length - missing.length}/${tagged.length}`);
-            if (missing.length) throw new Error(`${name}: missing 近親もの on ${missing.length} works`);
-            return tagged.length;
-          }
-
-          const otome = auditMarket('otome', 'data/catalog/full/details.json', 'web/data/catalog/search-index.json');
-          const bl = auditMarket('BL', 'data/bl/catalog/full/details.json', 'web/data/catalog/bl/search-index.json');
-          if (otome + bl !== 272) throw new Error(`Expected current combined kinship-tag corpus to be 272, got ${otome + bl}`);
-
-          const otomeIndex = JSON.parse(fs.readFileSync('web/data/catalog/search-index.json', 'utf8'));
-          const bassist = otomeIndex.works.find((row) => row?.product_id === 'RJ01690068');
-          if (!bassist) throw new Error('RJ01690068 missing from rebuilt otome index');
-          if (!bassist.labels.includes('恋人')) throw new Error('RJ01690068 must keep 恋人');
-          for (const bad of ['幼馴染', '先輩後輩', '再会']) {
-            if (bassist.labels.includes(bad)) throw new Error(`RJ01690068 must exclude ${bad}`);
-          }
-          console.log('RJ01690068 scoped relationship labels OK:', bassist.labels);
-          console.log(`combined rebuilt 近親もの coverage: ${otome + bl}/${otome + bl}`);
+          const detailsPayload = JSON.parse(fs.readFileSync('data/catalog/full/details.json', 'utf8'));
+          const details = Array.isArray(detailsPayload) ? detailsPayload : Object.values(detailsPayload);
+          const index = JSON.parse(fs.readFileSync('web/data/catalog/search-index.json', 'utf8'));
+          if (!index.compacted || index.works.length !== index.total_works) throw new Error('otome search index validation failed');
+          const byId = new Map(index.works.map((row) => [row.product_id, row]));
+          const tagged = details.filter((item) => Array.isArray(item?.tags) && item.tags.some((tag) => String(tag || '').trim() === '近親もの'));
+          const missing = tagged.filter((item) => !byId.get(item.product_id)?.labels?.includes('近親もの'));
+          console.log(`otome rebuilt 近親もの coverage: ${tagged.length - missing.length}/${tagged.length}`);
+          if (tagged.length !== 203 || missing.length) throw new Error(`otome kinship audit failed: tagged=${tagged.length}, missing=${missing.length}`);
+          const bassist = byId.get('RJ01690068');
+          if (!bassist?.labels?.includes('恋人')) throw new Error('RJ01690068 must keep 恋人');
+          for (const bad of ['幼馴染', '先輩後輩', '再会']) if (bassist.labels.includes(bad)) throw new Error(`RJ01690068 must exclude ${bad}`);
+          console.log('otome scoped relationship audit OK');
           NODE
 
-      - name: Push rebuilt static outputs
+      - name: Upload otome catalog files
+        uses: actions/upload-artifact@v4
+        with:
+          name: rebuilt-otome-catalog
+          path: |
+            work/web/data/catalog/summary.json
+            work/web/data/catalog/search-index.json
+            work/web/data/catalog/similar-works.json
+          if-no-files-found: error
+
+  bl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout source main
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install and test
         working-directory: work
         run: |
-          bash scripts/ci/push.sh "web/data/catalog/summary.json web/data/catalog/search-index.json web/data/catalog/similar-works.json web/data/reports/market-insights.json web/data/reports/market-insights-compact.json web/data/catalog/bl/summary.json web/data/catalog/bl/search-index.json web/data/catalog/bl/similar-works.json web/data/reports/bl/market-insights.json web/data/reports/bl/market-insights-compact.json"
+          npm ci
+          npm test
+
+      - name: Materialize BL catalog
+        working-directory: work
+        run: git lfs pull --include="data/bl/catalog/full/details.json"
+
+      - name: Rebuild BL full-catalog files
+        working-directory: work
+        run: |
+          export DATA_ROOT=data/bl/catalog
+          export OUT_DIR=web/data/catalog/bl
+          node scripts/build-catalog-web.mjs
+          SUMMARY_PATH=web/data/catalog/bl/summary.json node scripts/build-bl-role-summary.mjs
+          node scripts/postprocess-catalog-sensitive-labels.mjs
+          node scripts/normalize-catalog-summary.mjs
+          node scripts/compact-catalog-search.mjs
+          node scripts/build-similar-works.mjs
+
+      - name: Audit BL rebuilt labels
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const detailsPayload = JSON.parse(fs.readFileSync('data/bl/catalog/full/details.json', 'utf8'));
+          const details = Array.isArray(detailsPayload) ? detailsPayload : Object.values(detailsPayload);
+          const index = JSON.parse(fs.readFileSync('web/data/catalog/bl/search-index.json', 'utf8'));
+          if (!index.compacted || index.works.length !== index.total_works) throw new Error('BL search index validation failed');
+          const byId = new Map(index.works.map((row) => [row.product_id, row]));
+          const tagged = details.filter((item) => Array.isArray(item?.tags) && item.tags.some((tag) => String(tag || '').trim() === '近親もの'));
+          const missing = tagged.filter((item) => !byId.get(item.product_id)?.labels?.includes('近親もの'));
+          console.log(`BL rebuilt 近親もの coverage: ${tagged.length - missing.length}/${tagged.length}`);
+          if (tagged.length !== 69 || missing.length) throw new Error(`BL kinship audit failed: tagged=${tagged.length}, missing=${missing.length}`);
+          console.log('BL kinship audit OK');
+          NODE
+
+      - name: Upload BL catalog files
+        uses: actions/upload-artifact@v4
+        with:
+          name: rebuilt-bl-catalog
+          path: |
+            work/web/data/catalog/bl/summary.json
+            work/web/data/catalog/bl/search-index.json
+            work/web/data/catalog/bl/similar-works.json
+          if-no-files-found: error
+
+  push:
+    needs: [otome, bl]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout latest source main
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Download otome catalog files
+        uses: actions/download-artifact@v4
+        with:
+          name: rebuilt-otome-catalog
+          path: work/web/data/catalog
+
+      - name: Download BL catalog files
+        uses: actions/download-artifact@v4
+        with:
+          name: rebuilt-bl-catalog
+          path: work/web/data/catalog/bl
+
+      - name: Push rebuilt full-catalog data
+        working-directory: work
+        run: bash scripts/ci/push.sh "web/data/catalog/summary.json web/data/catalog/search-index.json web/data/catalog/similar-works.json web/data/catalog/bl/summary.json web/data/catalog/bl/search-index.json web/data/catalog/bl/similar-works.json"
