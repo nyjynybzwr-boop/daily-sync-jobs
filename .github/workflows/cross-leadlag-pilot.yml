@@ -1,0 +1,42 @@
+name: Cross market lead-lag pilot
+
+on:
+  push:
+    paths:
+      - '.github/workflows/cross-leadlag-pilot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Check inputs
+        working-directory: work
+        run: |
+          test -s web/data/catalog/search-index.json
+          test -s web/data/catalog/manga/search-index.json
+          node --check scripts/poc-cross-leadlag.mjs
+
+      - name: Run lead-lag pilot
+        working-directory: work
+        run: node scripts/poc-cross-leadlag.mjs --json=/tmp/cross-leadlag.json
+
+      - name: Show compact result
+        run: |
+          node - <<'NODE'
+          const x=require('/tmp/cross-leadlag.json');
+          const compact={period:x.period,coverage:x.coverage,audio_leads_comic:x.audio_leads_comic.slice(0,12),comic_leads_audio:x.comic_leads_audio.slice(0,12),next_candidates:x.next_candidates};
+          console.log(JSON.stringify(compact,null,2));
+          NODE
