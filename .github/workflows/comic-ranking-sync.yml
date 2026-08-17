@@ -14,6 +14,7 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   collect:
@@ -43,9 +44,15 @@ jobs:
           npm install --no-save playwright devalue >/tmp/step.log 2>&1
           npx playwright install --with-deps chromium >>/tmp/step.log 2>&1
 
-      - name: Collect manga rankings
+      - name: Collect Japan-visible manga rankings
         working-directory: work
-        run: bash scripts/ci/run-manga.sh
+        run: |
+          set -euo pipefail
+          # GitHub-hosted runners are outside Japan. Route ranking HTML and
+          # detail requests through the authenticated hnd1 relay so the daily,
+          # weekly, and monthly manga rankings include Japan-only works.
+          source scripts/ci/dlsite-jp-relay-env.sh
+          bash scripts/ci/run-manga.sh
 
       - name: Push manga snapshots
         working-directory: work
