@@ -98,7 +98,7 @@ jobs:
           if [[ -n "$STOPPED" ]]; then
             echo 'Safety stop recorded; not auto-looping.'
           elif [[ "$DONE" != 'true' || "$ENRICHED" -lt "$TOTAL" ]]; then
-            gh workflow run bl-manga-catalog.yml --ref main -f max_pages="$NEXT_MAX_PAGES" -f batch_size="$NEXT_BATCH_SIZE"
+            gh workflow run bl-manga-catalog.yml --repo "$GITHUB_REPOSITORY" --ref main -f max_pages="$NEXT_MAX_PAGES" -f batch_size="$NEXT_BATCH_SIZE"
           else
             echo 'BL manga catalog crawl and detail enrichment complete.'
           fi
