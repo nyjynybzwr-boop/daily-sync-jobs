@@ -1,0 +1,135 @@
+name: Home navigation E2E once
+
+on:
+  push:
+    paths:
+      - '.github/workflows/ui-navigation-e2e-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Static checks
+        working-directory: work
+        run: |
+          node --check web/home-ui-navigation.js
+          node --check web/app-v3.js
+          node --check web/narrative.js
+          node --check web/all-market-switch.js
+          grep -F "import './home-ui-navigation.js';" web/refine-v4.js
+          npm ci
+          npm test
+
+      - name: Install browser
+        working-directory: work
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Run navigation E2E
+        working-directory: work
+        run: |
+          python3 -m http.server 4173 --directory web >/tmp/melo-http.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:4173/index.html >/dev/null && break; sleep 0.5; done
+          node --input-type=module <<'NODE'
+          import { chromium } from 'playwright';
+          import assert from 'node:assert/strict';
+
+          const browser = await chromium.launch({headless:true});
+          const page = await browser.newPage({viewport:{width:390,height:844}});
+          const base='http://127.0.0.1:4173';
+
+          async function waitHome(market){
+            await page.waitForSelector('#marketSelector [data-market].active');
+            await page.waitForFunction((m)=>document.body.dataset.market===m,market);
+            const active=await page.locator('#marketSelector [data-market].active').getAttribute('data-market');
+            assert.equal(active,market,'active market button must match body market');
+            const hero=await page.locator('#heroKicker').textContent();
+            assert.match(hero, market==='bl'?/BL/:/乙女/,'hero market label must match');
+          }
+
+          // URL must beat stale storage on cold entry.
+          await page.goto(`${base}/index.html?market=otome`,{waitUntil:'networkidle'});
+          await page.evaluate(()=>localStorage.setItem('trendRadarMarket','bl'));
+          await page.reload({waitUntil:'networkidle'});
+          await waitHome('otome');
+
+          // User switch must synchronize body, URL, storage and visible copy.
+          await page.locator('#marketSelector [data-market="bl"]').click();
+          await waitHome('bl');
+          assert.equal(new URL(page.url()).searchParams.get('market'),'bl');
+          assert.equal(await page.evaluate(()=>localStorage.getItem('trendRadarMarket')),'bl');
+
+          // Cross-page link generated on home must carry BL.
+          await page.waitForTimeout(500);
+          const allHref=await page.locator('a[href*="all.html"]').first().getAttribute('href');
+          assert.ok(allHref && new URL(allHref,page.url()).searchParams.get('market')==='bl','all link must preserve BL');
+          await page.goto(new URL(allHref,page.url()).toString(),{waitUntil:'networkidle'});
+          await page.waitForFunction(()=>document.body.dataset.market==='bl');
+          assert.match(await page.locator('#allHeroMarket').textContent(),/BL/);
+          const homeHref=await page.locator('.all-topbar .brand-lockup').getAttribute('href');
+          assert.equal(new URL(homeHref,page.url()).searchParams.get('market'),'bl','catalog home link must preserve BL');
+
+          // Browser back from all-catalog must restore coherent BL state.
+          await page.goBack({waitUntil:'networkidle'});
+          await waitHome('bl');
+          assert.equal(new URL(page.url()).searchParams.get('market'),'bl');
+
+          // Repeat path in otome so blue/BL state cannot leak back.
+          await page.locator('#marketSelector [data-market="otome"]').click();
+          await waitHome('otome');
+          assert.equal(new URL(page.url()).searchParams.get('market'),'otome');
+          const otomeAll=await page.locator('a[href*="all.html"]').first().getAttribute('href');
+          assert.equal(new URL(otomeAll,page.url()).searchParams.get('market'),'otome');
+          await page.goto(new URL(otomeAll,page.url()).toString(),{waitUntil:'networkidle'});
+          await page.waitForFunction(()=>document.body.dataset.market==='otome');
+          assert.match(await page.locator('#allHeroMarket').textContent(),/乙女/);
+          await page.goBack({waitUntil:'networkidle'});
+          await waitHome('otome');
+
+          // Narrative -> works: incoming view slides and scroll resets to category top.
+          await page.locator('.view-tab[data-view="narrative"]').click();
+          await page.waitForSelector('#view-narrative.active');
+          await page.waitForTimeout(30);
+          assert.ok(await page.locator('#view-narrative').evaluate(el=>el.classList.contains('home-view-enter-right')),'narrative should slide in');
+          await page.evaluate(()=>window.scrollTo(0,document.documentElement.scrollHeight));
+          const deepY=await page.evaluate(()=>scrollY);
+          assert.ok(deepY>500,'test must start from a deep scroll position');
+          await page.locator('.view-tab[data-view="works"]').click();
+          await page.waitForSelector('#view-works.active');
+          await page.waitForTimeout(70);
+          assert.ok(await page.locator('#view-works').evaluate(el=>el.classList.contains('home-view-enter-right')),'works should slide in');
+          const pos=await page.evaluate(()=>{
+            const main=document.querySelector('main');
+            const tabs=document.querySelector('.view-tabs');
+            const expected=Math.max(0,scrollY+main.getBoundingClientRect().top-tabs.offsetHeight-12);
+            return {y:scrollY,expected};
+          });
+          assert.ok(Math.abs(pos.y-pos.expected)<8,`works should reset to view top: y=${pos.y}, expected=${pos.expected}`);
+
+          // Reverse direction should use leftward slide.
+          await page.locator('.view-tab[data-view="narrative"]').click();
+          await page.waitForTimeout(30);
+          assert.ok(await page.locator('#view-narrative').evaluate(el=>el.classList.contains('home-view-enter-left')),'reverse tab switch should slide from left');
+
+          console.log('HOME_NAV_E2E_OK');
+          await browser.close();
+          NODE
