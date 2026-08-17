@@ -1,4 +1,4 @@
-name: Count manga languages once
+name: Count manga target categories once
 
 on:
   push:
@@ -17,25 +17,34 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Count DLsite manga by language option
+      - name: Count DLsite manga by target-work category
         run: |
           npm install --no-save cheerio
           node --input-type=module <<'NODE'
           import * as cheerio from 'cheerio';
-          const prefix='https://www.dlsite.com/girls-touch/works/type/=/language/jp/sex_category%5B0%5D/female/sex_category%5B1%5D/gay/work_category%5B0%5D/doujin/order/trend/work_type_category%5B0%5D/comic/work_type_category_name%5B0%5D/%E3%83%9E%E3%83%B3%E3%82%AC/options_and_or/and';
-          const suffix='/per_page/30/page/1/is_tl/1/show_type/3';
-          const sets=[
-            ['JPN+NM',['JPN','NM']],['JPN',['JPN']],['NM',['NM']],['ENG',['ENG']],['CHI',['CHI']],['CHI_HANS',['CHI_HANS']],['CHI_HANT',['CHI_HANT']],['KO_KR',['KO_KR']],['SPA',['SPA']],['GER',['GER']],['FRE',['FRE']],['IND',['IND']],['ITA',['ITA']],['POR',['POR']],['SWE',['SWE']],['THA',['THA']],['VIE',['VIE']],['OTL',['OTL']],['DOT',['DOT']],
-            ['ALL',['JPN','ENG','CHI','CHI_HANS','CHI_HANT','KO_KR','SPA','GER','FRE','IND','ITA','POR','SWE','THA','VIE','OTL','NM','DOT']]
-          ];
           const UA='Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
-          for(const [name,opts] of sets){
-            const optPath=opts.map((v,i)=>`/options%5B${i}%5D/${encodeURIComponent(v)}`).join('');
-            const url=prefix+optPath+suffix;
+          const commonBefore='https://www.dlsite.com/girls-touch/works/type/=/language/jp/sex_category%5B0%5D/female/sex_category%5B1%5D/gay';
+          const commonAfter='/order/trend/work_type_category%5B0%5D/comic/work_type_category_name%5B0%5D/%E3%83%9E%E3%83%B3%E3%82%AC/options_and_or/and/options%5B0%5D/JPN/options%5B1%5D/NM/per_page/30/page/1/is_tl/1/show_type/3';
+          const sets=[
+            ['doujin',['doujin']],
+            ['books',['books']],
+            ['drama',['drama']],
+            ['pc',['pc']],
+            ['doujin+books',['doujin','books']],
+            ['doujin+drama',['doujin','drama']],
+            ['doujin+books+drama+pc',['doujin','books','drama','pc']],
+          ];
+          for(const [name,cats] of sets){
+            const catPath=cats.map((v,i)=>`/work_category%5B${i}%5D/${v}`).join('');
+            const url=commonBefore+catPath+commonAfter;
             const res=await fetch(url,{headers:{'User-Agent':UA,'Accept-Language':'ja-JP,ja;q=0.9'},redirect:'follow'});
             const html=await res.text(); const $=cheerio.load(html); const text=$('body').text().replace(/\s+/g,' ').trim();
             const m=text.match(/([\d,]+)\s*件中\s*([\d,]+)\s*[-−ー]\s*([\d,]+)\s*件目/);
-            const checked=$('input[name="options[]"]:checked').toArray().map(x=>$(x).attr('value'));
-            console.log('LANG_COUNT '+JSON.stringify({name,opts,status:res.status,final_url:res.url,count:m?.[1]||null,checked,title:$('title').text().trim()}));
+            const summary=(text.match(/作品カテゴリ:[^検索条件]{0,300}/)||[])[0]||'';
+            console.log('TARGET_COUNT '+JSON.stringify({name,cats,status:res.status,final_url:res.url,count:m?.[1]||null,summary:summary.slice(0,400),title:$('title').text().trim()}));
           }
+          const baseRes=await fetch('https://www.dlsite.com/girls-touch/works/type/=/work_type_category/comic/page/1',{headers:{'User-Agent':UA,'Accept-Language':'ja-JP,ja;q=0.9'}});
+          const baseHtml=await baseRes.text(); const $=cheerio.load(baseHtml);
+          const controls=$('input,option').toArray().map(el=>({tag:el.tagName,name:$(el).attr('name')||'',value:$(el).attr('value')||'',checked:$(el).is(':checked'),id:$(el).attr('id')||'',parent:$(el).parent().text().replace(/\s+/g,' ').trim().slice(0,120)})).filter(x=>/work_category/.test(x.name));
+          console.log('WORK_CATEGORY_CONTROLS '+JSON.stringify(controls));
           NODE
