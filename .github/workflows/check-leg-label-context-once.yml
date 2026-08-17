@@ -1,0 +1,86 @@
+name: Audit 脚 label contexts once
+
+on:
+  push:
+    paths:
+      - '.github/workflows/check-leg-label-context-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies and materialize audio catalog
+        working-directory: work
+        run: |
+          npm ci
+          git lfs pull --include="data/catalog/full/details.json"
+
+      - name: Re-evaluate 脚 and print source contexts
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { detectLabels } from './scripts/lib/analysis-core-safe.mjs';
+
+          const raw = JSON.parse(fs.readFileSync('data/catalog/full/details.json','utf8'));
+          const items = Array.isArray(raw) ? raw : Object.values(raw);
+
+          function labelNames(detected){
+            if (!Array.isArray(detected)) return [];
+            return detected.map(x => typeof x === 'string' ? x : x?.label).filter(Boolean);
+          }
+          function flattenStrings(value, path='$', out=[]){
+            if (typeof value === 'string') out.push([path,value]);
+            else if (Array.isArray(value)) value.forEach((v,i)=>flattenStrings(v,`${path}[${i}]`,out));
+            else if (value && typeof value === 'object') for (const [k,v] of Object.entries(value)) flattenStrings(v,`${path}.${k}`,out);
+            return out;
+          }
+          function contexts(item){
+            const out=[];
+            for (const [path,text] of flattenStrings(item)) {
+              let from=0;
+              while (true) {
+                const i=text.indexOf('脚',from);
+                if(i<0) break;
+                const a=Math.max(0,i-70), b=Math.min(text.length,i+71);
+                out.push({path,snippet:text.slice(a,b).replace(/\s+/g,' ')});
+                from=i+1;
+              }
+            }
+            return out;
+          }
+
+          const hits=[];
+          for (const item of items) {
+            let detected=[];
+            try { detected=detectLabels(item); } catch(e) { continue; }
+            if (!labelNames(detected).includes('脚')) continue;
+            hits.push({
+              product_id:item.product_id,
+              title:item.title,
+              circle:item.circle,
+              tags:item.tags||[],
+              contexts:contexts(item),
+            });
+          }
+          console.log(`LEG_LABEL_TOTAL=${hits.length}`);
+          for (const hit of hits) console.log('LEG_HIT '+JSON.stringify(hit));
+          NODE
