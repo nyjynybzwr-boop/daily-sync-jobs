@@ -2,6 +2,10 @@ name: Nuance v8 weekly production indexes
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nuance-v8-final-sharded.yml'
   schedule:
     # Sunday 03:30 JST (Saturday 18:30 UTC)
     - cron: '30 18 * * 6'
