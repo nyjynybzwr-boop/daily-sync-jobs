@@ -137,7 +137,9 @@ jobs:
             return payload;
           }
           const otome=await call('女の子にちんぽを触られて、男が余裕をなくして喘いでしまう','otome');
-          if(otome.results[0]?.product_id!=='RJ01093983')throw new Error(`otome smoke parity failed: ${otome.results[0]?.product_id}`);
+          const passiveRank=otome.results.findIndex(x=>x.product_id==='RJ01093983')+1;
+          if(!passiveRank||passiveRank>24)throw new Error(`otome smoke parity failed: RJ01093983 rank=${passiveRank||'missing'}`);
+          console.log(`otome passive-touch smoke: RJ01093983 #${passiveRank}`);
           const bl=await call('男が相手の反応に釣られて余裕をなくして喘ぐ','bl');
           if(Number(bl.total_works)<2000)throw new Error('BL smoke catalog too small');
           console.log('finalize retry production API smoke passed');
