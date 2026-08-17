@@ -1,0 +1,51 @@
+name: Nuance v8 API smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nuance-v8-api-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout staged private branch
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: git clone --quiet --branch agent/nuance-v8-production --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        working-directory: work
+        run: npm ci
+      - name: Invoke BL nuance API end-to-end
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import handler from './api/nuance-search.js';
+          let statusCode=200,body=null;
+          const headers={};
+          const res={
+            status(code){statusCode=code;return this;},
+            setHeader(k,v){headers[k]=v;return this;},
+            json(value){body=value;return this;},
+          };
+          const started=Date.now();
+          await handler({method:'GET',query:{q:'男が自分で自慰を見せつける',market:'bl'}},res);
+          const elapsed=Date.now()-started;
+          if(statusCode!==200)throw new Error(`status=${statusCode} body=${JSON.stringify(body)}`);
+          if(body?.engine!=='nuance-v8-prod-1')throw new Error(`wrong engine: ${body?.engine}`);
+          if(!Array.isArray(body?.results)||body.results.length<10)throw new Error(`too few results: ${body?.results?.length}`);
+          if(!body.results[0]?.product_id)throw new Error('top result missing product_id');
+          console.log(`API smoke ok: market=${body.market} total=${body.total_works} results=${body.results.length} elapsed_ms=${elapsed}`);
+          console.log(`top=${body.results[0].product_id} ${body.results[0].title}`);
+          NODE
