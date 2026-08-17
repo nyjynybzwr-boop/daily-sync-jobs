@@ -44,7 +44,7 @@ jobs:
           npm install --no-save playwright devalue >/tmp/step.log 2>&1
           npx playwright install --with-deps chromium >>/tmp/step.log 2>&1
 
-      - name: Collect Japan-visible manga rankings
+      - name: Collect and analyze Japan-visible manga rankings
         working-directory: work
         run: |
           set -euo pipefail
@@ -54,6 +54,6 @@ jobs:
           source scripts/ci/dlsite-jp-relay-env.sh
           bash scripts/ci/run-manga.sh
 
-      - name: Push manga snapshots
+      - name: Push manga snapshots and dashboard analysis
         working-directory: work
-        run: bash scripts/ci/push.sh "data/manga/raw data/manga/windows"
+        run: bash scripts/ci/push.sh "data/manga/raw data/manga/labeled data/manga/reports data/manga/windows"
