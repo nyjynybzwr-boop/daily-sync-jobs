@@ -21,11 +21,23 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install runtime
+      - name: Install runtime with patched image dependency
         working-directory: work
         run: |
           npm ci
-          npm install --save @huggingface/transformers@3.8.1
+          npm install --save @huggingface/transformers@3.8.1 sharp@latest
+          npm ls @huggingface/transformers sharp
       - name: Audit production dependencies
         working-directory: work
-        run: npm audit --omit=dev || true
+        run: npm audit --omit=dev
+      - name: Smoke-test text embedding
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import { pipeline } from '@huggingface/transformers';
+          const extractor=await pipeline('feature-extraction','Xenova/multilingual-e5-small',{dtype:'q8'});
+          const out=await extractor('query: 男が興奮する',{pooling:'mean',normalize:true});
+          if(out.dims.at(-1)!==384) throw new Error(`unexpected dims ${out.dims}`);
+          console.log(`text embedding ok dims=${out.dims.join('x')}`);
+          await extractor.dispose?.();
+          NODE
