@@ -1,0 +1,65 @@
+name: Audit standalone leg label once
+
+on:
+  push:
+    paths:
+      - '.github/workflows/audit-leg-label-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install and materialize catalog
+        working-directory: work
+        run: |
+          npm ci
+          git lfs pull --include="data/catalog/full/details.json"
+
+      - name: Audit standalone 脚 label
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { detectLabels, ensureTokenizer } from './scripts/lib/analysis-core.mjs';
+          await ensureTokenizer();
+          const details=JSON.parse(fs.readFileSync('data/catalog/full/details.json','utf8'));
+          const hits=[];
+          const fields=(item)=>[
+            ['title',item.title],['description',item.description],['description_long',item.description_long],
+            ['circle',item.circle],...((item.tags||[]).map(x=>['tag',x])),
+            ...((item.content_sections||[]).map(x=>['content',x])),
+            ...((item.tracks||[]).flatMap(t=>[['track_title',t.title],['track_source',t.source_text]])),
+            ...((item.introductions||[]).flatMap(b=>[['intro_title',b.title],...((b.body||[]).map(r=>['intro',r.intro]))])),
+          ].filter(([,v])=>v);
+          const context=(s)=>{
+            const text=String(s).replace(/<[^>]+>/g,' ').replace(/\s+/g,' ');
+            const i=text.indexOf('脚'); if(i<0)return null;
+            return text.slice(Math.max(0,i-45),Math.min(text.length,i+75));
+          };
+          for(const item of Object.values(details)){
+            const entry=detectLabels(item).find(x=>x.label==='脚');
+            if(!entry)continue;
+            const sources=fields(item).map(([kind,v])=>({kind,ctx:context(v)})).filter(x=>x.ctx);
+            const corpus=sources.map(x=>x.ctx).join(' ');
+            const explicit=/脚\s*(?:オナ|こき|コキ)|(?:太もも|太腿|脚)\s*(?:で|に)[^。！？]{0,18}(?:挟|しご|擦)|脚責め/.test(corpus);
+            hits.push({id:item.product_id,title:item.title,matched:entry.matched_keywords,sources,explicit});
+          }
+          console.log('LEG_LABEL_AUDIT '+JSON.stringify({total:hits.length,explicit_like:hits.filter(x=>x.explicit).length,generic:hits.filter(x=>!x.explicit).length}));
+          for(const h of hits.slice(0,60)) console.log('LEG_HIT '+JSON.stringify(h));
+          NODE
