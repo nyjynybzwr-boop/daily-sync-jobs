@@ -28,16 +28,19 @@ jobs:
       - name: Install dependencies
         working-directory: work
         run: npm ci
-      - name: Probe web/WASM build under Node
+      - name: Probe injected web/WASM build under Node
         working-directory: work
         run: |
           node --input-type=module <<'NODE'
           import path from 'node:path';
           import {pathToFileURL} from 'node:url';
+          const ort=await import('onnxruntime-web');
+          globalThis[Symbol.for('onnxruntime')]=ort;
           const mod=await import(pathToFileURL(path.resolve('node_modules/@huggingface/transformers/dist/transformers.web.js')).href);
           const {pipeline,env}=mod;
-          env.cacheDir='/tmp/melosignal-transformers-web-cache';
-          console.log('web import ok', typeof pipeline, Boolean(env.backends?.onnx));
+          env.allowLocalModels=false;
+          env.useBrowserCache=false;
+          console.log('web import ok', typeof pipeline, typeof ort.InferenceSession?.create);
           const t=Date.now();
           const extractor=await pipeline('feature-extraction','Xenova/multilingual-e5-small',{dtype:'q8'});
           console.log('pipeline loaded',Date.now()-t);
