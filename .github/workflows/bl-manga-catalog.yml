@@ -1,0 +1,104 @@
+name: BL manga catalog background sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_pages:
+        description: 'Max listing pages to walk this run'
+        default: '1000'
+      batch_size:
+        description: 'Max product details to enrich this run'
+        default: '100'
+  push:
+    paths:
+      - '.github/workflows/bl-manga-catalog.yml'
+  schedule:
+    - cron: '30 17 * * 0'
+
+concurrency:
+  group: bl-manga-catalog-background
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+  id-token: write
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: |
+          npm ci
+          npm install --no-save devalue
+
+      - name: Materialize existing BL manga details
+        working-directory: work
+        run: git lfs pull --include="data/manga/bl/catalog/full/details.json" || true
+
+      - name: Crawl BL manga through Tokyo relay
+        working-directory: work
+        env:
+          INPUT_MAX_PAGES: ${{ github.event.inputs.max_pages || '1000' }}
+          INPUT_BATCH_SIZE: ${{ github.event.inputs.batch_size || '100' }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == 'schedule' ]]; then
+            export MAX_PAGES_PER_RUN='3'
+            export CATALOG_RESCAN_FROM_START='1'
+          else
+            export MAX_PAGES_PER_RUN="$INPUT_MAX_PAGES"
+            export CATALOG_RESCAN_FROM_START='0'
+          fi
+          export BATCH_SIZE="$INPUT_BATCH_SIZE"
+          export DETAIL_DELAY_MS='800'
+          source scripts/ci/dlsite-jp-relay-env.sh
+          bash scripts/ci/run-manga-bl-catalog.sh
+
+      - name: Push BL manga progress to private main
+        working-directory: work
+        run: bash scripts/ci/push.sh "data/manga/bl/catalog/index data/manga/bl/catalog/full/details.json"
+
+      - name: Continue in background if work remains
+        working-directory: work
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXT_MAX_PAGES: ${{ github.event.inputs.max_pages || '1000' }}
+          NEXT_BATCH_SIZE: ${{ github.event.inputs.batch_size || '100' }}
+        run: |
+          set -euo pipefail
+          CHECKPOINT='data/manga/bl/catalog/index/checkpoint.json'
+          IDS='data/manga/bl/catalog/index/ids.json'
+          DETAILS='data/manga/bl/catalog/full/details.json'
+          if [[ ! -f "$CHECKPOINT" || ! -f "$IDS" ]]; then
+            echo 'No BL manga checkpoint yet; stopping instead of looping blindly.'
+            exit 0
+          fi
+          DONE=$(node -e "const x=require('./$CHECKPOINT');process.stdout.write(String(Boolean(x.done)))")
+          STOPPED=$(node -e "const x=require('./$CHECKPOINT');process.stdout.write(x.stopped_reason||'')")
+          TOTAL=$(node -e "console.log(Object.keys(require('./$IDS')).length)")
+          ENRICHED=$(node -e "const fs=require('fs');const p='$DETAILS';console.log(fs.existsSync(p)?Object.keys(JSON.parse(fs.readFileSync(p))).length:0)")
+          echo "BL manga indexed=$TOTAL enriched=$ENRICHED done=$DONE stopped_reason=${STOPPED:-none}"
+          if [[ -n "$STOPPED" ]]; then
+            echo 'Safety stop recorded; not auto-looping.'
+          elif [[ "$DONE" != 'true' || "$ENRICHED" -lt "$TOTAL" ]]; then
+            gh workflow run bl-manga-catalog.yml --ref main -f max_pages="$NEXT_MAX_PAGES" -f batch_size="$NEXT_BATCH_SIZE"
+          else
+            echo 'BL manga catalog crawl and detail enrichment complete.'
+          fi
