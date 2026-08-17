@@ -1,4 +1,4 @@
-name: Inspect manga count contexts once
+name: Trace screenshot manga work once
 
 on:
   push:
@@ -10,38 +10,53 @@ permissions:
   contents: read
 
 jobs:
-  inspect:
+  trace:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Inspect count and filter contexts
+      - name: Materialize manga details
+        working-directory: work
+        run: git lfs pull --include="data/manga/catalog/full/details.json"
+      - name: Find screenshot work in current catalog and live DLsite
+        working-directory: work
         run: |
           npm install --no-save cheerio
           node --input-type=module <<'NODE'
+          import fs from 'node:fs';
           import * as cheerio from 'cheerio';
-          const mobile='Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
-          const desktop='Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
-          const url='https://www.dlsite.com/girls-touch/works/type/=/work_type_category/comic/page/1';
-          for (const [profile,headers] of [
-            ['mobile',{'User-Agent':mobile,'Accept-Language':'ja-JP,ja;q=0.9'}],
-            ['desktop',{'User-Agent':desktop,'Accept-Language':'ja-JP,ja;q=0.9'}],
-            ['mobile-adultchecked',{'User-Agent':mobile,'Accept-Language':'ja-JP,ja;q=0.9','Cookie':'adultchecked=1; locale=ja_JP'}],
-          ]) {
-            const res=await fetch(url,{headers,redirect:'follow'});
-            const html=await res.text(); const $=cheerio.load(html); const body=$('body').text().replace(/\s+/g,' ').trim();
-            const count=body.match(/([\d,]+)\s*件中\s*([\d,]+)\s*[-−ー]\s*([\d,]+)\s*件目/)?.[1]||null;
-            const summary=(body.match(/作品カテゴリ:[^検索条件]{0,700}/)||[])[0]||'';
-            const raw7743=[]; let pos=-1; while((pos=html.indexOf('7743',pos+1))>=0 && raw7743.length<10) raw7743.push(html.slice(Math.max(0,pos-220),pos+220).replace(/\s+/g,' '));
-            const nearCounts=[];
-            for(const m of body.matchAll(/\b([7-8][\d,]{3,5})\s*件/g)){
-              const n=Number(m[1].replace(/,/g,'')); if(n>=7000&&n<=9000) nearCounts.push({n,context:body.slice(Math.max(0,m.index-120),m.index+180)});
-              if(nearCounts.length>=30) break;
-            }
-            const labels=$('label').toArray().map(el=>$(el).text().replace(/\s+/g,' ').trim()).filter(t=>/AI|販売終了|予告|翻訳|同人|商業|電子書籍|対象作品|日本語|言語/.test(t)).slice(0,80);
-            const inputs=$('input,select,option').toArray().map(el=>({tag:el.tagName,name:$(el).attr('name')||'',value:$(el).attr('value')||'',checked:$(el).is(':checked'),text:$(el).text().replace(/\s+/g,' ').trim().slice(0,80)})).filter(x=>/ai|sale|end|announce|work_category|language|option|translation/i.test(`${x.name} ${x.value} ${x.text}`)).slice(0,100);
-            console.log('PROFILE '+JSON.stringify({profile,status:res.status,count,summary:summary.slice(0,700),raw7743,nearCounts,labels,inputs}));
+          const needle='茅原啓佑';
+          const ids=JSON.parse(fs.readFileSync('data/manga/catalog/index/ids.json'));
+          const details=JSON.parse(fs.readFileSync('data/manga/catalog/full/details.json'));
+          const indexRows=Object.values(ids);
+          const indexMatches=indexRows.map((row,i)=>({i,id:row.product_id,title:row.title,url:row.url})).filter(x=>(x.title||'').includes(needle));
+          const detailMatches=Object.values(details).filter(x=>(x.title||'').includes(needle)).map(x=>({product_id:x.product_id,title:x.title,work_type_value:x.work_type_value,work_type_name:x.work_type_name,release_date_text:x.release_date_text,language_editions:x.language_editions,editions:x.editions,url:x.url}));
+          console.log('PRIVATE_MATCHES '+JSON.stringify({index_count:indexRows.length,index_matches:indexMatches,detail_matches:detailMatches}));
+
+          const UA='Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+          const searchUrls=[
+            'https://www.dlsite.com/girls-touch/fsr/=/keyword/'+encodeURIComponent(needle)+'/order/trend',
+            'https://www.dlsite.com/girls-touch/fsr/=/keyword/'+encodeURIComponent('茅原啓佑の×恋')+'/order/trend',
+          ];
+          for(const url of searchUrls){
+            const res=await fetch(url,{headers:{'User-Agent':UA,'Accept-Language':'ja-JP,ja;q=0.9'},redirect:'follow'});
+            const html=await res.text(); const $=cheerio.load(html);
+            const rows=[];
+            $('a[href*="product_id/"]').each((_,a)=>{
+              const href=$(a).attr('href')||''; const m=href.match(/product_id\/(RJ\d+|VJ\d+|BJ\d+|AJ\d+)/i); if(!m)return;
+              const title=($(a).text()||$(a).attr('title')||$(a).find('img').attr('alt')||'').replace(/\s+/g,' ').trim();
+              const id=m[1].toUpperCase(); if(!rows.some(x=>x.id===id)) rows.push({id,title,href});
+            });
+            const text=$('body').text().replace(/\s+/g,' ').trim();
+            const count=text.match(/([\d,]+)\s*件中\s*([\d,]+)\s*[-−ー]\s*([\d,]+)\s*件目/)?.[0]||'';
+            console.log('LIVE_SEARCH '+JSON.stringify({url,status:res.status,final_url:res.url,count,rows:rows.slice(0,30)}));
           }
           NODE
