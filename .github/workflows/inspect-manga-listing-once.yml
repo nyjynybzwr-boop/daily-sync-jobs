@@ -1,4 +1,4 @@
-name: Test US detail parser on Japan-only manga once
+name: Verify authenticated Tokyo manga relay once
 
 on:
   push:
@@ -8,11 +8,12 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout private source
         env:
@@ -26,16 +27,40 @@ jobs:
       - name: Install parser dependency
         working-directory: work
         run: npm install --no-save devalue
-      - name: Parse Japan-only product directly from US runner
+      - name: Verify listing and detail through Tokyo relay
         working-directory: work
         run: |
+          set -euo pipefail
+          source scripts/ci/dlsite-jp-relay-env.sh
+          export DLSITE_CATALOG_BASE='https://www.dlsite.com/girls-touch/works/type/=/work_type_category/comic'
+          export DATA_ROOT='/tmp/manga-jp-relay-check'
+          export MAX_PAGES_PER_RUN='1'
+          export PAGE_DELAY_MS='0'
+          node scripts/collect-catalog-index.mjs
           node --input-type=module <<'NODE'
+          import fs from 'node:fs';
           import { fetchDlsiteProductPlain } from './scripts/lib/dlsite-fetch-detail.mjs';
-          const seed={product_id:'RJ01512512',url:'https://www.dlsite.com/girls-touch/work/=/product_id/RJ01512512.html',title:'茅原啓佑の×恋'};
-          try {
-            const row=await fetchDlsiteProductPlain(seed);
-            console.log('US_DETAIL_PARSE '+JSON.stringify({ok:true,product_id:row.product_id,title:row.title,work_type_value:row.work_type_value,work_type_name:row.work_type_name,detail_error:row.detail_error||null,description:(row.description||'').slice(0,120),tags:row.tags?.slice?.(0,10)||[],sales_count:row.sales_count??null,price_yen:row.price_yen??null,detail_parser_version:row.detail_parser_version??null}));
-          } catch (e) {
-            console.log('US_DETAIL_PARSE '+JSON.stringify({ok:false,error:String(e?.message||e)}));
-          }
+          const ids=JSON.parse(fs.readFileSync('/tmp/manga-jp-relay-check/index/ids.json'));
+          const rows=Object.values(ids);
+          console.log('JP_RELAY_LISTING '+JSON.stringify({count:rows.length,first:rows.slice(0,5)}));
+          if(rows.length!==30) throw new Error(`Expected 30 listing results, got ${rows.length}`);
+          if(!ids.RJ01512512) throw new Error('Japan-only RJ01512512 missing from Tokyo listing page 1');
+          const seed=ids.RJ01512512;
+          const detail=await fetchDlsiteProductPlain(seed);
+          const audit={
+            product_id:detail.product_id,
+            title:detail.title,
+            work_type_value:detail.work_type_value,
+            work_type_name:detail.work_type_name,
+            tags:detail.tags?.slice?.(0,12)||[],
+            sales_count:detail.sales_count??null,
+            price_yen:detail.price_yen??null,
+            rating:detail.rating??null,
+            detail_parser_version:detail.detail_parser_version??null,
+            description:(detail.description||'').slice(0,160),
+          };
+          console.log('JP_RELAY_DETAIL '+JSON.stringify(audit));
+          if(detail.work_type_value!=='MNG' || detail.work_type_name!=='マンガ') throw new Error(`Unexpected work type ${detail.work_type_value}/${detail.work_type_name}`);
+          if(!Array.isArray(detail.tags) || detail.tags.length===0) throw new Error('No tags parsed through Tokyo relay');
+          if(detail.sales_count==null) throw new Error('No sales_count parsed through Tokyo relay');
           NODE
