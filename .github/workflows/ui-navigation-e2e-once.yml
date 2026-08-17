@@ -25,11 +25,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Materialize UI data
-        working-directory: work
-        run: git lfs pull --include="web/data/dashboard.json,web/data/catalog/search-index.json,web/data/catalog/bl/search-index.json,web/data/catalog/summary.json,web/data/catalog/bl/summary.json"
-
-      - name: Static checks
+      - name: Static checks and production build
         working-directory: work
         run: |
           node --check web/home-ui-navigation.js
@@ -39,6 +35,12 @@ jobs:
           grep -F "import './home-ui-navigation.js';" web/refine-v4.js
           npm ci
           npm test
+          node scripts/check-web-syntax.mjs
+          node scripts/build-dashboard-semantic-v53.mjs
+          node scripts/apply-melosignal-brand.mjs
+          node scripts/inject-page-jump.mjs
+          node scripts/check-web-syntax.mjs --site
+          test -f site/data/dashboard.json
 
       - name: Install browser
         working-directory: work
@@ -49,7 +51,7 @@ jobs:
       - name: Run navigation E2E
         working-directory: work
         run: |
-          python3 -m http.server 4173 --directory web >/tmp/melo-http.log 2>&1 &
+          python3 -m http.server 4173 --directory site >/tmp/melo-http.log 2>&1 &
           SERVER_PID=$!
           trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
           for i in $(seq 1 20); do curl -fsS http://127.0.0.1:4173/index.html >/dev/null && break; sleep 0.5; done
@@ -60,6 +62,8 @@ jobs:
           const browser = await chromium.launch({headless:true});
           const page = await browser.newPage({viewport:{width:390,height:844}});
           const base='http://127.0.0.1:4173';
+          page.on('console',msg=>{ if(msg.type()==='error') console.log('BROWSER_CONSOLE_ERROR',msg.text()); });
+          page.on('pageerror',err=>console.log('BROWSER_PAGE_ERROR',err.message));
 
           async function waitHome(market){
             await page.waitForSelector('#marketSelector [data-market].active');
