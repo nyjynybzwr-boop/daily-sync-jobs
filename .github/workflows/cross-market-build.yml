@@ -43,7 +43,7 @@ jobs:
 
       - name: Build lead lag signals
         working-directory: work
-        run: node scripts/build-cross-leadlag.mjs
+        run: node scripts/run-cross-leadlag.mjs
 
       - name: Validate production signals
         working-directory: work
