@@ -1,0 +1,119 @@
+{
+  "generated_at": "2026-08-18T17:36:32.367Z",
+  "results": [
+    {
+      "requested": "https://www.dlsite.com/maniax/ranking/day?category=voice",
+      "status": 200,
+      "final_url": "https://www.dlsite.com/maniax/ranking/day?category=voice",
+      "title": "同人 ボイス・ASMRランキング (24時間) | DLsite 同人 - R18",
+      "ids": [
+        "RJ01682178",
+        "RJ01694928",
+        "RJ01688728",
+        "RJ01694805",
+        "RJ01611083",
+        "RJ01648555",
+        "RJ01692978",
+        "RJ01680768",
+        "RJ01684548",
+        "RJ01691463"
+      ],
+      "html_bytes": 773548
+    },
+    {
+      "requested": "https://www.dlsite.com/maniax/ranking/day?category=comic",
+      "status": 200,
+      "final_url": "https://www.dlsite.com/maniax/ranking/day?category=comic",
+      "title": "同人 マンガ・CGランキング (24時間) | DLsite 同人 - R18",
+      "ids": [
+        "RJ01687054",
+        "RJ01693737",
+        "RJ01691175",
+        "RJ01689465",
+        "RJ01688061",
+        "RJ01696694",
+        "RJ01694616",
+        "RJ01696826",
+        "RJ01492034",
+        "RJ01073400"
+      ],
+      "html_bytes": 741995
+    },
+    {
+      "requested": "https://www.dlsite.com/maniax-touch/ranking/day?category=voice",
+      "status": 200,
+      "final_url": "https://www.dlsite.com/maniax-touch/ranking/day?category=voice",
+      "title": "同人 ボイス・ASMRランキング (24時間) | DLsite 同人 - R18",
+      "ids": [
+        "RJ01682178",
+        "RJ01694928",
+        "RJ01688728",
+        "RJ01694805",
+        "RJ01611083",
+        "RJ01648555",
+        "RJ01692978",
+        "RJ01680768",
+        "RJ01684548",
+        "RJ01691463"
+      ],
+      "html_bytes": 831365
+    },
+    {
+      "requested": "https://www.dlsite.com/maniax-touch/ranking/day?category=comic",
+      "status": 200,
+      "final_url": "https://www.dlsite.com/maniax-touch/ranking/day?category=comic",
+      "title": "同人 マンガ・CGランキング (24時間) | DLsite 同人 - R18",
+      "ids": [
+        "RJ01687054",
+        "RJ01693737",
+        "RJ01691175",
+        "RJ01689465",
+        "RJ01688061",
+        "RJ01696694",
+        "RJ01694616",
+        "RJ01696826",
+        "RJ01492034",
+        "RJ01073400"
+      ],
+      "html_bytes": 842948
+    },
+    {
+      "requested": "https://www.dlsite.com/maniax/ranking/day",
+      "status": 200,
+      "final_url": "https://www.dlsite.com/maniax/ranking/day",
+      "title": "同人 総合ランキング (24時間) | DLsite 同人 - R18",
+      "ids": [
+        "RJ01386956",
+        "RJ01687054",
+        "RJ01652728",
+        "RJ01680223",
+        "RJ01682178",
+        "RJ01693737",
+        "RJ01694710",
+        "RJ01694928",
+        "RJ01691175",
+        "RJ01672066"
+      ],
+      "html_bytes": 766481
+    },
+    {
+      "requested": "https://www.dlsite.com/maniax-touch/ranking/day",
+      "status": 200,
+      "final_url": "https://www.dlsite.com/maniax-touch/ranking/day",
+      "title": "同人 総合ランキング (24時間) | DLsite 同人 - R18",
+      "ids": [
+        "RJ01386956",
+        "RJ01687054",
+        "RJ01652728",
+        "RJ01680223",
+        "RJ01682178",
+        "RJ01693737",
+        "RJ01694710",
+        "RJ01694928",
+        "RJ01691175",
+        "RJ01672066"
+      ],
+      "html_bytes": 856564
+    }
+  ]
+}
