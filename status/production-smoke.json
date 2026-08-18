@@ -1,7 +1,13 @@
 {
-  "checked_at": "2026-08-18T11:25:53.390Z",
+  "checked_at": "2026-08-18T11:32:32.898Z",
   "production": "https://dlsite-trend-radar.pages.dev",
   "cross": "success",
+  "bl_cross": "success",
+  "bl_cross_audio_works": 2387,
+  "bl_cross_comic_works": 10991,
+  "bl_cross_directional_signals": 22,
+  "bl_cross_high_confidence": 4,
+  "bl_cross_medium_confidence": 18,
   "bl_manga": "success",
   "bl_manga_total_works": 10991,
   "excluded_non_manga": 7723
