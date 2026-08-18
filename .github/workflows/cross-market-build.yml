@@ -83,6 +83,35 @@ jobs:
           console.log('Otome + BL cross site build verified.');
           NODE
 
+      - name: Record successful cross build
+        working-directory: work
+        run: |
+          mkdir -p analysis
+          node - <<'NODE'
+          const fs=require('fs');
+          const otome=JSON.parse(fs.readFileSync('data/cross/otome-leadlag.json','utf8'));
+          const bl=JSON.parse(fs.readFileSync('data/cross/bl-leadlag.json','utf8'));
+          const blSite=JSON.parse(fs.readFileSync('site/data/cross/bl.json','utf8'));
+          const marker={
+            checked_at:new Date().toISOString(),
+            status:'success',
+            otome:{coverage:otome.coverage},
+            bl:{
+              audio_total_works:blSite.sources.audio.total_works,
+              comic_total_works:blSite.sources.comic.total_works,
+              coverage:bl.coverage,
+              period:bl.period,
+              next_wave:{
+                audio_to_comic:(bl.next_wave?.audio_to_comic||[]).map(x=>x.label),
+                comic_to_audio:(bl.next_wave?.comic_to_audio||[]).map(x=>x.label),
+              },
+            },
+            cross_market_switch:true,
+          };
+          fs.writeFileSync('analysis/cross-market-build-check.json',JSON.stringify(marker,null,2)+'\n');
+          console.log(JSON.stringify(marker,null,2));
+          NODE
+
       - name: Push lead lag data to private main
         working-directory: work
-        run: bash scripts/ci/push.sh "data/cross/otome-leadlag.json data/cross/bl-leadlag.json"
+        run: bash scripts/ci/push.sh "data/cross/otome-leadlag.json data/cross/bl-leadlag.json analysis/cross-market-build-check.json"
