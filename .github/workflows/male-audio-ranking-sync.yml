@@ -14,13 +14,16 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   collect:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Checkout runner repo
+        uses: actions/checkout@v4
+
       - name: Checkout source
         env:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
@@ -41,11 +44,31 @@ jobs:
           npm install --no-save devalue >>/tmp/step.log 2>&1
 
       - name: Collect and analyze male audio rankings
+        id: collect
         working-directory: work
         run: |
-          set -euo pipefail
-          bash scripts/ci/run-k.sh
+          set -o pipefail
+          mkdir -p ../status
+          bash scripts/ci/run-k.sh 2>&1 | tee ../status/male-audio-last.log
 
       - name: Push male audio ranking data
         working-directory: work
         run: bash scripts/ci/push.sh "data/male/raw data/male/labeled data/male/reports data/male/windows"
+
+      - name: Save diagnostic log
+        if: always()
+        run: |
+          mkdir -p status
+          {
+            echo
+            echo "---"
+            echo "finished_at=$(date -u +%FT%TZ)"
+            echo "source_head=$(git -C work rev-parse HEAD 2>/dev/null || echo unavailable)"
+            echo "job_status=${{ job.status }}"
+          } >> status/male-audio-last.log
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add status/male-audio-last.log
+          git commit -m 'Record male audio ranking sync result' || exit 0
+          git pull --rebase origin main
+          git push
