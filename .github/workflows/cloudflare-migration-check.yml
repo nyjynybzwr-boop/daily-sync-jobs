@@ -57,6 +57,27 @@ jobs:
           ! grep -q 'すぐ調べる' site/all-detail.js
           grep -q '今話題のワード' site/all-detail.js
 
+      - name: Verify BL manga catalog
+        working-directory: work
+        run: |
+          set -euo pipefail
+          test -s site/data/catalog/manga/bl/summary.json
+          test -s site/data/catalog/manga/bl/search-index.json
+          test -s site/data/catalog/manga/bl/similar-works.json
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          const summary = JSON.parse(fs.readFileSync('site/data/catalog/manga/bl/summary.json', 'utf8'));
+          const index = JSON.parse(fs.readFileSync('site/data/catalog/manga/bl/search-index.json', 'utf8'));
+          const dashboard = JSON.parse(fs.readFileSync('site/data/dashboard.json', 'utf8'));
+          if (summary.total_works !== 18714) throw new Error(`BL manga summary count ${summary.total_works}`);
+          if (index.total_works !== 18714) throw new Error(`BL manga search count ${index.total_works}`);
+          if (!dashboard.media?.comic?.bl) throw new Error('BL manga ranking dataset missing from dashboard');
+          const bytes = fs.statSync('site/data/catalog/manga/bl/search-index.json').size;
+          if (bytes >= 25 * 1024 * 1024) throw new Error(`BL manga search index exceeds Pages 25 MiB limit: ${bytes}`);
+          console.log(`BL manga verified: ${summary.total_works} works, search-index=${(bytes/1024/1024).toFixed(1)} MiB`);
+          NODE
+          grep -q "data/catalog/manga/bl" site/all-fetch-cache.js
+
       - name: Bundle Pages Functions
         working-directory: work
         run: npx --yes wrangler@latest pages functions build functions --outfile=/tmp/melosignal-pages-worker.js
