@@ -1,0 +1,76 @@
+name: Debug BL role target split v2
+
+on:
+  push:
+    paths:
+      - '.github/triggers/bl-role-target-split-debug-v2'
+
+permissions:
+  contents: write
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Correct fixture expectation in repair runner
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('scripts/fix-bl-role-target-split.sh')
+          s=p.read_text()
+          old=r'''  {
+    name: 'BL no marker stays unknown instead of convention-defaulting (RJ01661916)',
+    run: () => {
+      const l = labelsOf(fixtures.RJ01661916);
+      return l.has('アナル責め(受け攻め不明)') && l.has('フェラ(受け攻め不明)')
+        && !l.has('アナル責め') && !l.has('フェラ');
+    },
+  },'''
+          new=r'''  {
+    name: 'BL explicit 逆転無し keeps conventional targets (RJ01661916)',
+    run: () => {
+      const l = labelsOf(fixtures.RJ01661916);
+      return l.has('アナル責め(受け)') && l.has('フェラ(攻め)')
+        && !l.has('アナル責め') && !l.has('フェラ')
+        && !l.has('アナル責め(受け攻め不明)') && !l.has('フェラ(受け攻め不明)');
+    },
+  },'''
+          if old not in s: raise SystemExit('fixture expectation anchor not found')
+          p.write_text(s.replace(old,new,1))
+          PY
+      - name: Clone private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: git clone --quiet --depth=1 "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Install private dependencies
+        working-directory: work
+        run: npm ci
+      - name: Run repair with captured output
+        id: repair
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          bash scripts/fix-bl-role-target-split.sh 2>&1 | tee /tmp/bl-role-fix-v2.log
+      - name: Publish diagnostic log
+        if: always()
+        env:
+          REPAIR_OUTCOME: ${{ steps.repair.outcome }}
+        run: |
+          mkdir -p status
+          {
+            echo "outcome=$REPAIR_OUTCOME"
+            echo "--- log ---"
+            cat /tmp/bl-role-fix-v2.log 2>/dev/null || true
+          } > status/bl-role-target-split-debug-v2.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add status/bl-role-target-split-debug-v2.txt
+          git commit -m 'status: BL role split v2 diagnostic' || exit 0
+          git pull --rebase origin main
+          git push origin main
