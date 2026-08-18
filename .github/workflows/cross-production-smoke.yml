@@ -8,17 +8,18 @@ on:
   workflow_run:
     workflows:
       - 'Cross market production build'
+      - 'BL manga catalog background sync'
     types:
       - completed
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   smoke:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - name: Check production cross page
         shell: bash
@@ -28,13 +29,13 @@ jobs:
 
           ok=0
           for attempt in $(seq 1 24); do
-            echo "production check attempt ${attempt}/24"
+            echo "cross production check attempt ${attempt}/24"
             if html="$(curl -LfsS --max-time 20 "$base/cross.html" 2>/tmp/cross-html.err)" \
               && printf '%s' "$html" | grep -Fq 'どちらが先に動く？' \
               && printf '%s' "$html" | grep -Fq '次に波及しそうなもの' \
               && printf '%s' "$html" | grep -Fq 'cross-leadlag-ui.js' \
               && json="$(curl -LfsS --max-time 20 "$base/data/cross/otome.json" 2>/tmp/cross-json.err)" \
-              && printf '%s' "$json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const x=JSON.parse(s); if(!x.lead_lag?.available) process.exit(2); if((x.lead_lag.coverage?.high_confidence||0)<1) process.exit(3); console.log(JSON.stringify({generated_at:x.lead_lag.generated_at,coverage:x.lead_lag.coverage,next:x.lead_lag.next_wave},null,2));})"
+              && printf '%s' "$json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const x=JSON.parse(s); if(!x.lead_lag?.available) process.exit(2); if((x.lead_lag.coverage?.high_confidence||0)<1) process.exit(3);})"
             then
               ok=1
               break
@@ -48,3 +49,67 @@ jobs:
             cat /tmp/cross-json.err 2>/dev/null || true
             exit 1
           fi
+
+      - name: Check production BL manga catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://dlsite-trend-radar.pages.dev'
+          ok=0
+          for attempt in $(seq 1 24); do
+            echo "BL manga production check attempt ${attempt}/24"
+            if summary="$(curl -LfsS --max-time 20 "$base/data/catalog/manga/bl/summary.json" 2>/tmp/bl-summary.err)" \
+              && meta="$(curl -LfsS --max-time 20 "$base/data/catalog/manga/bl/build-meta.json" 2>/tmp/bl-meta.err)" \
+              && alljs="$(curl -LfsS --max-time 20 "$base/all-fetch-cache.js" 2>/tmp/bl-js.err)" \
+              && mediajs="$(curl -LfsS --max-time 20 "$base/media-switch.js" 2>/tmp/bl-media.err)" \
+              && printf '%s\n%s' "$summary" "$meta" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const lines=s.trim().split(/\n(?=\{)/); const summary=JSON.parse(lines[0]); const meta=JSON.parse(lines.slice(1).join('\n')); if(summary.total_works!==meta.confirmed_manga_works)process.exit(2); if(summary.total_works<10000)process.exit(3); if(meta.detail_errors!==0||meta.unconfirmed_work_type!==0)process.exit(4); if(summary.coverage?.release_year?.share!==1)process.exit(5); console.log('BL manga production works='+summary.total_works);})" \
+              && printf '%s' "$alljs" | grep -Fq 'data/catalog/manga/bl' \
+              && printf '%s' "$mediajs" | grep -Fq 'comicDatasets' \
+              && curl -LfsS --max-time 30 --range 0-1023 "$base/data/catalog/manga/bl/search-index.json" 2>/tmp/bl-index.err | grep -Fq 'schema_version'
+            then
+              ok=1
+              printf '%s' "$summary" > /tmp/bl-summary.json
+              printf '%s' "$meta" > /tmp/bl-meta.json
+              break
+            fi
+            sleep 20
+          done
+
+          if [[ "$ok" != 1 ]]; then
+            echo 'Production BL manga catalog did not become healthy within the retry window.' >&2
+            cat /tmp/bl-summary.err 2>/dev/null || true
+            cat /tmp/bl-meta.err 2>/dev/null || true
+            cat /tmp/bl-js.err 2>/dev/null || true
+            cat /tmp/bl-media.err 2>/dev/null || true
+            cat /tmp/bl-index.err 2>/dev/null || true
+            exit 1
+          fi
+
+      - name: Record production smoke status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git clone --quiet "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" statusrepo
+          cd statusrepo
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          mkdir -p status
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          const summary = JSON.parse(fs.readFileSync('/tmp/bl-summary.json', 'utf8'));
+          const meta = JSON.parse(fs.readFileSync('/tmp/bl-meta.json', 'utf8'));
+          const status = {
+            checked_at: new Date().toISOString(),
+            production: 'https://dlsite-trend-radar.pages.dev',
+            cross: 'success',
+            bl_manga: 'success',
+            bl_manga_total_works: summary.total_works,
+            excluded_non_manga: meta.excluded_non_manga,
+          };
+          fs.writeFileSync('status/production-smoke.json', JSON.stringify(status, null, 2) + '\n');
+          NODE
+          git add status/production-smoke.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'status: production smoke' >/dev/null
+          git push origin main >/dev/null
