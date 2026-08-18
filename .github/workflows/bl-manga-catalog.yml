@@ -72,6 +72,33 @@ jobs:
           source scripts/ci/dlsite-jp-relay-env.sh
           bash scripts/ci/run-manga-bl-catalog.sh
 
+      - name: Record exact BL manga progress
+        working-directory: work
+        run: |
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          const checkpointPath = 'data/manga/bl/catalog/index/checkpoint.json';
+          const idsPath = 'data/manga/bl/catalog/index/ids.json';
+          const detailsPath = 'data/manga/bl/catalog/full/details.json';
+          const outPath = 'data/manga/bl/catalog/index/progress.json';
+          const checkpoint = JSON.parse(fs.readFileSync(checkpointPath, 'utf8'));
+          const indexed = Object.keys(JSON.parse(fs.readFileSync(idsPath, 'utf8'))).length;
+          const enriched = fs.existsSync(detailsPath)
+            ? Object.keys(JSON.parse(fs.readFileSync(detailsPath, 'utf8'))).length
+            : 0;
+          const progress = {
+            updated_at: new Date().toISOString(),
+            indexed,
+            enriched,
+            pending: Math.max(0, indexed - enriched),
+            detail_percent: indexed ? Number((enriched / indexed * 100).toFixed(2)) : 0,
+            index_done: Boolean(checkpoint.done),
+            stopped_reason: checkpoint.stopped_reason || null,
+          };
+          fs.writeFileSync(outPath, JSON.stringify(progress, null, 2) + '\n');
+          console.log(JSON.stringify(progress));
+          NODE
+
       - name: Push BL manga progress to private main
         working-directory: work
         run: bash scripts/ci/push.sh "data/manga/bl/catalog/index data/manga/bl/catalog/full/details.json"
@@ -81,7 +108,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NEXT_MAX_PAGES: ${{ github.event.inputs.max_pages || '60' }}
-          NEXT_BATCH_SIZE: ${{ github.event.inputs.batch_size || '1000' }}
+          # Never propagate an old small batch through the auto-chain. The
+          # background continuation is intentionally fixed at 1000 details/run.
+          NEXT_BATCH_SIZE: '1000'
         run: |
           set -euo pipefail
           CHECKPOINT='data/manga/bl/catalog/index/checkpoint.json'
