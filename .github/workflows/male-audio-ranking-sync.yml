@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - '.github/workflows/male-audio-ranking-sync.yml'
+      - '.github/triggers/male-audio-ranking-now'
   schedule:
     - cron: '40 16 * * *'
 
