@@ -7,7 +7,7 @@ on:
       - '.github/workflows/male-audio-ranking-sync.yml'
       - '.github/triggers/male-audio-ranking-now'
   schedule:
-    - cron: '40 16 * * *'
+    - cron: '20 17 * * *'
 
 concurrency:
   group: male-audio-ranking-sync
