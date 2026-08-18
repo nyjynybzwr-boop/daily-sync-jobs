@@ -86,3 +86,27 @@ jobs:
         run: |
           test -s /tmp/melosignal-pages-worker.js
           wc -c /tmp/melosignal-pages-worker.js
+
+      - name: Record successful BL manga site build
+        working-directory: work
+        run: |
+          set -euo pipefail
+          SOURCE_SHA=$(git rev-parse HEAD)
+          mkdir -p analysis
+          SOURCE_SHA="$SOURCE_SHA" node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          const summary = JSON.parse(fs.readFileSync('site/data/catalog/manga/bl/summary.json', 'utf8'));
+          const indexPath = 'site/data/catalog/manga/bl/search-index.json';
+          const marker = {
+            checked_at: new Date().toISOString(),
+            checked_source_sha: process.env.SOURCE_SHA,
+            status: 'success',
+            bl_manga_total_works: summary.total_works,
+            search_index_bytes: fs.statSync(indexPath).size,
+            dashboard_bl_comic: true,
+            pages_function_bundle: true,
+          };
+          fs.writeFileSync('analysis/bl-manga-site-build-check.json', JSON.stringify(marker, null, 2) + '\n');
+          console.log(JSON.stringify(marker));
+          NODE
+          bash scripts/ci/push.sh "analysis/bl-manga-site-build-check.json"
