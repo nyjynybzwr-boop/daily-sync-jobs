@@ -1,4 +1,4 @@
-outcome=failure
+outcome=success
 --- log ---
 === PATCH ===
 === TEST ===
@@ -100,14 +100,62 @@ Analyzed week: 3 snapshot(s), latest 2026-08-19.
 Analyzed month: 3 snapshot(s), latest 2026-08-19.
 Analyzed yearly rankings: 2023, 2024, 2025
 === AUDIT TOP30 ===
-file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/scripts/lib/tokenizer.mjs:41
-    throw new Error('Tokenizer not initialized - call and await ensureTokenizer() once at process startup before tokenizeText().');
-          ^
+{
+  "checked_at": "2026-08-18T15:54:22.726Z",
+  "source": "2026-08-19.json",
+  "top_n": 30,
+  "counts": {
+    "乳首責め": {
+      "受け": 0,
+      "攻め": 0,
+      "受け攻め不明": 14,
+      "bare": 0,
+      "total": 14
+    },
+    "アナル責め": {
+      "受け": 0,
+      "攻め": 0,
+      "受け攻め不明": 8,
+      "bare": 0,
+      "total": 8
+    },
+    "フェラ": {
+      "受け": 0,
+      "攻め": 1,
+      "受け攻め不明": 16,
+      "bare": 0,
+      "total": 17
+    }
+  }
+}
+=== BUILD SITE ===
 
-Error: Tokenizer not initialized - call and await ensureTokenizer() once at process startup before tokenizeText().
-    at tokenizeText (file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/scripts/lib/tokenizer.mjs:41:11)
-    at tokenBoundaries (file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/scripts/lib/analysis-core.mjs:76:18)
-    at detectLabels (file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/scripts/lib/analysis-core.mjs:737:22)
-    at file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/[eval1]:13:18
+> dlsite-trend-radar@1.0.0 build:site
+> node scripts/check-web-syntax.mjs && node scripts/build-dashboard-semantic-v53.mjs && node scripts/build-hot-search-words.mjs && node scripts/attach-manga-dashboard.mjs && node scripts/build-cross-analysis.mjs && node scripts/merge-cross-leadlag.mjs && node scripts/build-cross-analysis-bl.mjs && node scripts/merge-cross-leadlag-bl.mjs && node scripts/apply-melosignal-brand.mjs && node scripts/inject-cross-market-switch.mjs && node scripts/inject-page-jump.mjs && node scripts/inject-manga-media-switch.mjs && node scripts/inject-visual-guard.mjs && node scripts/check-web-syntax.mjs --site
 
-Node.js v22.23.2
+Web syntax OK: 43 files.
+Dashboard built: otome week=30, month=30, narrative=30/30, annual=3, daily=30, history=5 | bl week=30, month=30, daily=30, history=3.
+Semantic v5.3 attached additively: week=24/30, month=29/30. Existing labels/play fields were not modified.
+Hot search words built: otome=2026-08-18, bl=2026-08-19
+Manga dashboard attached: otome=yes, bl=yes, otome-day=30, bl-day=30.
+Cross analysis built: common_labels=374, analyzed=300, years=2021,2022,2023,2024,2025,2026, realtime_days=2, spearman=0.6241.
+Merged cross lead/lag: directional=32, next=3
+BL cross analysis built: common_labels=366, analyzed=316, years=2021,2022,2023,2024,2025,2026, realtime_days=1, spearman=0.755.
+Merged BL cross lead/lag: directional=22, next=6
+MeloSignal branding applied; every primary page/view ships with an Audiowide English heading.
+Cross market switch injected before cross.js.
+Bottom page-jump control injected into 7 HTML pages.
+Injected media-switch.js before app-v3.js.
+Visual guard injected into 7 built HTML pages.
+Web syntax OK: 43 files.
+Built site syntax OK: 43 files.
+Site smoke OK: otome 13874, BL 2387, AND sample 214 works.
+=== COMMIT PRIVATE ===
+[main f6e5b71] Fix BL play labels to uke seme unknown split
+ 31 files changed, 7004 insertions(+), 15680 deletions(-)
+From https://github.com/nyjynybzwr-boop/dlsite-trend-radar
+ * branch            main       -> FETCH_HEAD
+Current branch main is up to date.
+To https://github.com/nyjynybzwr-boop/dlsite-trend-radar.git
+   b109d86..f6e5b71  main -> main
+=== PRIVATE PUSH OK ===
