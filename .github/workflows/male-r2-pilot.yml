@@ -1,0 +1,88 @@
+name: Male catalog R2 500x500 pilot
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/male-r2-pilot.yml'
+
+concurrency:
+  group: male-r2-pilot
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  pilot:
+    strategy:
+      fail-fast: false
+      matrix:
+        media: [audio, manga]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      R2_BUCKET_NAME: melosignal-data
+      MALE_MEDIA: ${{ matrix.media }}
+      CHUNK_SIZE: '500'
+      CHUNK_INDEX: '0'
+      DETAIL_DELAY_MS: '800'
+      MALE_R2_MAX_BYTES: '7516192768'
+      PILOT: '1'
+
+    steps:
+      - name: Require credentials
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo 'CLOUDFLARE_ACCOUNT_ID missing' >&2; exit 1; }
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo 'CLOUDFLARE_API_TOKEN missing' >&2; exit 1; }
+
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: |
+          set -euo pipefail
+          npm ci >/tmp/npm-ci.log 2>&1
+          npm install --no-save devalue >>/tmp/npm-ci.log 2>&1
+
+      - name: Crawl 500 works and build gzip chunk
+        working-directory: work
+        run: node scripts/crawl-male-r2-chunk.mjs
+
+      - name: Upload gzip chunk and manifest to R2
+        working-directory: work
+        run: |
+          set -euo pipefail
+          chunk=".tmp/male-r2/${MALE_MEDIA}/chunk-00000.json.gz"
+          manifest="data/male/r2/${MALE_MEDIA}-manifest.json"
+          test -s "$chunk"
+          test -s "$manifest"
+          npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/male/${MALE_MEDIA}/raw/chunk-00000.json.gz" --file "$chunk" --remote
+          npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/male/${MALE_MEDIA}/manifest.json" --file "$manifest" --remote
+
+      - name: Persist only small pilot metadata to Git
+        working-directory: work
+        run: |
+          set -euo pipefail
+          bash scripts/ci/push.sh "data/male/r2/${MALE_MEDIA}-progress.json data/male/r2/${MALE_MEDIA}-manifest.json"
+
+      - name: Show pilot summary
+        working-directory: work
+        run: |
+          echo "=== ${MALE_MEDIA} progress ==="
+          cat "data/male/r2/${MALE_MEDIA}-progress.json"
