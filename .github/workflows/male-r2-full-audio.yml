@@ -1,0 +1,94 @@
+name: Male audio full catalog to R2
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/male-r2-full-audio.yml'
+
+concurrency:
+  group: male-r2-full-audio
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      R2_BUCKET_NAME: melosignal-data
+      MALE_MEDIA: audio
+      CHUNK_SIZE: '500'
+      DETAIL_DELAY_MS: '800'
+      MALE_R2_MAX_BYTES: '7516192768'
+      PILOT: '0'
+
+    steps:
+      - name: Require credentials
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo 'CLOUDFLARE_ACCOUNT_ID missing' >&2; exit 1; }
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo 'CLOUDFLARE_API_TOKEN missing' >&2; exit 1; }
+
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: |
+          set -euo pipefail
+          npm ci >/tmp/npm-ci.log 2>&1
+          npm install --no-save devalue >>/tmp/npm-ci.log 2>&1
+
+      - name: Crawl and upload up to 20 chunks
+        working-directory: work
+        run: |
+          set -euo pipefail
+          for batch in $(seq 1 20); do
+            git pull --rebase origin main
+            chunk_index="$(node -e "const p=require('./data/male/r2/audio-progress.json');process.stdout.write(String(p.next_chunk||0))")"
+            total="$(node -e "const i=require('./data/male/catalog/index/ids.json');process.stdout.write(String(Object.keys(i).length))")"
+            offset=$((chunk_index * 500))
+            if [ "$offset" -ge "$total" ]; then
+              echo "Audio catalog complete: next_chunk=$chunk_index total=$total"
+              break
+            fi
+
+            echo "=== audio full batch $batch / chunk $chunk_index / total $total ==="
+            CHUNK_INDEX="$chunk_index" node scripts/crawl-male-r2-chunk.mjs
+
+            padded="$(printf '%05d' "$chunk_index")"
+            chunk=".tmp/male-r2/audio/chunk-${padded}.json.gz"
+            manifest="data/male/r2/audio-manifest.json"
+            progress="data/male/r2/audio-progress.json"
+            test -s "$chunk"
+            test -s "$manifest"
+            test -s "$progress"
+
+            npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/male/audio/raw/chunk-${padded}.json.gz" --file "$chunk" --remote
+            npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/male/audio/manifest.json" --file "$manifest" --remote
+
+            bash scripts/ci/push.sh "$progress $manifest"
+            node -e "const p=require('./data/male/r2/audio-progress.json');console.log({processed:p.processed,pending:p.pending,next_chunk:p.next_chunk,stored_bytes:p.stored_bytes,errors:p.errors?.length||0,stopped_reason:p.stopped_reason})"
+          done
+
+      - name: Final status
+        working-directory: work
+        run: |
+          git pull --rebase origin main
+          cat data/male/r2/audio-progress.json
