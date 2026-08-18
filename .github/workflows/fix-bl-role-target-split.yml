@@ -56,7 +56,9 @@ jobs:
             node --input-type=module <<'NODE'
           import fs from 'node:fs';
           import path from 'node:path';
-          import { detectLabels } from './scripts/lib/analysis-core.mjs';
+          import { detectLabels, ensureTokenizer } from './scripts/lib/analysis-core.mjs';
+
+          await ensureTokenizer();
 
           const dir = 'data/bl/raw';
           const latest = fs.readdirSync(dir).filter((x) => x.endsWith('.json')).sort().at(-1);
