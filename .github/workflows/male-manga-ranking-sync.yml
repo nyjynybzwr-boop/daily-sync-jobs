@@ -7,7 +7,7 @@ on:
       - '.github/workflows/male-manga-ranking-sync.yml'
       - '.github/triggers/male-manga-ranking-now'
   schedule:
-    - cron: '35 17 * * *'
+    - cron: '40 17 * * *'
 
 concurrency:
   group: male-manga-ranking-sync
@@ -15,7 +15,6 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   collect:
@@ -45,13 +44,10 @@ jobs:
           npm install --no-save playwright devalue >/tmp/step.log 2>&1
           npx playwright install --with-deps chromium >>/tmp/step.log 2>&1
 
-      - name: Collect and analyze Japan-visible male manga rankings
+      - name: Collect and analyze male manga rankings
         working-directory: work
-        env:
-          DLSITE_JP_RELAY_ORIGIN: ${{ vars.DLSITE_JP_RELAY_ORIGIN }}
         run: |
           set -euo pipefail
-          source scripts/ci/dlsite-jp-relay-env.sh
           bash scripts/ci/run-l.sh
 
       - name: Push male manga ranking data
