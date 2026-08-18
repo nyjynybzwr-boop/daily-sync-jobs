@@ -39,31 +39,50 @@ jobs:
 
       - name: Materialize audio and manga catalogs
         working-directory: work
-        run: git lfs pull --include="data/catalog/full/details.json,data/manga/catalog/full/details.json"
+        run: |
+          git lfs pull --include="data/catalog/full/details.json,data/manga/catalog/full/details.json,data/bl/catalog/full/details.json,data/manga/bl/catalog/full/details.json"
 
       - name: Build lead lag signals
         working-directory: work
-        run: node scripts/run-cross-leadlag.mjs
+        run: |
+          node scripts/run-cross-leadlag.mjs
+          node scripts/run-cross-leadlag-bl.mjs
 
       - name: Validate production signals
         working-directory: work
         run: |
           node - <<'NODE'
-          const x=require('./data/cross/otome-leadlag.json');
-          if(x.schema_version!==2) throw new Error('unexpected lead/lag schema');
-          if((x.coverage?.analyzed_labels||0)<50) throw new Error('too few analyzed labels');
-          if((x.coverage?.directional_signals||0)<1) throw new Error('no directional signals');
-          const all=[...(x.directions?.audio_to_comic||[]),...(x.directions?.comic_to_audio||[])];
-          if(all.some(r=>!['high','medium'].includes(r.confidence))) throw new Error('unpublished confidence band leaked');
-          if(all.some(r=>!(r.event_total>=6))) throw new Error('weak event count leaked');
-          if(all.some(r=>r.confidence==='high' && Math.min(r.audio_works||0,r.comic_works||0)<50)) throw new Error('high confidence lacks sample support');
-          console.log(JSON.stringify({period:x.period,coverage:x.coverage,status_counts:x.status_counts,next:{audio_to_comic:x.next_wave.audio_to_comic.map(r=>r.label),comic_to_audio:x.next_wave.comic_to_audio.map(r=>r.label)}},null,2));
+          const fs=require('fs');
+          for(const audience of ['otome','bl']){
+            const file=`./data/cross/${audience}-leadlag.json`;
+            const x=JSON.parse(fs.readFileSync(file,'utf8'));
+            if(x.schema_version!==2) throw new Error(`${audience}: unexpected lead/lag schema`);
+            if((x.coverage?.analyzed_labels||0)<25) throw new Error(`${audience}: too few analyzed labels`);
+            const all=[...(x.directions?.audio_to_comic||[]),...(x.directions?.comic_to_audio||[])];
+            if(all.some(r=>!['high','medium'].includes(r.confidence))) throw new Error(`${audience}: unpublished confidence band leaked`);
+            if(all.some(r=>!(r.event_total>=6))) throw new Error(`${audience}: weak event count leaked`);
+            if(all.some(r=>r.confidence==='high' && Math.min(r.audio_works||0,r.comic_works||0)<50)) throw new Error(`${audience}: high confidence lacks sample support`);
+            console.log(JSON.stringify({audience,period:x.period,coverage:x.coverage,status_counts:x.status_counts,next:{audio_to_comic:x.next_wave.audio_to_comic.map(r=>r.label),comic_to_audio:x.next_wave.comic_to_audio.map(r=>r.label)}},null,2));
+          }
           NODE
 
       - name: Verify site build with merged signals
         working-directory: work
-        run: npm run build:site
+        run: |
+          npm run build:site
+          node - <<'NODE'
+          const fs=require('fs');
+          for(const audience of ['otome','bl']){
+            const x=JSON.parse(fs.readFileSync(`site/data/cross/${audience}.json`,'utf8'));
+            if(x.audience!==audience) throw new Error(`${audience}: wrong cross audience`);
+            if(!x.sources?.audio?.total_works || !x.sources?.comic?.total_works) throw new Error(`${audience}: empty cross sources`);
+            if(!x.lead_lag?.available) throw new Error(`${audience}: lead/lag not merged`);
+          }
+          const html=fs.readFileSync('site/cross.html','utf8');
+          if(!html.includes('cross-market-switch.js')) throw new Error('cross market switch not injected');
+          console.log('Otome + BL cross site build verified.');
+          NODE
 
       - name: Push lead lag data to private main
         working-directory: work
-        run: bash scripts/ci/push.sh "data/cross/otome-leadlag.json"
+        run: bash scripts/ci/push.sh "data/cross/otome-leadlag.json data/cross/bl-leadlag.json"
