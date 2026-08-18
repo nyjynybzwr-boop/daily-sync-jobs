@@ -1,0 +1,47 @@
+{
+  "date": "2026-08-19",
+  "top_n": 30,
+  "counts": {
+    "乳首責め": {
+      "bare_rows": 0,
+      "bare_work_labels": 0,
+      "split_rows": [
+        {
+          "label": "乳首責め(受け攻め不明)",
+          "count": 14,
+          "share": 0.4666666666666667
+        }
+      ],
+      "split_work_labels": 14
+    },
+    "アナル責め": {
+      "bare_rows": 0,
+      "bare_work_labels": 0,
+      "split_rows": [
+        {
+          "label": "アナル責め(受け攻め不明)",
+          "count": 8,
+          "share": 0.26666666666666666
+        }
+      ],
+      "split_work_labels": 8
+    },
+    "フェラ": {
+      "bare_rows": 0,
+      "bare_work_labels": 0,
+      "split_rows": [
+        {
+          "label": "フェラ(受け攻め不明)",
+          "count": 16,
+          "share": 0.5333333333333333
+        },
+        {
+          "label": "フェラ(攻め)",
+          "count": 1,
+          "share": 0.03333333333333333
+        }
+      ],
+      "split_work_labels": 17
+    }
+  }
+}
