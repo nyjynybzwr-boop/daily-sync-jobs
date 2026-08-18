@@ -42,6 +42,11 @@ jobs:
           node --check scripts/index-cloudflare-nuance.mjs
           node --check scripts/eval-cloudflare-nuance-http.mjs
           node --check scripts/build-hot-search-words.mjs
+          node --check scripts/build-bl-manga-catalog-web.mjs
+          node --check scripts/attach-manga-dashboard.mjs
+          node --check web/media-switch.js
+          node --check web/all-fetch-cache.js
+          node --check web/all-market-switch.js
           node --check cloudflare/workers/dlsite-relay/src/index.js
 
       - name: Build full site
@@ -64,17 +69,26 @@ jobs:
           test -s site/data/catalog/manga/bl/summary.json
           test -s site/data/catalog/manga/bl/search-index.json
           test -s site/data/catalog/manga/bl/similar-works.json
+          test -s site/data/catalog/manga/bl/build-meta.json
           node --input-type=module - <<'NODE'
           import fs from 'node:fs';
           const summary = JSON.parse(fs.readFileSync('site/data/catalog/manga/bl/summary.json', 'utf8'));
           const index = JSON.parse(fs.readFileSync('site/data/catalog/manga/bl/search-index.json', 'utf8'));
+          const meta = JSON.parse(fs.readFileSync('site/data/catalog/manga/bl/build-meta.json', 'utf8'));
+          const progress = JSON.parse(fs.readFileSync('data/manga/bl/catalog/index/progress.json', 'utf8'));
           const dashboard = JSON.parse(fs.readFileSync('site/data/dashboard.json', 'utf8'));
-          if (summary.total_works !== 18714) throw new Error(`BL manga summary count ${summary.total_works}`);
-          if (index.total_works !== 18714) throw new Error(`BL manga search count ${index.total_works}`);
+          const expected = progress.confirmed_manga_works;
+          if (!Number.isInteger(expected) || expected < 10000) throw new Error(`Unexpected confirmed BL manga count: ${expected}`);
+          if (progress.pending !== 0 || progress.detail_errors !== 0 || progress.unconfirmed_work_type !== 0) throw new Error(`BL manga source processing incomplete: ${JSON.stringify(progress)}`);
+          if (summary.total_works !== expected || index.total_works !== expected || meta.confirmed_manga_works !== expected) {
+            throw new Error(`BL manga count mismatch: progress=${expected}, summary=${summary.total_works}, search=${index.total_works}, meta=${meta.confirmed_manga_works}`);
+          }
+          if (meta.source_entries_processed !== progress.indexed) throw new Error('BL manga source count mismatch');
+          if (meta.excluded_non_manga !== progress.excluded_non_manga) throw new Error('BL manga excluded count mismatch');
           if (!dashboard.media?.comic?.bl) throw new Error('BL manga ranking dataset missing from dashboard');
           const bytes = fs.statSync('site/data/catalog/manga/bl/search-index.json').size;
           if (bytes >= 25 * 1024 * 1024) throw new Error(`BL manga search index exceeds Pages 25 MiB limit: ${bytes}`);
-          console.log(`BL manga verified: ${summary.total_works} works, search-index=${(bytes/1024/1024).toFixed(1)} MiB`);
+          console.log(`BL manga verified: ${expected} confirmed MNG works; excluded=${progress.excluded_non_manga}; search-index=${(bytes/1024/1024).toFixed(1)} MiB`);
           NODE
           grep -q "data/catalog/manga/bl" site/all-fetch-cache.js
 
@@ -96,12 +110,14 @@ jobs:
           SOURCE_SHA="$SOURCE_SHA" node --input-type=module - <<'NODE'
           import fs from 'node:fs';
           const summary = JSON.parse(fs.readFileSync('site/data/catalog/manga/bl/summary.json', 'utf8'));
+          const meta = JSON.parse(fs.readFileSync('site/data/catalog/manga/bl/build-meta.json', 'utf8'));
           const indexPath = 'site/data/catalog/manga/bl/search-index.json';
           const marker = {
             checked_at: new Date().toISOString(),
             checked_source_sha: process.env.SOURCE_SHA,
             status: 'success',
             bl_manga_total_works: summary.total_works,
+            excluded_non_manga: meta.excluded_non_manga,
             search_index_bytes: fs.statSync(indexPath).size,
             dashboard_bl_comic: true,
             pages_function_bundle: true,
