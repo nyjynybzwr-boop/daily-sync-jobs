@@ -7,7 +7,7 @@ on:
       - '.github/workflows/male-audio-ranking-sync.yml'
       - '.github/triggers/male-audio-ranking-now'
   schedule:
-    - cron: '30 17 * * *'
+    - cron: '35 17 * * *'
 
 concurrency:
   group: male-audio-ranking-sync
@@ -15,7 +15,6 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   collect:
@@ -45,13 +44,10 @@ jobs:
           npm install --no-save playwright devalue >/tmp/step.log 2>&1
           npx playwright install --with-deps chromium >>/tmp/step.log 2>&1
 
-      - name: Collect and analyze Japan-visible male audio rankings
+      - name: Collect and analyze male audio rankings
         working-directory: work
-        env:
-          DLSITE_JP_RELAY_ORIGIN: ${{ vars.DLSITE_JP_RELAY_ORIGIN }}
         run: |
           set -euo pipefail
-          source scripts/ci/dlsite-jp-relay-env.sh
           bash scripts/ci/run-k.sh
 
       - name: Push male audio ranking data
