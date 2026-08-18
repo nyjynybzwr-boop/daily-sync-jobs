@@ -73,6 +73,7 @@ jobs:
           bash scripts/ci/run-manga-bl-catalog.sh
 
       - name: Record exact BL manga progress
+        id: progress
         working-directory: work
         run: |
           node --input-type=module - <<'NODE'
@@ -97,11 +98,39 @@ jobs:
           };
           fs.writeFileSync(outPath, JSON.stringify(progress, null, 2) + '\n');
           console.log(JSON.stringify(progress));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `complete=${progress.index_done && progress.pending === 0 && !progress.stopped_reason}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `indexed=${indexed}\n`);
           NODE
 
-      - name: Push BL manga progress to private main
+      - name: Build BL manga web catalog
+        if: steps.progress.outputs.complete == 'true'
         working-directory: work
-        run: bash scripts/ci/push.sh "data/manga/bl/catalog/index data/manga/bl/catalog/full/details.json"
+        env:
+          DATA_ROOT: data/manga/bl/catalog
+          OUT_DIR: web/data/catalog/manga/bl
+        run: |
+          set -euo pipefail
+          node scripts/build-catalog-web.mjs
+          node scripts/build-similar-works.mjs
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          const progress = JSON.parse(fs.readFileSync('data/manga/bl/catalog/index/progress.json', 'utf8'));
+          const summary = JSON.parse(fs.readFileSync('web/data/catalog/manga/bl/summary.json', 'utf8'));
+          const index = JSON.parse(fs.readFileSync('web/data/catalog/manga/bl/search-index.json', 'utf8'));
+          if (summary.total_works !== progress.indexed || index.total_works !== progress.indexed) {
+            throw new Error(`BL manga web catalog count mismatch: indexed=${progress.indexed}, summary=${summary.total_works}, search=${index.total_works}`);
+          }
+          console.log(`BL manga web catalog verified: ${progress.indexed} works`);
+          NODE
+
+      - name: Push BL manga progress and web catalog to private main
+        working-directory: work
+        run: |
+          PATHS="data/manga/bl/catalog/index data/manga/bl/catalog/full/details.json"
+          if [[ -d web/data/catalog/manga/bl ]]; then
+            PATHS="$PATHS web/data/catalog/manga/bl"
+          fi
+          bash scripts/ci/push.sh "$PATHS"
 
       - name: Continue in background if work remains
         working-directory: work
@@ -130,5 +159,5 @@ jobs:
           elif [[ "$DONE" != 'true' || "$ENRICHED" -lt "$TOTAL" ]]; then
             gh workflow run bl-manga-catalog.yml --repo "$GITHUB_REPOSITORY" --ref main -f max_pages="$NEXT_MAX_PAGES" -f batch_size="$NEXT_BATCH_SIZE"
           else
-            echo 'BL manga catalog crawl and detail enrichment complete.'
+            echo 'BL manga catalog crawl, detail enrichment, and web-data build complete.'
           fi
