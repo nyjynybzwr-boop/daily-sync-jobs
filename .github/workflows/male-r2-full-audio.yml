@@ -5,6 +5,8 @@ on:
   push:
     paths:
       - '.github/workflows/male-r2-full-audio.yml'
+  schedule:
+    - cron: '7 */6 * * *'
 
 concurrency:
   group: male-r2-full-audio
@@ -71,6 +73,12 @@ jobs:
 
             echo "=== audio full batch $batch / chunk $chunk_index / total $total ==="
             CHUNK_INDEX="$chunk_index" node scripts/crawl-male-r2-chunk.mjs
+
+            node - <<'NODE'
+          const p=require('./data/male/r2/audio-progress.json');
+          const c=p.last_chunk||{};
+          if (c.detail_error_count !== 0) throw new Error(`detail errors in chunk ${c.index}: ${c.detail_error_count}`);
+          NODE
 
             padded="$(printf '%05d' "$chunk_index")"
             chunk=".tmp/male-r2/audio/chunk-${padded}.json.gz"
