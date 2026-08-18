@@ -1,0 +1,49 @@
+name: Test BL role target split v3
+
+on:
+  push:
+    paths:
+      - '.github/triggers/bl-role-target-split-test-v3'
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Correct fixture expectation
+        run: python scripts/correct-bl-role-split-test.py
+      - name: Clone private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: git clone --quiet --depth=1 "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Install private dependencies
+        working-directory: work
+        run: npm ci
+      - name: Apply local patch and stop after tests
+        id: test
+        continue-on-error: true
+        run: |
+          awk '/^export DLSITE_BASE=/{exit} {print}' scripts/fix-bl-role-target-split.sh > /tmp/test-bl-role-split.sh
+          bash /tmp/test-bl-role-split.sh 2>&1 | tee /tmp/bl-role-test.log
+      - name: Publish test status
+        if: always()
+        env:
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          mkdir -p status
+          printf 'outcome=%s\n--- log ---\n' "$TEST_OUTCOME" > status/bl-role-target-split-test-v3.txt
+          cat /tmp/bl-role-test.log >> status/bl-role-target-split-test-v3.txt 2>/dev/null || true
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add status/bl-role-target-split-test-v3.txt
+          git commit -m 'status: BL role split v3 tests' || exit 0
+          git pull --rebase origin main
+          git push origin main
