@@ -1,0 +1,19 @@
+{
+  "checked_at": "2026-08-18T12:12:59.555Z",
+  "audio_outcome": "success",
+  "manga_outcome": "success",
+  "audio": {
+    "source_total_count": 61892,
+    "last_page": 2,
+    "done": false,
+    "stopped_reason": null,
+    "ids_collected": 60
+  },
+  "manga": {
+    "source_total_count": 129381,
+    "last_page": 2,
+    "done": false,
+    "stopped_reason": null,
+    "ids_collected": 60
+  }
+}
