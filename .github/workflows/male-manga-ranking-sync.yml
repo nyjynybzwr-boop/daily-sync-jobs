@@ -7,7 +7,7 @@ on:
       - '.github/workflows/male-manga-ranking-sync.yml'
       - '.github/triggers/male-manga-ranking-now'
   schedule:
-    - cron: '0 17 * * *'
+    - cron: '25 17 * * *'
 
 concurrency:
   group: male-manga-ranking-sync
