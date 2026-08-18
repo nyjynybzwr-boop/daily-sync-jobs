@@ -1,0 +1,23 @@
+name: Dispatch male catalog probes
+
+on:
+  push:
+    paths:
+      - '.github/workflows/dispatch-male-catalog-probes.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch private probe workflows
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+        run: |
+          set -euo pipefail
+          gh workflow run catalog-index-male.yml --repo "$SOURCE_REPO" -f max_pages=2 -f page_delay_ms=2000
+          gh workflow run catalog-index-male-manga.yml --repo "$SOURCE_REPO" -f max_pages=2 -f page_delay_ms=2000
+          echo "Dispatched male audio and manga ID probes."
