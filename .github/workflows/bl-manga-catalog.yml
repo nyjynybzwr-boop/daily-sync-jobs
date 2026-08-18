@@ -84,43 +84,52 @@ jobs:
           const outPath = 'data/manga/bl/catalog/index/progress.json';
           const checkpoint = JSON.parse(fs.readFileSync(checkpointPath, 'utf8'));
           const indexed = Object.keys(JSON.parse(fs.readFileSync(idsPath, 'utf8'))).length;
-          const enriched = fs.existsSync(detailsPath)
-            ? Object.keys(JSON.parse(fs.readFileSync(detailsPath, 'utf8'))).length
-            : 0;
+          const detailRows = fs.existsSync(detailsPath)
+            ? Object.values(JSON.parse(fs.readFileSync(detailsPath, 'utf8')))
+            : [];
+          const processed = detailRows.length;
+          const excludedNonManga = detailRows.filter((row) => row?.excluded_work_type).length;
+          const detailErrors = detailRows.filter((row) => row?.detail_error).length;
+          const confirmedManga = detailRows.filter((row) => !row?.excluded_work_type && !row?.detail_error && row?.work_type_value === 'MNG').length;
+          const unconfirmed = Math.max(0, processed - excludedNonManga - detailErrors - confirmedManga);
           const progress = {
             updated_at: new Date().toISOString(),
             indexed,
-            enriched,
-            pending: Math.max(0, indexed - enriched),
-            detail_percent: indexed ? Number((enriched / indexed * 100).toFixed(2)) : 0,
+            enriched: processed,
+            pending: Math.max(0, indexed - processed),
+            detail_percent: indexed ? Number((processed / indexed * 100).toFixed(2)) : 0,
+            confirmed_manga_works: confirmedManga,
+            excluded_non_manga: excludedNonManga,
+            detail_errors: detailErrors,
+            unconfirmed_work_type: unconfirmed,
             index_done: Boolean(checkpoint.done),
             stopped_reason: checkpoint.stopped_reason || null,
           };
           fs.writeFileSync(outPath, JSON.stringify(progress, null, 2) + '\n');
           console.log(JSON.stringify(progress));
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `complete=${progress.index_done && progress.pending === 0 && !progress.stopped_reason}\n`);
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `indexed=${indexed}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `confirmed_manga=${confirmedManga}\n`);
           NODE
 
       - name: Build BL manga web catalog
         if: steps.progress.outputs.complete == 'true'
         working-directory: work
         env:
-          DATA_ROOT: data/manga/bl/catalog
           OUT_DIR: web/data/catalog/manga/bl
         run: |
           set -euo pipefail
-          node scripts/build-catalog-web.mjs
-          node scripts/build-similar-works.mjs
+          node scripts/build-bl-manga-catalog-web.mjs
           node --input-type=module - <<'NODE'
           import fs from 'node:fs';
           const progress = JSON.parse(fs.readFileSync('data/manga/bl/catalog/index/progress.json', 'utf8'));
           const summary = JSON.parse(fs.readFileSync('web/data/catalog/manga/bl/summary.json', 'utf8'));
           const index = JSON.parse(fs.readFileSync('web/data/catalog/manga/bl/search-index.json', 'utf8'));
-          if (summary.total_works !== progress.indexed || index.total_works !== progress.indexed) {
-            throw new Error(`BL manga web catalog count mismatch: indexed=${progress.indexed}, summary=${summary.total_works}, search=${index.total_works}`);
+          const meta = JSON.parse(fs.readFileSync('web/data/catalog/manga/bl/build-meta.json', 'utf8'));
+          if (summary.total_works !== progress.confirmed_manga_works || index.total_works !== progress.confirmed_manga_works) {
+            throw new Error(`BL manga web catalog mismatch: confirmed=${progress.confirmed_manga_works}, summary=${summary.total_works}, search=${index.total_works}`);
           }
-          console.log(`BL manga web catalog verified: ${progress.indexed} works`);
+          if (meta.confirmed_manga_works !== progress.confirmed_manga_works) throw new Error('BL manga build-meta mismatch');
+          console.log(`BL manga web catalog verified: ${progress.confirmed_manga_works} confirmed MNG works`);
           NODE
 
       - name: Push BL manga progress and web catalog to private main
@@ -137,8 +146,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NEXT_MAX_PAGES: ${{ github.event.inputs.max_pages || '60' }}
-          # Never propagate an old small batch through the auto-chain. The
-          # background continuation is intentionally fixed at 1000 details/run.
           NEXT_BATCH_SIZE: '1000'
         run: |
           set -euo pipefail
@@ -153,11 +160,11 @@ jobs:
           STOPPED=$(node -e "const x=require('./$CHECKPOINT');process.stdout.write(x.stopped_reason||'')")
           TOTAL=$(node -e "console.log(Object.keys(require('./$IDS')).length)")
           ENRICHED=$(node -e "const fs=require('fs');const p='$DETAILS';console.log(fs.existsSync(p)?Object.keys(JSON.parse(fs.readFileSync(p))).length:0)")
-          echo "BL manga indexed=$TOTAL enriched=$ENRICHED done=$DONE stopped_reason=${STOPPED:-none}"
+          echo "BL manga source-indexed=$TOTAL source-processed=$ENRICHED done=$DONE stopped_reason=${STOPPED:-none}"
           if [[ -n "$STOPPED" ]]; then
             echo 'Safety stop recorded; not auto-looping.'
           elif [[ "$DONE" != 'true' || "$ENRICHED" -lt "$TOTAL" ]]; then
             gh workflow run bl-manga-catalog.yml --repo "$GITHUB_REPOSITORY" --ref main -f max_pages="$NEXT_MAX_PAGES" -f batch_size="$NEXT_BATCH_SIZE"
           else
-            echo 'BL manga catalog crawl, detail enrichment, and web-data build complete.'
+            echo 'BL manga source crawl and detail classification complete; confirmed MNG web catalog built.'
           fi
