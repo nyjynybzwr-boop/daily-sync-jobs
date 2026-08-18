@@ -1,0 +1,87 @@
+name: Male manga index reconcile
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/male-manga-index-reconcile.yml'
+
+concurrency:
+  group: male-manga-index-reconcile
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Show count before reconcile
+        working-directory: work
+        run: |
+          node - <<'NODE'
+          const c=require('./data/male/manga/catalog/index/checkpoint.json');
+          const ids=require('./data/male/manga/catalog/index/ids.json');
+          console.log({before_ids:Object.keys(ids).length, source_total_count:c.source_total_count, gap:(c.source_total_count||0)-Object.keys(ids).length});
+          NODE
+
+      - name: Re-scan newest 500 listing pages and merge IDs
+        working-directory: work
+        env:
+          CATALOG_RESCAN_FROM_START: '1'
+          MAX_PAGES_PER_RUN: '500'
+          PAGE_DELAY_MS: '1500'
+        run: bash scripts/ci/run-j.sh
+
+      - name: Persist reconciled index
+        working-directory: work
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if [ -n "$(git status --porcelain -- data/male/manga/catalog/index)" ]; then
+            git add data/male/manga/catalog/index
+            git commit -m "data: reconcile male manga catalog index"
+            for retry in 1 2 3 4 5; do
+              if git pull --rebase origin main && git push origin main; then break; fi
+              if [ "$retry" = 5 ]; then exit 1; fi
+              sleep $((retry * 5))
+            done
+          fi
+
+      - name: Verify reconciled count
+        working-directory: work
+        run: |
+          git pull --rebase origin main
+          node - <<'NODE'
+          const c=require('./data/male/manga/catalog/index/checkpoint.json');
+          const ids=require('./data/male/manga/catalog/index/ids.json');
+          const n=Object.keys(ids).length;
+          const total=Number(c.source_total_count||0);
+          const gap=total-n;
+          console.log({after_ids:n, source_total_count:total, gap, done:c.done, stopped_reason:c.stopped_reason});
+          if (gap !== 0) {
+            console.error(`RECONCILE_GAP_REMAINS:${gap}`);
+            process.exit(2);
+          }
+          NODE
