@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - '.github/workflows/male-manga-ranking-sync.yml'
+      - '.github/triggers/male-manga-ranking-now'
   schedule:
     - cron: '0 17 * * *'
 
