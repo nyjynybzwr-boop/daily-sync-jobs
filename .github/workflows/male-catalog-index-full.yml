@@ -1,0 +1,112 @@
+name: Male catalog full ID collection
+
+on:
+  push:
+    paths:
+      - '.github/workflows/male-catalog-index-full.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: git clone --quiet --depth=1 "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Collect all male audio IDs in checkpointed chunks
+        working-directory: work
+        env:
+          MAX_PAGES_PER_RUN: '500'
+          PAGE_DELAY_MS: '2000'
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+
+          for chunk in $(seq 1 10); do
+            echo "=== audio chunk $chunk ==="
+            bash scripts/ci/run-i.sh
+
+            if [ -n "$(git status --porcelain -- data/male/catalog/index)" ]; then
+              git add data/male/catalog/index
+              git commit -m "data: male audio index chunk ${chunk} $(TZ=Asia/Tokyo date +%F' '%H:%M)"
+              for retry in 1 2 3 4 5; do
+                if git pull --rebase origin main && git push origin main; then break; fi
+                if [ "$retry" = 5 ]; then exit 1; fi
+                sleep $((retry * 5))
+              done
+            fi
+
+            done_flag="$(node -e "const c=require('./data/male/catalog/index/checkpoint.json');process.stdout.write(String(!!c.done))")"
+            node -e "const c=require('./data/male/catalog/index/checkpoint.json');const i=require('./data/male/catalog/index/ids.json');console.log({market:'male-audio',last_page:c.last_page,total:c.source_total_count,ids:Object.keys(i).length,done:c.done,stopped_reason:c.stopped_reason})"
+            if [ "$done_flag" = true ]; then exit 0; fi
+          done
+
+          echo 'Audio index did not finish within 10 chunks.' >&2
+          exit 1
+
+  manga:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: git clone --quiet --depth=1 "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Collect all male manga IDs in checkpointed chunks
+        working-directory: work
+        env:
+          MAX_PAGES_PER_RUN: '500'
+          PAGE_DELAY_MS: '2000'
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+
+          for chunk in $(seq 1 12); do
+            echo "=== manga chunk $chunk ==="
+            bash scripts/ci/run-j.sh
+
+            if [ -n "$(git status --porcelain -- data/male/manga/catalog/index)" ]; then
+              git add data/male/manga/catalog/index
+              git commit -m "data: male manga index chunk ${chunk} $(TZ=Asia/Tokyo date +%F' '%H:%M)"
+              for retry in 1 2 3 4 5; do
+                if git pull --rebase origin main && git push origin main; then break; fi
+                if [ "$retry" = 5 ]; then exit 1; fi
+                sleep $((retry * 5))
+              done
+            fi
+
+            done_flag="$(node -e "const c=require('./data/male/manga/catalog/index/checkpoint.json');process.stdout.write(String(!!c.done))")"
+            node -e "const c=require('./data/male/manga/catalog/index/checkpoint.json');const i=require('./data/male/manga/catalog/index/ids.json');console.log({market:'male-manga',last_page:c.last_page,total:c.source_total_count,ids:Object.keys(i).length,done:c.done,stopped_reason:c.stopped_reason})"
+            if [ "$done_flag" = true ]; then exit 0; fi
+          done
+
+          echo 'Manga index did not finish within 12 chunks.' >&2
+          exit 1
