@@ -1,0 +1,304 @@
+name: Fix BL role target split
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-bl-role-target-split.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout helper repo
+        uses: actions/checkout@v4
+
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: git clone --quiet --depth=1 "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Patch BL role-target labels
+        working-directory: work
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json, re
+
+          p = Path('scripts/lib/analysis-core.mjs')
+          s = p.read_text()
+
+          old = "export const DERIVED_ACTOR_TARGET_LABEL = /(?:男性|女性|攻め|受け)\\)$/;"
+          new = "const ACTOR_TARGET_SUFFIX_RE = /\\((?:男性|女性|性別不明|攻め|受け|受け攻め不明)\\)$/;\nexport const DERIVED_ACTOR_TARGET_LABEL = ACTOR_TARGET_SUFFIX_RE;\nconst canonicalPlayLabel = (label = '') => String(label).replace(ACTOR_TARGET_SUFFIX_RE, '');"
+          if old not in s:
+            raise SystemExit('DERIVED_ACTOR_TARGET_LABEL anchor not found')
+          s = s.replace(old, new, 1)
+
+          start = s.index("const BL_ROLE_TARGET_RULES = {")
+          end = s.index("function detectActorTarget", start)
+          replacement = r'''const BL_ROLE_TARGET_RULES = {
+  'アナル責め': {
+    defaultTarget: '受け',
+    ukeTarget: [
+      /受け(?:の)?(?:アナル|尻|ケツ)/,
+      /受け(?:を|に)[^。！？\n]{0,16}(?:アナル責め|アナル開発|アナル拡張)/,
+      /(?:アナル責め|アナル開発|アナル拡張)[^。！？\n]{0,16}受け/,
+    ],
+    semeTarget: [
+      /攻め(?:の)?(?:アナル|尻|ケツ)/,
+      /攻め(?:を|に)[^。！？\n]{0,16}(?:アナル責め|アナル開発|アナル拡張)/,
+      /(?:アナル責め|アナル開発|アナル拡張)[^。！？\n]{0,16}攻め/,
+      /逆アナル/,
+    ],
+  },
+  '乳首責め': {
+    defaultTarget: '受け',
+    ukeTarget: [
+      /受け(?:の)?乳首/,
+      /受け(?:を|に)[^。！？\n]{0,16}乳首(?:責め|攻め|弄り|いじり|舐め)/,
+      /乳首(?:責め|攻め|弄り|いじり|舐め)[^。！？\n]{0,16}受け/,
+    ],
+    semeTarget: [
+      /攻め(?:の)?乳首/,
+      /攻め(?:を|に)[^。！？\n]{0,16}乳首(?:責め|攻め|弄り|いじり|舐め)/,
+      /乳首(?:責め|攻め|弄り|いじり|舐め)[^。！？\n]{0,16}攻め/,
+    ],
+  },
+  'フェラ': {
+    defaultTarget: '攻め',
+    // BL用語の「攻めフェラ」は攻めがフェラする=受けが受け手。
+    ukeTarget: [
+      /攻めフェラ/,
+      /攻め(?:が|は)[^。！？\n]{0,12}フェラ/,
+      /受け(?:に|へ)[^。！？\n]{0,8}フェラ/,
+    ],
+    // 「受けフェラ」は受けがフェラする=攻めが受け手。
+    semeTarget: [
+      /受けフェラ/,
+      /受け(?:が|は)[^。！？\n]{0,12}フェラ/,
+      /攻め(?:に|へ)[^。！？\n]{0,8}フェラ/,
+    ],
+  },
+};
+const BL_ROLE_RIBA_RE = /(?:^|[^ぁ-んァ-ヶ一-龠])リバ(?:$|[^ぁ-んァ-ヶ一-龠]|プレイ|設定|要素)/;
+const BL_ROLE_GENERIC_REVERSAL_RE = /逆レ|逆NTR|リバース|攻め受け交代|受け攻め交代|攻め受け入れ替|受け攻め入れ替|攻め受け兼任|受け攻め兼任/;
+const BL_ROLE_NO_REVERSAL_RE = /逆転無し|反転無し|逆転(?:は)?(?:あり)?ません/;
+const matchesAny = (text, patterns = []) => patterns.some((pattern) => pattern.test(text));
+
+function detectBLRoleTarget(item, rawCorpus, matched) {
+  const results = [];
+  for (const [label, cfg] of Object.entries(BL_ROLE_TARGET_RULES)) {
+    if (!matched.some((m) => m.label === label)) continue;
+
+    const explicitUke = matchesAny(rawCorpus, cfg.ukeTarget);
+    const explicitSeme = matchesAny(rawCorpus, cfg.semeTarget);
+    const ambiguousRoleSystem = BL_ROLE_RIBA_RE.test(rawCorpus) || BL_ROLE_GENERIC_REVERSAL_RE.test(rawCorpus);
+    const confirmedNoReversal = BL_ROLE_NO_REVERSAL_RE.test(rawCorpus);
+
+    let target = '受け攻め不明';
+    let evidence = 'no label-specific BL role evidence';
+
+    if (explicitUke !== explicitSeme) {
+      target = explicitUke ? '受け' : '攻め';
+      evidence = `explicit ${target} target evidence`;
+    } else if (!explicitUke && !explicitSeme && confirmedNoReversal && !ambiguousRoleSystem) {
+      // 「逆転無し」は作品自身が攻受固定を明示しているので、この場合だけ
+      // ジャンル上の通常方向を採用する。無記述作品にはデフォルトを適用しない。
+      target = cfg.defaultTarget;
+      evidence = `explicit no-reversal marker -> conventional ${target} target`;
+    } else if (explicitUke && explicitSeme) {
+      evidence = 'both uke and seme target evidence';
+    } else if (ambiguousRoleSystem) {
+      evidence = 'generic reversal/riba marker without label-specific target evidence';
+    }
+
+    results.push({
+      label: `${label}(${target})`,
+      category: labelToCategory.get(label) || 'play',
+      matched_keywords: [`derived from ${label}: ${evidence}`],
+    });
+  }
+  return results;
+}
+
+'''
+          s = s[:start] + replacement + s[end:]
+
+          old_bl = """  if (isBL) {\n    matched.push(...detectBLRoleTarget(item, rawCorpus, matched));\n  } else if (!isMangaItem(item)) {"""
+          new_bl = """  if (isBL) {\n    const blRoleTargets = detectBLRoleTarget(item, rawCorpus, matched);\n    matched.push(...blRoleTargets);\n    // BLの方向付きプレイは無印+派生を二重表示しない。\n    // 受け/攻め/受け攻め不明のいずれか一つだけを公開ラベルにする。\n    const splitBases = new Set(Object.keys(BL_ROLE_TARGET_RULES));\n    matched = matched.filter((m) => !splitBases.has(m.label));\n  } else if (!isMangaItem(item)) {"""
+          if old_bl not in s:
+            raise SystemExit('BL detectLabels anchor not found')
+          s = s.replace(old_bl, new_bl, 1)
+
+          old_score = "const playLabelRows = labelDetails.filter((row) => row.category === 'play' && !DERIVED_ACTOR_TARGET_LABEL.test(row.label));\n  const playLabelCount = playLabelRows.length;"
+          new_score = """const playLabelMap = new Map();\n  for (const row of labelDetails.filter((entry) => entry.category === 'play')) {\n    const baseLabel = canonicalPlayLabel(row.label);\n    if (!playLabelMap.has(baseLabel)) playLabelMap.set(baseLabel, { ...row, label: baseLabel });\n  }\n  const playLabelRows = [...playLabelMap.values()];\n  const playLabelCount = playLabelRows.length;"""
+          if old_score not in s:
+            raise SystemExit('play fallback anchor not found')
+          s = s.replace(old_score, new_score, 1)
+
+          old_intensity = "const labels = new Set(labelDetails.map((row) => row.label));"
+          new_intensity = "const labels = new Set(labelDetails.flatMap((row) => [row.label, canonicalPlayLabel(row.label)]));"
+          if old_intensity not in s:
+            raise SystemExit('play intensity anchor not found')
+          s = s.replace(old_intensity, new_intensity, 1)
+          p.write_text(s)
+
+          taxp = Path('config/label-taxonomy.json')
+          tax = json.loads(taxp.read_text())
+          play = tax['categories']['play']
+          additions = {
+            '乳首責め(攻め)': '乳首責め(受け攻め不明)',
+            'フェラ(受け)': 'フェラ(受け攻め不明)',
+            'アナル責め(攻め)': 'アナル責め(受け攻め不明)',
+          }
+          for after, label in additions.items():
+            if label not in play:
+              play.insert(play.index(after) + 1, label)
+          tax['version'] = max(int(tax.get('version', 0)) + 1, 19)
+          taxp.write_text(json.dumps(tax, ensure_ascii=False, indent=2) + '\n')
+
+          tp = Path('scripts/test-label-regression.mjs')
+          t = tp.read_text()
+          start = t.index('  // --- BL role-target')
+          end = t.index("  {\n    name: 'manga: unresolved-gender", start)
+          new_tests = r'''  // --- BL role-target: evidence-first, mutually exclusive 受け/攻め/不明 ---
+  {
+    name: 'BL no role evidence -> アナル責め/フェラ are 受け攻め不明 and bare labels disappear (RJ01378017)',
+    run: () => {
+      const l = labelsOf(fixtures.RJ01378017);
+      return l.has('アナル責め(受け攻め不明)') && l.has('フェラ(受け攻め不明)')
+        && !l.has('アナル責め') && !l.has('フェラ')
+        && !l.has('アナル責め(受け)') && !l.has('アナル責め(攻め)');
+    },
+  },
+  {
+    name: 'BL generic 逆レ alone does not guess a specific target (RJ01397684)',
+    run: () => {
+      const l = labelsOf(fixtures.RJ01397684);
+      return l.has('アナル責め(受け攻め不明)') && !l.has('アナル責め')
+        && !l.has('アナル責め(受け)') && !l.has('アナル責め(攻め)');
+    },
+  },
+  {
+    name: 'BL no marker stays unknown instead of convention-defaulting (RJ01661916)',
+    run: () => {
+      const l = labelsOf(fixtures.RJ01661916);
+      return l.has('アナル責め(受け攻め不明)') && l.has('フェラ(受け攻め不明)')
+        && !l.has('アナル責め') && !l.has('フェラ');
+    },
+  },
+  {
+    name: 'BL explicit 攻めフェラ -> フェラ(受け) only (RJ01394225)',
+    run: () => {
+      const l = labelsOf(fixtures.RJ01394225);
+      return l.has('フェラ(受け)') && !l.has('フェラ')
+        && !l.has('フェラ(攻め)') && !l.has('フェラ(受け攻め不明)');
+    },
+  },
+  {
+    name: 'BL 逆転無し explicitly confirms conventional target (RJ01363178)',
+    run: () => {
+      const l = labelsOf(fixtures.RJ01363178);
+      return l.has('アナル責め(受け)') && !l.has('アナル責め')
+        && !l.has('アナル責め(攻め)') && !l.has('アナル責め(受け攻め不明)');
+    },
+  },
+  {
+    name: 'otome actor/target labels never fire on a BL item (url-gated)',
+    run: () => {
+      const l = labelsOf(fixtures.RJ01378017);
+      return !l.has('乳首責め(男性)') && !l.has('乳首責め(女性)') && !l.has('オナニー(男性)') && !l.has('オナニー(女性)');
+    },
+  },
+'''
+          t = t[:start] + new_tests + t[end:]
+          tp.write_text(t)
+          PY
+
+      - name: Run tests
+        working-directory: work
+        run: npm test
+
+      - name: Rebuild BL ranking analyses
+        working-directory: work
+        env:
+          DLSITE_BASE: bl-touch
+          DATA_ROOT: data/bl
+          SOURCE_TAG: dlsite-bl-touch
+        run: |
+          node scripts/analyze-trends.mjs
+          node scripts/analyze-window-rankings.mjs
+          node scripts/analyze-yearly.mjs
+
+      - name: Audit latest BL Top30 labels
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { detectLabels } from './scripts/lib/analysis-core.mjs';
+          const dir='data/bl/raw';
+          const files=fs.readdirSync(dir).filter(x=>x.endsWith('.json')).sort();
+          const latest=files.at(-1);
+          const raw=JSON.parse(fs.readFileSync(path.join(dir,latest),'utf8'));
+          const items=Array.isArray(raw)?raw:(raw.items||raw.works||raw.ranking||raw.products||[]);
+          const bases=['乳首責め','アナル責め','フェラ'];
+          const counts={};
+          for(const base of bases) counts[base]={受け:0,攻め:0,受け攻め不明:0,bare:0,total:0};
+          for(const item of items.slice(0,30)){
+            const labels=detectLabels(item).map(x=>x.label);
+            for(const base of bases){
+              for(const k of ['受け','攻め','受け攻め不明']) if(labels.includes(`${base}(${k})`)){counts[base][k]++;counts[base].total++;}
+              if(labels.includes(base)) counts[base].bare++;
+            }
+          }
+          const out={checked_at:new Date().toISOString(),source:latest,top_n:Math.min(30,items.length),counts};
+          fs.mkdirSync('../status',{recursive:true});
+          fs.writeFileSync('../status/bl-role-target-split.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out,null,2));
+          NODE
+
+      - name: Full site build
+        working-directory: work
+        run: npm run build:site
+
+      - name: Commit private fix and regenerated BL reports
+        working-directory: work
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add scripts/lib/analysis-core.mjs config/label-taxonomy.json scripts/test-label-regression.mjs data/bl web/data || true
+          if git diff --cached --quiet; then echo 'No private changes'; exit 0; fi
+          git commit -m 'Fix BL play labels to uke/seme/unknown mutually exclusive split'
+          for i in 1 2 3 4 5; do
+            if git pull --rebase origin main && git push origin main; then exit 0; fi
+            echo "push race, retrying $i"
+            sleep $((i*5))
+          done
+          exit 1
+
+      - name: Publish audit status
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add status/bl-role-target-split.json
+          git commit -m 'status: BL role target split audit'
+          git pull --rebase origin main
+          git push origin main
