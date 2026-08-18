@@ -34,6 +34,7 @@ jobs:
               && printf '%s' "$html" | grep -Fq 'どちらが先に動く？' \
               && printf '%s' "$html" | grep -Fq '次に波及しそうなもの' \
               && printf '%s' "$html" | grep -Fq 'cross-leadlag-ui.js' \
+              && printf '%s' "$html" | grep -Fq 'cross-market-switch.js' \
               && json="$(curl -LfsS --max-time 20 "$base/data/cross/otome.json" 2>/tmp/cross-json.err)" \
               && printf '%s' "$json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const x=JSON.parse(s); if(!x.lead_lag?.available) process.exit(2); if((x.lead_lag.coverage?.high_confidence||0)<1) process.exit(3);})"
             then
@@ -50,6 +51,29 @@ jobs:
             exit 1
           fi
 
+      - name: Check production BL cross analysis
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://dlsite-trend-radar.pages.dev'
+          ok=0
+          for attempt in $(seq 1 24); do
+            echo "BL cross production check attempt ${attempt}/24"
+            if json="$(curl -LfsS --max-time 30 "$base/data/cross/bl.json" 2>/tmp/bl-cross.err)" \
+              && printf '%s' "$json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const x=JSON.parse(s);if(x.audience!=='bl')process.exit(2);if(x.sources?.comic?.total_works!==10991)process.exit(3);if(!x.sources?.audio?.total_works)process.exit(4);if(!x.lead_lag?.available)process.exit(5);if((x.lead_lag.coverage?.directional_signals||0)<1)process.exit(6);console.log(JSON.stringify({audio:x.sources.audio.total_works,comic:x.sources.comic.total_works,coverage:x.lead_lag.coverage,next:x.lead_lag.next_wave},null,2));})"
+            then
+              ok=1
+              printf '%s' "$json" > /tmp/bl-cross.json
+              break
+            fi
+            sleep 20
+          done
+          if [[ "$ok" != 1 ]]; then
+            echo 'Production BL cross analysis did not become healthy within the retry window.' >&2
+            cat /tmp/bl-cross.err 2>/dev/null || true
+            exit 1
+          fi
+
       - name: Check production BL manga catalog
         shell: bash
         run: |
@@ -62,7 +86,7 @@ jobs:
               && meta="$(curl -LfsS --max-time 20 "$base/data/catalog/manga/bl/build-meta.json" 2>/tmp/bl-meta.err)" \
               && alljs="$(curl -LfsS --max-time 20 "$base/all-fetch-cache.js" 2>/tmp/bl-js.err)" \
               && mediajs="$(curl -LfsS --max-time 20 "$base/media-switch.js" 2>/tmp/bl-media.err)" \
-              && printf '%s\n%s' "$summary" "$meta" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const lines=s.trim().split(/\n(?=\{)/); const summary=JSON.parse(lines[0]); const meta=JSON.parse(lines.slice(1).join('\n')); if(summary.total_works!==meta.confirmed_manga_works)process.exit(2); if(summary.total_works<10000)process.exit(3); if(meta.detail_errors!==0||meta.unconfirmed_work_type!==0)process.exit(4); if(summary.coverage?.release_year?.share!==1)process.exit(5); console.log('BL manga production works='+summary.total_works);})" \
+              && printf '%s\n%s' "$summary" "$meta" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const lines=s.trim().split(/\n(?=\{)/); const summary=JSON.parse(lines[0]); const meta=JSON.parse(lines.slice(1).join('\n')); if(summary.total_works!==meta.confirmed_manga_works)process.exit(2); if(summary.total_works!==10991)process.exit(3); if(meta.detail_errors!==0||meta.unconfirmed_work_type!==0)process.exit(4); if(summary.coverage?.release_year?.share!==1)process.exit(5);})" \
               && printf '%s' "$alljs" | grep -Fq 'data/catalog/manga/bl' \
               && printf '%s' "$mediajs" | grep -Fq 'comicDatasets' \
               && curl -LfsS --max-time 30 --range 0-1023 "$base/data/catalog/manga/bl/search-index.json" 2>/tmp/bl-index.err | grep -Fq 'schema_version'
@@ -99,10 +123,17 @@ jobs:
           import fs from 'node:fs';
           const summary = JSON.parse(fs.readFileSync('/tmp/bl-summary.json', 'utf8'));
           const meta = JSON.parse(fs.readFileSync('/tmp/bl-meta.json', 'utf8'));
+          const cross = JSON.parse(fs.readFileSync('/tmp/bl-cross.json', 'utf8'));
           const status = {
             checked_at: new Date().toISOString(),
             production: 'https://dlsite-trend-radar.pages.dev',
             cross: 'success',
+            bl_cross: 'success',
+            bl_cross_audio_works: cross.sources.audio.total_works,
+            bl_cross_comic_works: cross.sources.comic.total_works,
+            bl_cross_directional_signals: cross.lead_lag.coverage.directional_signals,
+            bl_cross_high_confidence: cross.lead_lag.coverage.high_confidence,
+            bl_cross_medium_confidence: cross.lead_lag.coverage.medium_confidence,
             bl_manga: 'success',
             bl_manga_total_works: summary.total_works,
             excluded_non_manga: meta.excluded_non_manga,
