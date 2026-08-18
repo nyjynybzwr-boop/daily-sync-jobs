@@ -7,7 +7,7 @@ on:
       - '.github/workflows/male-audio-ranking-sync.yml'
       - '.github/triggers/male-audio-ranking-now'
   schedule:
-    - cron: '20 17 * * *'
+    - cron: '30 17 * * *'
 
 concurrency:
   group: male-audio-ranking-sync
@@ -38,6 +38,12 @@ jobs:
       - name: Install dependencies
         working-directory: work
         run: npm ci >/tmp/step.log 2>&1
+
+      - name: Install browser
+        working-directory: work
+        run: |
+          npm install --no-save playwright devalue >/tmp/step.log 2>&1
+          npx playwright install --with-deps chromium >>/tmp/step.log 2>&1
 
       - name: Collect and analyze Japan-visible male audio rankings
         working-directory: work
