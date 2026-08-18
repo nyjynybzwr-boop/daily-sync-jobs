@@ -67,3 +67,5 @@ jobs:
           git commit -m 'status: BL role split production smoke' || exit 0
           git pull --rebase origin main
           git push origin main
+
+# retrigger: 2026-08-19
