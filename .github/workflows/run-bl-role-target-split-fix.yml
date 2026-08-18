@@ -1,0 +1,29 @@
+name: Run BL role target split fix
+
+on:
+  push:
+    paths:
+      - '.github/triggers/bl-role-target-split-v1'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Clone private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: git clone --quiet --depth=1 "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Install private dependencies
+        working-directory: work
+        run: npm ci
+      - name: Apply, test, rebuild, audit, and push
+        run: bash scripts/fix-bl-role-target-split.sh
