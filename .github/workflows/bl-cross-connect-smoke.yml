@@ -80,9 +80,25 @@ jobs:
           NODE
 
       - name: Publish smoke result
+        if: always()
         run: |
+          set -euo pipefail
+          mkdir -p status
+          if [[ ! -f status/bl-cross-connect.json ]]; then
+            cat > status/bl-cross-connect.json <<EOF
+          {
+            "checked_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "status": "failed_before_validation"
+          }
+          EOF
+          fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git pull --rebase origin main || true
           git add status/bl-cross-connect.json
-          git commit -m "status: BL cross connection smoke"
-          git push
+          if git diff --cached --quiet; then
+            echo 'Smoke status unchanged.'
+          else
+            git commit -m "status: BL cross connection smoke"
+            git push
+          fi
