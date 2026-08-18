@@ -1,0 +1,56 @@
+name: Probe male ranking URLs
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/probe-male-ranking-url.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe DLsite ranking variants
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const urls = [
+            'https://www.dlsite.com/maniax/ranking/day?category=voice',
+            'https://www.dlsite.com/maniax/ranking/day?category=comic',
+            'https://www.dlsite.com/maniax-touch/ranking/day?category=voice',
+            'https://www.dlsite.com/maniax-touch/ranking/day?category=comic',
+            'https://www.dlsite.com/maniax/ranking/day',
+            'https://www.dlsite.com/maniax-touch/ranking/day'
+          ];
+          const headers={
+            'User-Agent':'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+            'Accept-Language':'ja-JP,ja;q=0.9'
+          };
+          (async()=>{
+            const out=[];
+            for(const url of urls){
+              try{
+                const res=await fetch(url,{headers,redirect:'follow'});
+                const html=await res.text();
+                const title=(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]?.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim()||'';
+                const ids=[...html.matchAll(/product_id\/(RJ\d+|VJ\d+|BJ\d+|AJ\d+)/gi)].map(m=>m[1].toUpperCase());
+                out.push({requested:url,status:res.status,final_url:res.url,title,ids:[...new Set(ids)].slice(0,10),html_bytes:html.length});
+              }catch(e){out.push({requested:url,error:String(e)});}
+            }
+            fs.mkdirSync('status',{recursive:true});
+            fs.writeFileSync('status/male-ranking-url-probe.json',JSON.stringify({generated_at:new Date().toISOString(),results:out},null,2));
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+      - name: Commit result
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add status/male-ranking-url-probe.json
+          git commit -m 'Probe DLsite male ranking URLs' || exit 0
+          git push
