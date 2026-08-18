@@ -1,0 +1,52 @@
+name: Male manga ranking sync
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/male-manga-ranking-sync.yml'
+  schedule:
+    - cron: '0 17 * * *'
+
+concurrency:
+  group: male-manga-ranking-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci >/tmp/step.log 2>&1
+
+      - name: Collect and analyze Japan-visible male manga rankings
+        working-directory: work
+        env:
+          DLSITE_JP_RELAY_ORIGIN: ${{ vars.DLSITE_JP_RELAY_ORIGIN }}
+        run: |
+          set -euo pipefail
+          source scripts/ci/dlsite-jp-relay-env.sh
+          bash scripts/ci/run-l.sh
+
+      - name: Push male manga ranking data
+        working-directory: work
+        run: bash scripts/ci/push.sh "data/manga/male/raw data/manga/male/labeled data/manga/male/reports data/manga/male/windows"
