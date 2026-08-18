@@ -1,0 +1,69 @@
+name: BL role split production smoke
+
+on:
+  push:
+    paths:
+      - '.github/workflows/bl-role-split-production-smoke.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify production BL split labels
+        run: |
+          set -euo pipefail
+          base='https://dlsite-trend-radar.pages.dev'
+          ok=0
+          for attempt in $(seq 1 24); do
+            echo "BL role split production check ${attempt}/24"
+            if curl -LfsS --max-time 45 "$base/data/dashboard.json" -o /tmp/dashboard.json \
+              && node <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/dashboard.json', 'utf8'));
+          const bl = x.markets?.bl;
+          if (!bl?.daily?.report) process.exit(2);
+          const bases = ['乳首責め','アナル責め','フェラ'];
+          const rows = bl.daily.report.categories?.play || [];
+          const works = bl.daily.works || [];
+          const rowLabels = rows.map((r) => r.label);
+          const workLabels = works.flatMap((w) => w.labels || []);
+          const out = { date: bl.daily.date, top_n: works.length, counts: {} };
+          for (const base of bases) {
+            const bareRows = rowLabels.filter((l) => l === base).length;
+            const bareWorks = workLabels.filter((l) => l === base).length;
+            const splitRows = rows.filter((r) => r.label === `${base}(受け)` || r.label === `${base}(攻め)` || r.label === `${base}(受け攻め不明)`);
+            const splitWorks = workLabels.filter((l) => l === `${base}(受け)` || l === `${base}(攻め)` || l === `${base}(受け攻め不明)`).length;
+            out.counts[base] = { bare_rows: bareRows, bare_work_labels: bareWorks, split_rows: splitRows.map((r) => ({label:r.label,count:r.count,share:r.share})), split_work_labels: splitWorks };
+            if (bareRows !== 0 || bareWorks !== 0 || splitRows.length === 0 || splitWorks === 0) process.exit(3);
+          }
+          fs.writeFileSync('/tmp/bl-role-production.json', JSON.stringify(out, null, 2) + '\n');
+          console.log(JSON.stringify(out, null, 2));
+          NODE
+            then
+              ok=1
+              break
+            fi
+            sleep 20
+          done
+          if [[ "$ok" != 1 ]]; then
+            echo 'Production BL role split did not become healthy.' >&2
+            exit 1
+          fi
+
+      - name: Record smoke status
+        run: |
+          set -euo pipefail
+          mkdir -p status
+          cp /tmp/bl-role-production.json status/bl-role-target-split-production.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add status/bl-role-target-split-production.json
+          git commit -m 'status: BL role split production smoke' || exit 0
+          git pull --rebase origin main
+          git push origin main
