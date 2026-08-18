@@ -7,7 +7,7 @@ on:
       - '.github/workflows/male-manga-ranking-sync.yml'
       - '.github/triggers/male-manga-ranking-now'
   schedule:
-    - cron: '25 17 * * *'
+    - cron: '35 17 * * *'
 
 concurrency:
   group: male-manga-ranking-sync
@@ -38,6 +38,12 @@ jobs:
       - name: Install dependencies
         working-directory: work
         run: npm ci >/tmp/step.log 2>&1
+
+      - name: Install browser
+        working-directory: work
+        run: |
+          npm install --no-save playwright devalue >/tmp/step.log 2>&1
+          npx playwright install --with-deps chromium >>/tmp/step.log 2>&1
 
       - name: Collect and analyze Japan-visible male manga rankings
         working-directory: work
