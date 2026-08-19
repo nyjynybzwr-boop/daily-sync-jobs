@@ -1,0 +1,22 @@
+{
+  "checked_at": "2026-08-19T12:51:38.368Z",
+  "production": "https://dlsite-trend-radar.pages.dev",
+  "dashboard_generated_at": "2026-08-19T08:23:54.002Z",
+  "dashboard_schema_version": 5,
+  "word_presence": {
+    "マン汁指摘": true,
+    "秘密": true,
+    "見えた": true,
+    "プレイ傾向": true,
+    "＜応募方法＞": true,
+    "＜応募〆切＞": true
+  },
+  "cloudflare_api_success": false,
+  "cloudflare_api_errors": [
+    {
+      "code": 10000,
+      "message": "Authentication error"
+    }
+  ],
+  "deployments": []
+}
