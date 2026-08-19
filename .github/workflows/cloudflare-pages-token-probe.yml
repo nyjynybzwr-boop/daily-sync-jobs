@@ -1,0 +1,53 @@
+name: Diagnose Cloudflare Pages deployment permission
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/cloudflare-pages-token-probe.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_PAGES_PROJECT: dlsite-trend-radar
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe Pages API and Wrangler access
+        id: probe
+        shell: bash
+        run: |
+          set +e
+          mkdir -p status
+          {
+            echo "checked_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "account_id_present=$([ -n \"${CLOUDFLARE_ACCOUNT_ID:-}\" ] && echo true || echo false)"
+            echo "api_token_present=$([ -n \"${CLOUDFLARE_API_TOKEN:-}\" ] && echo true || echo false)"
+            echo "--- pages project list ---"
+            npx --yes wrangler@latest pages project list --json
+            echo "wrangler_exit=$?"
+            echo "--- direct Pages API ---"
+            curl -sS -o /tmp/pages.json -w 'http_status=%{http_code}\n' \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H 'Content-Type: application/json' \
+              "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${CF_PAGES_PROJECT}"
+            cat /tmp/pages.json
+          } > status/cloudflare-pages-token-probe.log 2>&1
+          cat status/cloudflare-pages-token-probe.log
+          exit 0
+
+      - name: Persist result
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add status/cloudflare-pages-token-probe.log
+          git commit -m 'status: Cloudflare Pages token probe'
+          git push
