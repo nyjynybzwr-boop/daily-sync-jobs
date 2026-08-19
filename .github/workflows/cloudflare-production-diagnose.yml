@@ -1,0 +1,76 @@
+name: Cloudflare production diagnose
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/cloudflare-production-diagnose.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      PROJECT_NAME: dlsite-trend-radar
+      PROD_BASE: https://dlsite-trend-radar.pages.dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch production dashboard and Pages deployments
+        run: |
+          set -euo pipefail
+          curl -LfsS --max-time 60 "$PROD_BASE/data/dashboard.json" -o /tmp/dashboard.json
+          curl -sS --max-time 30 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H 'Content-Type: application/json' \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT_NAME/deployments?per_page=10" \
+            -o /tmp/deployments.json || true
+
+      - name: Build diagnosis
+        run: |
+          mkdir -p status
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const dashboard=JSON.parse(fs.readFileSync('/tmp/dashboard.json','utf8'));
+          let api={success:false,result:[],errors:[{message:'unreadable'}]};
+          try { api=JSON.parse(fs.readFileSync('/tmp/deployments.json','utf8')); } catch {}
+          const raw=fs.readFileSync('/tmp/dashboard.json','utf8');
+          const words=['マン汁指摘','秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞'];
+          const deployments=(Array.isArray(api.result)?api.result:[]).slice(0,10).map(d=>({
+            id:d.id,
+            environment:d.environment,
+            created_on:d.created_on,
+            modified_on:d.modified_on,
+            url:d.url,
+            latest_stage:d.latest_stage ? {name:d.latest_stage.name,status:d.latest_stage.status,started_on:d.latest_stage.started_on,ended_on:d.latest_stage.ended_on}:null,
+            source:d.source,
+            trigger:d.deployment_trigger ? {type:d.deployment_trigger.type,metadata:d.deployment_trigger.metadata}:null,
+            stages:d.stages ? Object.fromEntries(Object.entries(d.stages).map(([k,v])=>[k,{status:v?.status,started_on:v?.started_on,ended_on:v?.ended_on}])) : undefined,
+          }));
+          const out={
+            checked_at:new Date().toISOString(),
+            production:process.env.PROD_BASE,
+            dashboard_generated_at:dashboard.generated_at||null,
+            dashboard_schema_version:dashboard.schema_version||null,
+            word_presence:Object.fromEntries(words.map(w=>[w,raw.includes(w)])),
+            cloudflare_api_success:Boolean(api.success),
+            cloudflare_api_errors:api.errors||[],
+            deployments,
+          };
+          fs.writeFileSync('status/cloudflare-production-diagnosis.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out,null,2));
+          NODE
+
+      - name: Persist diagnosis
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add status/cloudflare-production-diagnosis.json
+          git commit -m 'status: Cloudflare production diagnosis'
+          git push origin main
