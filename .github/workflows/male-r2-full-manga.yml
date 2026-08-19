@@ -131,7 +131,7 @@ jobs:
             npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/male/manga/raw/chunk-${padded}.json.gz" --file "$chunk" --remote
             npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/male/manga/manifest.json" --file "$manifest" --remote
 
-            bash scripts/ci/push.sh "$progress $manifest"
+            bash scripts/ci/push.sh "$progress $manifest" "[CF-Pages-Skip] [skip actions] male manga R2 progress"
             node -e "const p=require('./data/male/r2/manga-progress.json');console.log({processed:p.processed,pending:p.pending,next_chunk:p.next_chunk,stored_bytes:p.stored_bytes,errors:p.errors?.length||0,stopped_reason:p.stopped_reason})"
           done
 
