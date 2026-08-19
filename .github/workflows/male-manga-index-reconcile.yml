@@ -12,11 +12,12 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
   reconcile:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 240
     steps:
       - name: Checkout private source
         env:
@@ -32,28 +33,132 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install dependencies
-        working-directory: work
-        run: npm ci
-
-      - name: Show count before reconcile
+      - name: Fresh full listing scan and exact reconciliation
         working-directory: work
         run: |
-          node - <<'NODE'
-          const c=require('./data/male/manga/catalog/index/checkpoint.json');
-          const ids=require('./data/male/manga/catalog/index/ids.json');
-          console.log({before_ids:Object.keys(ids).length, source_total_count:c.source_total_count, gap:(c.source_total_count||0)-Object.keys(ids).length});
+          set -u
+          PROD_ROOT='data/male/manga/catalog/index'
+          TMP_ROOT='.tmp/male-manga-reconcile/catalog'
+          STATUS_FILE="$PROD_ROOT/reconcile-status.json"
+          BASE='https://www.dlsite.com/maniax-touch/works/type/=/work_type_category/comic'
+          before_ids="$(node -e "const i=require('./data/male/manga/catalog/index/ids.json');process.stdout.write(String(Object.keys(i).length))")"
+
+          rm -rf .tmp/male-manga-reconcile
+          mkdir -p "$TMP_ROOT/index"
+          status='ok'
+          failure=''
+
+          # Build a completely fresh current ID set instead of unioning another
+          # partial rescan into the old set. 500-page batches keep each collector
+          # invocation bounded; the temp checkpoint naturally continues between them.
+          for batch in $(seq 1 10); do
+            echo "=== fresh manga listing scan batch $batch ==="
+            set +e
+            DLSITE_CATALOG_BASE="$BASE" \
+            DATA_ROOT="$TMP_ROOT" \
+            MAX_PAGES_PER_RUN='500' \
+            PAGE_DELAY_MS='1500' \
+            node scripts/collect-catalog-index.mjs
+            rc=$?
+            set -e
+            if [ "$rc" -ne 0 ]; then
+              status='failed'
+              failure="collector_exit_${rc}_batch_${batch}"
+              break
+            fi
+
+            read done stopped ids total last <<<"$(node - <<'NODE'
+          const c=require('./.tmp/male-manga-reconcile/catalog/index/checkpoint.json');
+          const i=require('./.tmp/male-manga-reconcile/catalog/index/ids.json');
+          process.stdout.write(`${c.done ? 1 : 0} ${c.stopped_reason || 'none'} ${Object.keys(i).length} ${Number(c.source_total_count || 0)} ${Number(c.last_page || 0)}`);
+          NODE
+          )"
+            echo "batch=$batch done=$done stopped=$stopped ids=$ids total=$total last_page=$last"
+            if [ "$stopped" != 'none' ]; then
+              status='failed'
+              failure="${stopped}_batch_${batch}"
+              break
+            fi
+            if [ "$done" = '1' ]; then
+              break
+            fi
+          done
+
+          if [ "$status" = 'ok' ]; then
+            done="$(node -e "const c=require('./.tmp/male-manga-reconcile/catalog/index/checkpoint.json');process.stdout.write(c.done?'1':'0')")"
+            if [ "$done" != '1' ]; then
+              status='failed'
+              failure='fresh_scan_did_not_reach_catalog_end'
+            fi
+          fi
+
+          # New releases can appear at the head while a two-hour full scan is
+          # running. Re-read the newest 500 pages once after reaching the end,
+          # preserving the fresh set, so those insertions are included too.
+          if [ "$status" = 'ok' ]; then
+            echo '=== final newest-500 top-up after full scan ==='
+            set +e
+            DLSITE_CATALOG_BASE="$BASE" \
+            DATA_ROOT="$TMP_ROOT" \
+            CATALOG_RESCAN_FROM_START='1' \
+            MAX_PAGES_PER_RUN='500' \
+            PAGE_DELAY_MS='1500' \
+            node scripts/collect-catalog-index.mjs
+            rc=$?
+            set -e
+            if [ "$rc" -ne 0 ]; then
+              status='failed'
+              failure="topup_collector_exit_${rc}"
+            fi
+          fi
+
+          if [ "$status" = 'ok' ]; then
+            read fresh_ids source_total stopped done <<<"$(node - <<'NODE'
+          const c=require('./.tmp/male-manga-reconcile/catalog/index/checkpoint.json');
+          const i=require('./.tmp/male-manga-reconcile/catalog/index/ids.json');
+          process.stdout.write(`${Object.keys(i).length} ${Number(c.source_total_count || 0)} ${c.stopped_reason || 'none'} ${c.done ? 1 : 0}`);
+          NODE
+          )"
+            echo "fresh final: ids=$fresh_ids source_total=$source_total stopped=$stopped done=$done"
+            if [ "$stopped" != 'none' ] || [ "$done" != '1' ]; then
+              status='failed'
+              failure="fresh_final_invalid_checkpoint_${stopped}_done_${done}"
+            elif [ "$fresh_ids" -ne "$source_total" ]; then
+              status='failed'
+              failure="fresh_set_count_mismatch_${fresh_ids}_vs_${source_total}"
+            fi
+          fi
+
+          # Only replace production IDs after the fresh set independently proves
+          # that its unique-ID count equals DLsite's own declared total.
+          if [ "$status" = 'ok' ]; then
+            cp "$TMP_ROOT/index/ids.json" "$PROD_ROOT/ids.json"
+            cp "$TMP_ROOT/index/checkpoint.json" "$PROD_ROOT/checkpoint.json"
+          fi
+
+          STATUS="$status" FAILURE="$failure" BEFORE_IDS="$before_ids" node - <<'NODE'
+          const fs=require('node:fs');
+          const path='data/male/manga/catalog/index/reconcile-status.json';
+          const status=process.env.STATUS;
+          const prodIds=require('./data/male/manga/catalog/index/ids.json');
+          const prodCheckpoint=require('./data/male/manga/catalog/index/checkpoint.json');
+          const row={
+            schema_version:1,
+            updated_at:new Date().toISOString(),
+            status,
+            failure:process.env.FAILURE || null,
+            before_ids:Number(process.env.BEFORE_IDS || 0),
+            after_ids:Object.keys(prodIds).length,
+            source_total_count:Number(prodCheckpoint.source_total_count || 0),
+            gap:Number(prodCheckpoint.source_total_count || 0)-Object.keys(prodIds).length,
+            strategy:'fresh-full-scan-plus-newest-500-topup',
+          };
+          fs.writeFileSync(path, JSON.stringify(row,null,2)+'\n');
+          console.log(row);
           NODE
 
-      - name: Re-scan newest 500 listing pages and merge IDs
-        working-directory: work
-        env:
-          CATALOG_RESCAN_FROM_START: '1'
-          MAX_PAGES_PER_RUN: '500'
-          PAGE_DELAY_MS: '1500'
-        run: bash scripts/ci/run-j.sh
-
       - name: Persist reconciled index
+        if: always()
         working-directory: work
         run: |
           set -euo pipefail
@@ -69,19 +174,24 @@ jobs:
             done
           fi
 
-      - name: Verify reconciled count
+      - name: Verify exact reconciled count
         working-directory: work
         run: |
+          set -euo pipefail
           git pull --rebase origin main
           node - <<'NODE'
+          const s=require('./data/male/manga/catalog/index/reconcile-status.json');
           const c=require('./data/male/manga/catalog/index/checkpoint.json');
-          const ids=require('./data/male/manga/catalog/index/ids.json');
-          const n=Object.keys(ids).length;
+          const i=require('./data/male/manga/catalog/index/ids.json');
+          const ids=Object.keys(i).length;
           const total=Number(c.source_total_count||0);
-          const gap=total-n;
-          console.log({after_ids:n, source_total_count:total, gap, done:c.done, stopped_reason:c.stopped_reason});
-          if (gap !== 0) {
-            console.error(`RECONCILE_GAP_REMAINS:${gap}`);
-            process.exit(2);
-          }
+          const gap=total-ids;
+          console.log({status:s.status,failure:s.failure,ids,total,gap,done:c.done,stopped_reason:c.stopped_reason});
+          if (s.status !== 'ok' || !c.done || c.stopped_reason || gap !== 0) process.exit(2);
           NODE
+
+      - name: Start male manga full R2 crawl immediately
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run male-r2-full-manga.yml --repo "$GITHUB_REPOSITORY"
