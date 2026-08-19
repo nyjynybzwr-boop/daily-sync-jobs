@@ -1,0 +1,88 @@
+name: Male manga stable order probe
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/male-manga-order-probe.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe DLsite ordering variants
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const variants = {
+            default: 'https://www.dlsite.com/maniax-touch/works/type/=/work_type_category/comic',
+            release_d: 'https://www.dlsite.com/maniax-touch/works/type/=/work_type_category/comic/order/release_d',
+            release_a: 'https://www.dlsite.com/maniax-touch/works/type/=/work_type_category/comic/order/release_a',
+            sales_d: 'https://www.dlsite.com/maniax-touch/works/type/=/work_type_category/comic/order/sales_d',
+          };
+          const headers = {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+            'Accept-Language': 'ja-JP,ja;q=0.9',
+            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          };
+          function mainList(html) {
+            const openPattern = /<ul\b[^>]*class=(['"])([^'"]*)\1[^>]*>/gi;
+            let open;
+            while ((open = openPattern.exec(html))) {
+              const classes = new Set(open[2].split(/\s+/).filter(Boolean));
+              if (!(classes.has('n_work_list') && classes.has('type_grid') && classes.has('type_horizontal')) || classes.has('type_grid_min')) continue;
+              const start = open.index;
+              let depth = 1;
+              const ul = /<\/?ul\b[^>]*>/gi;
+              ul.lastIndex = openPattern.lastIndex;
+              let tag;
+              while ((tag = ul.exec(html))) {
+                depth += /^<\/ul\b/i.test(tag[0]) ? -1 : 1;
+                if (!depth) return html.slice(start, ul.lastIndex);
+              }
+            }
+            return '';
+          }
+          function ids(html) {
+            const list = mainList(html);
+            return [...new Set([...list.matchAll(/product_id\/(RJ\d+|VJ\d+|BJ\d+|AJ\d+)/gi)].map(m => m[1].toUpperCase()))];
+          }
+          function total(html) {
+            const text = html.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ');
+            const m = text.match(/([\d,]+)\s*件中\s*[\d,]+\s*[-−ー]\s*[\d,]+\s*件目/);
+            return m ? Number(m[1].replace(/,/g,'')) : null;
+          }
+          const out = {captured_at:new Date().toISOString(), variants:{}};
+          for (const [name,base] of Object.entries(variants)) {
+            const row = {};
+            for (const page of [1,2]) {
+              try {
+                const r = await fetch(`${base}/page/${page}`, {headers, redirect:'follow'});
+                const html = await r.text();
+                row[`page${page}`] = {status:r.status, final_url:r.url, total:total(html), ids:ids(html)};
+              } catch (e) {
+                row[`page${page}`] = {error:String(e?.message||e)};
+              }
+              await new Promise(r=>setTimeout(r,1500));
+            }
+            out.variants[name] = row;
+          }
+          fs.mkdirSync('status',{recursive:true});
+          fs.writeFileSync('status/male-manga-order-probe.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out,null,2));
+          NODE
+
+      - name: Persist probe result
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add status/male-manga-order-probe.json
+          git commit -m 'status: male manga stable order probe'
+          git push
