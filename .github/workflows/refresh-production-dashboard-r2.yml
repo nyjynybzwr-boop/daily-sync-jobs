@@ -7,7 +7,7 @@ on:
       - '.github/workflows/refresh-production-dashboard-r2.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   refresh:
@@ -91,3 +91,32 @@ jobs:
             sleep 10
           done
           test "$ok" = 1
+
+      - name: Record verified production state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git clone --quiet "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" statusrepo
+          cd statusrepo
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          mkdir -p status
+          PROD_JSON=/tmp/prod-dashboard.json node - <<'NODE'
+          const fs=require('node:fs');
+          const raw=fs.readFileSync(process.env.PROD_JSON,'utf8');
+          const j=JSON.parse(raw);
+          const words=['マン汁指摘','秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞'];
+          const out={
+            checked_at:new Date().toISOString(),
+            production:'https://dlsite-trend-radar.pages.dev',
+            dashboard_generated_at:j.generated_at||null,
+            word_presence:Object.fromEntries(words.map(w=>[w,raw.includes(w)])),
+            verified:true
+          };
+          fs.writeFileSync('status/production-dashboard-refresh.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out,null,2));
+          NODE
+          git add status/production-dashboard-refresh.json
+          git commit -m 'status: production dashboard refresh'
+          git push origin main
