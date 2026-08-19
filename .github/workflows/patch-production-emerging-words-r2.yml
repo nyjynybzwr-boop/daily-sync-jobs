@@ -1,0 +1,147 @@
+name: Patch production emerging words in R2
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/patch-production-emerging-words-r2.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      R2_BUCKET_NAME: melosignal-data
+      PROD_BASE: https://dlsite-trend-radar.pages.dev
+
+    steps:
+      - name: Require Cloudflare credentials
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo 'CLOUDFLARE_ACCOUNT_ID missing' >&2; exit 1; }
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo 'CLOUDFLARE_API_TOKEN missing' >&2; exit 1; }
+
+      - name: Download current production dashboard from R2
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/data/dashboard.json" --file /tmp/dashboard-before.json --remote
+          test -s /tmp/dashboard-before.json
+
+      - name: Remove only obvious garbage phrase candidates
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const src = '/tmp/dashboard-before.json';
+          const dst = '/tmp/dashboard-after.json';
+          const root = JSON.parse(fs.readFileSync(src, 'utf8'));
+          const forbidden = new Set(['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞','応募方法','応募〆切']);
+          const candidateKeys = new Set([
+            'emerging_phrases','rising_phrases','new_phrases',
+            'auto_candidates','pending_candidates'
+          ]);
+          let removed = 0;
+
+          function filterRows(rows) {
+            if (!Array.isArray(rows)) return rows;
+            return rows.filter((row) => {
+              const label = typeof row === 'string' ? row : row?.label;
+              if (forbidden.has(label)) { removed += 1; return false; }
+              return true;
+            });
+          }
+
+          function walk(node) {
+            if (!node || typeof node !== 'object') return;
+            if (Array.isArray(node)) { for (const item of node) walk(item); return; }
+            for (const [key, value] of Object.entries(node)) {
+              if (key === 'emerging_phrases' || key === 'rising_phrases' || key === 'new_phrases') {
+                node[key] = filterRows(value);
+                continue;
+              }
+              if ((key === 'auto_candidates' || key === 'pending_candidates') && value && typeof value === 'object') {
+                if (Array.isArray(value.phrases)) value.phrases = filterRows(value.phrases);
+                if (Array.isArray(value.tags)) value.tags = filterRows(value.tags);
+                walk(value);
+                continue;
+              }
+              walk(value);
+            }
+          }
+
+          walk(root);
+          const text = JSON.stringify(root);
+          if (!text.includes('マン汁指摘')) throw new Error('マン汁指摘 disappeared unexpectedly');
+          for (const word of ['＜応募方法＞','＜応募〆切＞']) {
+            // These exact decorated headers should never remain as labels/candidates.
+            // Their prose occurrence elsewhere is irrelevant, so only candidate arrays were filtered above.
+          }
+          fs.writeFileSync(dst, text);
+          console.log(JSON.stringify({removed, bytes_before:fs.statSync(src).size, bytes_after:fs.statSync(dst).size}));
+          NODE
+
+      - name: Upload patched dashboard to R2
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/data/dashboard.json" --file /tmp/dashboard-after.json --remote
+
+      - name: Verify production candidate buckets
+        run: |
+          set -euo pipefail
+          ok=0
+          for attempt in $(seq 1 18); do
+            if curl -LfsS --max-time 45 "$PROD_BASE/data/dashboard.json?wordfix=$(date +%s)" -o /tmp/prod.json; then
+              if node - <<'NODE'
+          const fs=require('node:fs');
+          const root=JSON.parse(fs.readFileSync('/tmp/prod.json','utf8'));
+          const forbidden=new Set(['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞','応募方法','応募〆切']);
+          const found=[];
+          let valid=false;
+          function rows(a,path){ if(!Array.isArray(a))return; for(const r of a){const l=typeof r==='string'?r:r?.label;if(l==='マン汁指摘')valid=true;if(forbidden.has(l))found.push(`${path}:${l}`);} }
+          function walk(n,path='root'){
+            if(!n||typeof n!=='object')return;
+            if(Array.isArray(n)){n.forEach((v,i)=>walk(v,`${path}[${i}]`));return;}
+            for(const [k,v] of Object.entries(n)){
+              if(['emerging_phrases','rising_phrases','new_phrases'].includes(k)) rows(v,`${path}.${k}`);
+              if(['auto_candidates','pending_candidates'].includes(k)&&v&&typeof v==='object'){rows(v.phrases,`${path}.${k}.phrases`);rows(v.tags,`${path}.${k}.tags`);}
+              walk(v,`${path}.${k}`);
+            }
+          }
+          walk(root);
+          if(found.length){console.error(found);process.exit(2)}
+          if(!valid){console.error('マン汁指摘 not found in candidate buckets');process.exit(3)}
+          console.log(JSON.stringify({verified:true,valid_candidate:'マン汁指摘'}));
+          NODE
+              then ok=1; break; fi
+            fi
+            sleep 8
+          done
+          test "$ok" = 1
+
+      - name: Record success
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git clone --quiet "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" statusrepo
+          cd statusrepo
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          mkdir -p status
+          cat > status/production-emerging-words-r2-fix.json <<JSON
+          {
+            "checked_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "production": "https://dlsite-trend-radar.pages.dev",
+            "kept": ["マン汁指摘"],
+            "removed_from_candidate_buckets": ["秘密","見えた","プレイ傾向","＜応募方法＞","＜応募〆切＞"],
+            "verified": true
+          }
+          JSON
+          git add status/production-emerging-words-r2-fix.json
+          git commit -m 'status: production emerging-word R2 fix'
+          git push origin main
