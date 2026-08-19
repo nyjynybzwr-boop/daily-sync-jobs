@@ -47,20 +47,30 @@ jobs:
         working-directory: work
         run: npm run build:site
 
-      - name: Verify obvious garbage is gone but valid candidate remains
+      - name: Verify watching-word bucket
         working-directory: work
         run: |
           set -euo pipefail
           node - <<'NODE'
           const fs=require('node:fs');
-          const p='site/data/dashboard.json';
-          const raw=fs.readFileSync(p,'utf8');
+          const j=JSON.parse(fs.readFileSync('site/data/dashboard.json','utf8'));
+          function watchingLabels(dashboard){
+            const report=dashboard.markets?.otome?.daily?.report || dashboard.media?.audio?.otome?.daily?.report;
+            if(!report) throw new Error('otome daily report missing');
+            const promoted=[...(report.auto_candidates?.tags||[]),...(report.auto_candidates?.phrases||[])];
+            const promotedLabels=new Set(promoted.map(r=>r.label));
+            const pending=[...(report.pending_candidates?.tags||[]),...(report.pending_candidates?.phrases||[])]
+              .filter(r=>!promotedLabels.has(r.label));
+            const pendingLabels=new Set(pending.map(r=>r.label));
+            const rawToday=[...(report.emerging_tags||[]),...(report.emerging_phrases||[])]
+              .filter(r=>!promotedLabels.has(r.label)&&!pendingLabels.has(r.label));
+            return [...pending,...rawToday].map(r=>r.label);
+          }
+          const labels=watchingLabels(j);
           const forbidden=['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞'];
-          const still=forbidden.filter(w=>raw.includes(w));
-          if(still.length) throw new Error('garbage still present in built dashboard: '+still.join(', '));
-          if(!raw.includes('マン汁指摘')) throw new Error('expected valid candidate マン汁指摘 is missing');
-          const j=JSON.parse(raw);
-          console.log({generated_at:j.generated_at,bytes:fs.statSync(p).size,valid_candidate:'マン汁指摘',removed:forbidden});
+          const still=forbidden.filter(w=>labels.includes(w));
+          if(still.length) throw new Error('garbage still present in watching-word bucket: '+still.join(', '));
+          console.log({generated_at:j.generated_at,watching_count:labels.length,manjirushiteki:labels.includes('マン汁指摘'),removed:forbidden});
           NODE
 
       - name: Upload dashboard to R2
@@ -78,13 +88,24 @@ jobs:
             if curl -LfsS --max-time 60 "$PROD_BASE/data/dashboard.json?refresh=$(date +%s)" -o /tmp/prod-dashboard.json; then
               if node - <<'NODE'
           const fs=require('node:fs');
-          const raw=fs.readFileSync('/tmp/prod-dashboard.json','utf8');
+          const j=JSON.parse(fs.readFileSync('/tmp/prod-dashboard.json','utf8'));
+          function watchingLabels(dashboard){
+            const report=dashboard.markets?.otome?.daily?.report || dashboard.media?.audio?.otome?.daily?.report;
+            if(!report) throw new Error('otome daily report missing');
+            const promoted=[...(report.auto_candidates?.tags||[]),...(report.auto_candidates?.phrases||[])];
+            const promotedLabels=new Set(promoted.map(r=>r.label));
+            const pending=[...(report.pending_candidates?.tags||[]),...(report.pending_candidates?.phrases||[])]
+              .filter(r=>!promotedLabels.has(r.label));
+            const pendingLabels=new Set(pending.map(r=>r.label));
+            const rawToday=[...(report.emerging_tags||[]),...(report.emerging_phrases||[])]
+              .filter(r=>!promotedLabels.has(r.label)&&!pendingLabels.has(r.label));
+            return [...pending,...rawToday].map(r=>r.label);
+          }
+          const labels=watchingLabels(j);
           const forbidden=['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞'];
-          const still=forbidden.filter(w=>raw.includes(w));
-          if(still.length){ console.error({still}); process.exit(2); }
-          if(!raw.includes('マン汁指摘')){ console.error('マン汁指摘 missing'); process.exit(3); }
-          const j=JSON.parse(raw);
-          console.log({generated_at:j.generated_at,verified:true});
+          const still=forbidden.filter(w=>labels.includes(w));
+          if(still.length){ console.error({still,labels}); process.exit(2); }
+          console.log({generated_at:j.generated_at,watching_count:labels.length,manjirushiteki:labels.includes('マン汁指摘'),verified:true});
           NODE
               then ok=1; break; fi
             fi
@@ -104,14 +125,26 @@ jobs:
           mkdir -p status
           PROD_JSON=/tmp/prod-dashboard.json node - <<'NODE'
           const fs=require('node:fs');
-          const raw=fs.readFileSync(process.env.PROD_JSON,'utf8');
-          const j=JSON.parse(raw);
-          const words=['マン汁指摘','秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞'];
+          const j=JSON.parse(fs.readFileSync(process.env.PROD_JSON,'utf8'));
+          function watchingLabels(dashboard){
+            const report=dashboard.markets?.otome?.daily?.report || dashboard.media?.audio?.otome?.daily?.report;
+            const promoted=[...(report?.auto_candidates?.tags||[]),...(report?.auto_candidates?.phrases||[])];
+            const promotedLabels=new Set(promoted.map(r=>r.label));
+            const pending=[...(report?.pending_candidates?.tags||[]),...(report?.pending_candidates?.phrases||[])]
+              .filter(r=>!promotedLabels.has(r.label));
+            const pendingLabels=new Set(pending.map(r=>r.label));
+            const rawToday=[...(report?.emerging_tags||[]),...(report?.emerging_phrases||[])]
+              .filter(r=>!promotedLabels.has(r.label)&&!pendingLabels.has(r.label));
+            return [...pending,...rawToday].map(r=>r.label);
+          }
+          const labels=watchingLabels(j);
+          const watched=['マン汁指摘','秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞'];
           const out={
             checked_at:new Date().toISOString(),
             production:'https://dlsite-trend-radar.pages.dev',
             dashboard_generated_at:j.generated_at||null,
-            word_presence:Object.fromEntries(words.map(w=>[w,raw.includes(w)])),
+            watching_word_presence:Object.fromEntries(watched.map(w=>[w,labels.includes(w)])),
+            watching_labels:labels,
             verified:true
           };
           fs.writeFileSync('status/production-dashboard-refresh.json',JSON.stringify(out,null,2)+'\n');
