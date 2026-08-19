@@ -1,0 +1,40 @@
+name: Check current production hidden gems now
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/production-hidden-gems-check-now.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check production all.html
+        run: |
+          set +e
+          mkdir -p status
+          curl -LfsS --max-time 30 "https://dlsite-trend-radar.pages.dev/all.html?now=$(date +%s)" -o /tmp/all.html
+          curl_exit=$?
+          if grep -Fq '隠れた名作' /tmp/all.html && grep -Fq 'hiddenGemsList' /tmp/all.html; then hidden=true; else hidden=false; fi
+          cat > status/production-hidden-gems-now.json <<JSON
+          {
+            "checked_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "curl_exit": $curl_exit,
+            "hidden_gems_visible_in_static_html": $hidden
+          }
+          JSON
+          cat status/production-hidden-gems-now.json
+      - name: Persist result
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add status/production-hidden-gems-now.json
+          git commit -m 'status: production hidden gems now'
+          git push
