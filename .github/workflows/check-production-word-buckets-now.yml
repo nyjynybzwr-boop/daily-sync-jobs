@@ -1,0 +1,56 @@
+name: Check production word buckets now
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/check-production-word-buckets-now.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch production dashboard and record both buckets
+        run: |
+          set -euo pipefail
+          curl -LfsS --max-time 90 "https://dlsite-trend-radar.pages.dev/data/dashboard.json?now=$(date +%s)" -o /tmp/prod.json
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const j=JSON.parse(fs.readFileSync('/tmp/prod.json','utf8'));
+          const reports={
+            otome_audio:j.media?.audio?.otome?.daily?.report || j.markets?.otome?.daily?.report,
+            bl_audio:j.media?.audio?.bl?.daily?.report || j.markets?.bl?.daily?.report,
+            otome_manga:j.media?.comic?.otome?.daily?.report,
+            bl_manga:j.media?.comic?.bl?.daily?.report,
+          };
+          function buckets(report){
+            if(!report) return {promoted:[],watching:[]};
+            const promoted=[...(report.auto_candidates?.tags||[]),...(report.auto_candidates?.phrases||[])];
+            const pset=new Set(promoted.map(x=>x.label));
+            const pending=[...(report.pending_candidates?.tags||[]),...(report.pending_candidates?.phrases||[])].filter(x=>!pset.has(x.label));
+            const qset=new Set(pending.map(x=>x.label));
+            const today=[...(report.emerging_tags||[]),...(report.emerging_phrases||[])].filter(x=>!pset.has(x.label)&&!qset.has(x.label));
+            return {
+              promoted:promoted.map(x=>({label:x.label,badge:x.days_seen?`${x.days_seen}日`:`${x.count||0}/${report.item_count||30}`})),
+              watching:[...pending,...today].map(x=>({label:x.label,badge:x.days_seen?`${x.days_seen}日`:`${x.count||0}/${report.item_count||30}`}))
+            };
+          }
+          const out={checked_at:new Date().toISOString(),generated_at:j.generated_at||null,markets:{}};
+          for(const [k,r] of Object.entries(reports)) out.markets[k]=buckets(r);
+          fs.mkdirSync('status',{recursive:true});
+          fs.writeFileSync('status/production-word-buckets-now.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out,null,2));
+          NODE
+      - name: Commit status
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add status/production-word-buckets-now.json
+          git commit -m 'status: production word buckets now'
+          git push
