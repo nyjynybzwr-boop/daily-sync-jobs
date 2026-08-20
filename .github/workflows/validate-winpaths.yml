@@ -1,0 +1,67 @@
+name: Validate Win Paths
+
+on:
+  push:
+    paths:
+      - '.github/workflows/validate-winpaths.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth 1 "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Validate implementation
+        run: |
+          set -euo pipefail
+          node --check work/web/winpaths.js
+          node --check work/scripts/inject-winpaths-link.mjs
+          test -s work/web/winpaths.html
+          test -s work/web/winpaths.css
+          test -s work/web/winpaths.js
+          grep -q '勝ち筋分析' work/web/winpaths.html
+          grep -q 'RANKING × SUPPLY' work/web/winpaths.html
+          grep -q 'supplyShareFor' work/web/winpaths.js
+          grep -q 'buildRealCombos' work/web/winpaths.js
+          grep -q 'inject-winpaths-link.mjs' work/package.json
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const summary=JSON.parse(fs.readFileSync('work/web/data/catalog/summary.json','utf8'));
+          const recent=(summary.yearly||[]).filter(x=>[2025,2026].includes(Number(x.year))).reduce((s,x)=>s+Number(x.count||0),0);
+          const labels=summary.labels||[];
+          if(recent<4000) throw new Error(`recent baseline too small: ${recent}`);
+          if(labels.length<100) throw new Error(`label baseline too small: ${labels.length}`);
+          const required=['中出し','甘々'];
+          for(const label of required){const r=labels.find(x=>x.label===label);if(!r||!Array.isArray(r.yearly))throw new Error(`missing yearly label: ${label}`)}
+          fs.mkdirSync('status',{recursive:true});
+          fs.writeFileSync('status/winpaths-validation.json',JSON.stringify({
+            generated_at:new Date().toISOString(),
+            ok:true,
+            private_head:require('child_process').execSync('git -C work rev-parse HEAD').toString().trim(),
+            recent_supply_2025_2026:recent,
+            catalog_labels:labels.length,
+            checks:['winpaths.js syntax','injector syntax','page assets','build wiring','recent supply baseline']
+          },null,2)+'\n');
+          NODE
+
+      - name: Persist validation
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add status/winpaths-validation.json
+          git commit -m 'status: validate win paths'
+          git push
