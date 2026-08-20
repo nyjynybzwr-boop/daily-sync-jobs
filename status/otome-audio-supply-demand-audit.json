@@ -1,0 +1,6 @@
+{
+  "generated_at": "2026-08-20T02:51:36.927Z",
+  "source_rows": 0,
+  "warning": "sales_count is current cumulative sales; year cohorts have unequal exposure time. sales_per_day is only a rough normalization, not first-year sales.",
+  "years": {}
+}
