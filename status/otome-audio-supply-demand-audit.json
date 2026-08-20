@@ -1,6 +1,425 @@
 {
-  "generated_at": "2026-08-20T02:51:36.927Z",
-  "source_rows": 0,
+  "generated_at": "2026-08-20T02:53:52.462Z",
+  "top_level_type": "object",
+  "top_level_keys": [
+    "RJ01690068",
+    "RJ01680122",
+    "RJ01675347",
+    "RJ01672494",
+    "RJ01670657",
+    "RJ01678715",
+    "RJ01689696",
+    "RJ01664535",
+    "RJ01666074",
+    "RJ01691093",
+    "RJ01581684",
+    "RJ01653647",
+    "RJ240330",
+    "RJ01664433",
+    "RJ01490772",
+    "RJ01629303",
+    "RJ01673073",
+    "RJ01304294",
+    "RJ01566790",
+    "RJ01038126",
+    "RJ366900",
+    "RJ01545323",
+    "RJ01442383",
+    "RJ01684829",
+    "RJ01514637",
+    "RJ01603829",
+    "RJ01525324",
+    "RJ01524938",
+    "RJ327413",
+    "RJ01444369"
+  ],
+  "discovered_works": 13857,
+  "source_rows": 13857,
   "warning": "sales_count is current cumulative sales; year cohorts have unequal exposure time. sales_per_day is only a rough normalization, not first-year sales.",
-  "years": {}
+  "years": {
+    "2019": {
+      "works": 522,
+      "circles": 155,
+      "sales_total": 615428,
+      "sales_mean": 1178.9808429118773,
+      "sales_median": 495,
+      "sales_p25": 195.25,
+      "sales_p75": 1236.25,
+      "sales_p90": 2405,
+      "share_sales_le_100": 0.13026819923371646,
+      "share_sales_le_300": 0.3524904214559387,
+      "top1_circle_share": 0.06349564855677675,
+      "top5_circle_share": 0.28320453408034735,
+      "top10_circle_share": 0.48622097142151477,
+      "top1pct_works_sales_share": 0.14837803934822594,
+      "top10pct_works_sales_share": 0.5081423009677818,
+      "sales_per_day_median": 0.190337680859384,
+      "sales_per_day_p25": 0.07553575546630341,
+      "sales_per_day_p75": 0.49723921742342764,
+      "median_age_days": 2612,
+      "top5_circles": [
+        {
+          "circle": "parasite garden",
+          "sales": 39077,
+          "share": 0.06349564855677675
+        },
+        {
+          "circle": "KZentertainment",
+          "sales": 36719,
+          "share": 0.05966416867610833
+        },
+        {
+          "circle": "斉藤しおん",
+          "sales": 34344,
+          "share": 0.05580506574286513
+        },
+        {
+          "circle": "猫のゆりかご",
+          "sales": 33549,
+          "share": 0.05451328181363214
+        },
+        {
+          "circle": "monoBlue",
+          "sales": 30603,
+          "share": 0.04972636929096499
+        }
+      ]
+    },
+    "2020": {
+      "works": 707,
+      "circles": 178,
+      "sales_total": 1128073,
+      "sales_mean": 1595.5770862800566,
+      "sales_median": 415,
+      "sales_p25": 117,
+      "sales_p75": 1364.5,
+      "sales_p90": 3585.999999999999,
+      "share_sales_le_100": 0.22347949080622348,
+      "share_sales_le_300": 0.4314002828854314,
+      "top1_circle_share": 0.17589907745332084,
+      "top5_circle_share": 0.42000207433384185,
+      "top10_circle_share": 0.5544002914704989,
+      "top1pct_works_sales_share": 0.26465663126411143,
+      "top10pct_works_sales_share": 0.6130986203907016,
+      "sales_per_day_median": 0.18726591760299627,
+      "sales_per_day_p25": 0.05328708461801987,
+      "sales_per_day_p75": 0.6236668693361128,
+      "median_age_days": 2190,
+      "top5_circles": [
+        {
+          "circle": "万屋",
+          "sales": 198427,
+          "share": 0.17589907745332084
+        },
+        {
+          "circle": "AreaS",
+          "sales": 83252,
+          "share": 0.07380018846298067
+        },
+        {
+          "circle": "white mist",
+          "sales": 75013,
+          "share": 0.06649658311119937
+        },
+        {
+          "circle": "Under Rain",
+          "sales": 74193,
+          "share": 0.06576967979909101
+        },
+        {
+          "circle": "A-chromatic color",
+          "sales": 42908,
+          "share": 0.038036545507249976
+        }
+      ]
+    },
+    "2021": {
+      "works": 849,
+      "circles": 241,
+      "sales_total": 2445858,
+      "sales_mean": 2880.86925795053,
+      "sales_median": 524,
+      "sales_p25": 85,
+      "sales_p75": 1925,
+      "sales_p90": 5209.6,
+      "share_sales_le_100": 0.26383981154299174,
+      "share_sales_le_300": 0.4016489988221437,
+      "top1_circle_share": 0.12320543547499486,
+      "top5_circle_share": 0.36964001998480694,
+      "top10_circle_share": 0.5298704994321012,
+      "top1pct_works_sales_share": 0.3793793425456425,
+      "top10pct_works_sales_share": 0.7105302106663592,
+      "sales_per_day_median": 0.2868462757527734,
+      "sales_per_day_p25": 0.04574132492113565,
+      "sales_per_day_p75": 1.088235294117647,
+      "median_age_days": 1855,
+      "top5_circles": [
+        {
+          "circle": "Evangelist ASMR",
+          "sales": 301343,
+          "share": 0.12320543547499486
+        },
+        {
+          "circle": "がるまにオリジナル(乙女)",
+          "sales": 208306,
+          "share": 0.08516684124752949
+        },
+        {
+          "circle": "Black Prince With Rose",
+          "sales": 172688,
+          "share": 0.07060426238972173
+        },
+        {
+          "circle": "cocorita",
+          "sales": 112674,
+          "share": 0.046067269645253324
+        },
+        {
+          "circle": "parasite garden",
+          "sales": 109076,
+          "share": 0.04459621122730755
+        }
+      ]
+    },
+    "2022": {
+      "works": 1391,
+      "circles": 326,
+      "sales_total": 2739249,
+      "sales_mean": 1969.2659956865564,
+      "sales_median": 568,
+      "sales_p25": 94.5,
+      "sales_p75": 2082,
+      "sales_p90": 4753,
+      "share_sales_le_100": 0.26024442846872753,
+      "share_sales_le_300": 0.3774263120057513,
+      "top1_circle_share": 0.06386896554493586,
+      "top5_circle_share": 0.2254530347551464,
+      "top10_circle_share": 0.35011421013569777,
+      "top1pct_works_sales_share": 0.21329532291514938,
+      "top10pct_works_sales_share": 0.5740850868248926,
+      "sales_per_day_median": 0.39109912339851655,
+      "sales_per_day_p25": 0.06456237168767881,
+      "sales_per_day_p75": 1.3821592883881004,
+      "median_age_days": 1481,
+      "top5_circles": [
+        {
+          "circle": "BLAST",
+          "sales": 174953,
+          "share": 0.06386896554493586
+        },
+        {
+          "circle": "parasite garden",
+          "sales": 150828,
+          "share": 0.055061807086540876
+        },
+        {
+          "circle": "ラブボイス",
+          "sales": 118499,
+          "share": 0.04325966715694703
+        },
+        {
+          "circle": "Honey Baby",
+          "sales": 87104,
+          "share": 0.03179849659523468
+        },
+        {
+          "circle": "無理やり気持ちよくされる女の子",
+          "sales": 86188,
+          "share": 0.031464098371487954
+        }
+      ]
+    },
+    "2023": {
+      "works": 1807,
+      "circles": 419,
+      "sales_total": 2566709,
+      "sales_mean": 1420.4255672385168,
+      "sales_median": 498,
+      "sales_p25": 134,
+      "sales_p75": 1455.5,
+      "sales_p90": 3313.4,
+      "share_sales_le_100": 0.2197011621472053,
+      "share_sales_le_300": 0.39125622578859987,
+      "top1_circle_share": 0.0535498959952219,
+      "top5_circle_share": 0.15625924091901341,
+      "top10_circle_share": 0.2367919386264668,
+      "top1pct_works_sales_share": 0.1851612317563074,
+      "top10pct_works_sales_share": 0.5509646788942572,
+      "sales_per_day_median": 0.42901234567901236,
+      "sales_per_day_p25": 0.11821512741198999,
+      "sales_per_day_p75": 1.2995836881874356,
+      "median_age_days": 1125,
+      "top5_circles": [
+        {
+          "circle": "がるまにオリジナル(乙女)",
+          "sales": 137447,
+          "share": 0.0535498959952219
+        },
+        {
+          "circle": "chupa",
+          "sales": 87365,
+          "share": 0.034037750286456316
+        },
+        {
+          "circle": "white mist",
+          "sales": 66334,
+          "share": 0.02584398932640981
+        },
+        {
+          "circle": "Sugar Holic",
+          "sales": 56608,
+          "share": 0.022054701175707882
+        },
+        {
+          "circle": "禁断りんご",
+          "sales": 53318,
+          "share": 0.02077290413521751
+        }
+      ]
+    },
+    "2024": {
+      "works": 2218,
+      "circles": 514,
+      "sales_total": 2786673,
+      "sales_mean": 1256.3899909828674,
+      "sales_median": 322,
+      "sales_p25": 55.25,
+      "sales_p75": 1134.75,
+      "sales_p90": 2915.7,
+      "share_sales_le_100": 0.3146979260595131,
+      "share_sales_le_300": 0.49008115419296666,
+      "top1_circle_share": 0.09070242543707137,
+      "top5_circle_share": 0.2606699817309028,
+      "top10_circle_share": 0.3449080677926689,
+      "top1pct_works_sales_share": 0.20400348372413987,
+      "top10pct_works_sales_share": 0.6215867451975887,
+      "sales_per_day_median": 0.4060505324436739,
+      "sales_per_day_p25": 0.0739718070124484,
+      "sales_per_day_p75": 1.4567669074539364,
+      "median_age_days": 771,
+      "top5_circles": [
+        {
+          "circle": "がるまにオリジナル(乙女)",
+          "sales": 252758,
+          "share": 0.09070242543707137
+        },
+        {
+          "circle": "LOVEpoppo",
+          "sales": 147325,
+          "share": 0.05286770281263715
+        },
+        {
+          "circle": "chupa",
+          "sales": 145165,
+          "share": 0.05209258495704376
+        },
+        {
+          "circle": "HoneyParfum (ハニパル)",
+          "sales": 104237,
+          "share": 0.037405536996985296
+        },
+        {
+          "circle": "pRessest Love",
+          "sales": 76917,
+          "share": 0.02760173152716519
+        }
+      ]
+    },
+    "2025": {
+      "works": 3193,
+      "circles": 558,
+      "sales_total": 2392558,
+      "sales_mean": 749.313498277482,
+      "sales_median": 134,
+      "sales_p25": 19,
+      "sales_p75": 530,
+      "sales_p90": 1880.4000000000005,
+      "share_sales_le_100": 0.4538051988725337,
+      "share_sales_le_300": 0.6526777325399311,
+      "top1_circle_share": 0.10314608883044842,
+      "top5_circle_share": 0.2706651207619627,
+      "top10_circle_share": 0.3706204823456735,
+      "top1pct_works_sales_share": 0.23425973372432352,
+      "top10pct_works_sales_share": 0.6836335838044469,
+      "sales_per_day_median": 0.3404669260700389,
+      "sales_per_day_p25": 0.05236907730673317,
+      "sales_per_day_p75": 1.4077922077922078,
+      "median_age_days": 391,
+      "top5_circles": [
+        {
+          "circle": "がるまにオリジナル(乙女)",
+          "sales": 246783,
+          "share": 0.10314608883044842
+        },
+        {
+          "circle": "HoneyParfum (ハニパル)",
+          "sales": 187994,
+          "share": 0.07857447969913373
+        },
+        {
+          "circle": "BEDROOM",
+          "sales": 91068,
+          "share": 0.038063027103209204
+        },
+        {
+          "circle": "天々赦",
+          "sales": 60903,
+          "share": 0.025455182277712807
+        },
+        {
+          "circle": "chupa",
+          "sales": 60834,
+          "share": 0.025426342851458564
+        }
+      ]
+    },
+    "2026": {
+      "works": 2229,
+      "circles": 475,
+      "sales_total": 807476,
+      "sales_mean": 362.259309107223,
+      "sales_median": 39,
+      "sales_p25": 7,
+      "sales_p75": 271,
+      "sales_p90": 1001.8000000000002,
+      "share_sales_le_100": 0.6200089726334679,
+      "share_sales_le_300": 0.7662628981606101,
+      "top1_circle_share": 0.10886020141775112,
+      "top5_circle_share": 0.2643570830588154,
+      "top10_circle_share": 0.3486667095987992,
+      "top1pct_works_sales_share": 0.18962668859507897,
+      "top10pct_works_sales_share": 0.6902372330570816,
+      "sales_per_day_median": 0.47126436781609193,
+      "sales_per_day_p25": 0.08247422680412371,
+      "sales_per_day_p75": 2.65,
+      "median_age_days": 100,
+      "top5_circles": [
+        {
+          "circle": "がるまにオリジナル(乙女)",
+          "sales": 87902,
+          "share": 0.10886020141775112
+        },
+        {
+          "circle": "HoneyParfum (ハニパル)",
+          "sales": 51022,
+          "share": 0.06318701732311549
+        },
+        {
+          "circle": "天々赦",
+          "sales": 37454,
+          "share": 0.04638404113558793
+        },
+        {
+          "circle": "こうもりさん",
+          "sales": 19971,
+          "share": 0.02473262363215749
+        },
+        {
+          "circle": "たるとたたん",
+          "sales": 17113,
+          "share": 0.02119319955020335
+        }
+      ]
+    }
+  }
 }
