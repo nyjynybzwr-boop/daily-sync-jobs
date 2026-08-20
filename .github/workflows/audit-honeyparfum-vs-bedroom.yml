@@ -155,14 +155,14 @@ jobs:
             brands,
             recent_2025_2026:recentByBrand,
             direct_year_comparison:[2021,2022,2023,2024,2025,2026].map(compareYear),
-            2025_focus:{BEDROOM:brands.BEDROOM.by_year[2025]||null,HoneyParfum:brands.HoneyParfum.by_year[2025]||null}
+            focus_2025:{BEDROOM:brands.BEDROOM.by_year[2025]||null,HoneyParfum:brands.HoneyParfum.by_year[2025]||null}
           };
           fs.mkdirSync('status',{recursive:true});
           fs.writeFileSync('status/honeyparfum-vs-bedroom-audit.json',JSON.stringify(out,null,2)+'\n');
           console.log(JSON.stringify({
             generated_at:out.generated_at,
-            BEDROOM:{works:brands.BEDROOM.works,sales_total:brands.BEDROOM.sales_total,median:brands.BEDROOM.sales_median,pct:brands.BEDROOM.same_year_percentile_median,p90:brands.BEDROOM.p90plus_share,by2025:brands.BEDROOM.by_year[2025]},
-            HoneyParfum:{works:brands.HoneyParfum.works,sales_total:brands.HoneyParfum.sales_total,median:brands.HoneyParfum.sales_median,pct:brands.HoneyParfum.same_year_percentile_median,p90:brands.HoneyParfum.p90plus_share,by2025:brands.HoneyParfum.by_year[2025]},
+            BEDROOM:{works:brands.BEDROOM.works,sales_total:brands.BEDROOM.sales_total,median:brands.BEDROOM.sales_median,pct:brands.BEDROOM.same_year_sales_percentile_median,p90:brands.BEDROOM.p90plus_share,by2025:brands.BEDROOM.by_year[2025]},
+            HoneyParfum:{works:brands.HoneyParfum.works,sales_total:brands.HoneyParfum.sales_total,median:brands.HoneyParfum.sales_median,pct:brands.HoneyParfum.same_year_sales_percentile_median,p90:brands.HoneyParfum.p90plus_share,by2025:brands.HoneyParfum.by_year[2025]},
             bedroom_tags:brands.BEDROOM.tag_stats.slice(0,15),honey_tags:brands.HoneyParfum.tag_stats.slice(0,15)
           },null,2));
           NODE
