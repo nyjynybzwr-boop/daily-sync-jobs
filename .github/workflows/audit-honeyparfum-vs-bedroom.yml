@@ -1,0 +1,177 @@
+name: Audit HoneyParfum vs BEDROOM
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/audit-honeyparfum-vs-bedroom.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+          cd work
+          git lfs pull --include='data/catalog/full/details.json'
+
+      - name: Compare HoneyParfum and BEDROOM
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const raw=JSON.parse(fs.readFileSync('work/data/catalog/full/details.json','utf8'));
+          const now=new Date('2026-08-20T00:00:00+09:00');
+          const works=[]; const seen=new Set();
+          function walk(v,depth=0){
+            if(v==null||depth>6)return;
+            if(Array.isArray(v)){for(const x of v)walk(x,depth+1);return;}
+            if(typeof v!=='object')return;
+            const ok=('sales_count' in v)&&(('product_id' in v)||('title' in v))&&(('release_date_text' in v)||('release_date' in v)||('release_year' in v));
+            if(ok){const id=String(v.product_id||v.url||v.title||works.length);if(!seen.has(id)){seen.add(id);works.push(v)};return;}
+            for(const x of Object.values(v))walk(x,depth+1);
+          }
+          walk(raw);
+
+          const q=(a,p)=>{a=a.filter(Number.isFinite).sort((x,y)=>x-y);if(!a.length)return null;const i=(a.length-1)*p,l=Math.floor(i),h=Math.ceil(i);return l===h?a[l]:a[l]+(a[h]-a[l])*(i-l)};
+          const med=a=>q(a,.5);
+          const mean=a=>{a=a.filter(Number.isFinite);return a.length?a.reduce((s,v)=>s+v,0)/a.length:null};
+          const num=(...xs)=>{for(const x of xs){const n=Number(x);if(Number.isFinite(n))return n}return null};
+          const str=(...xs)=>{for(const x of xs){if(typeof x==='string'&&x.trim())return x.trim()}return ''};
+          const parseDate=x=>{
+            const t=x.release_date||x.release_date_text||x.release_at||'';
+            let d=new Date(t);
+            if(!Number.isFinite(d.getTime())){const m=String(t).match(/(20\d{2})年(\d{1,2})月(\d{1,2})日/);if(m)d=new Date(`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}T00:00:00+09:00`)}
+            return Number.isFinite(d.getTime())?d:null;
+          };
+          const tagList=x=>{
+            const out=[];
+            for(const a of [x.tags,x.official_tags,x.genre_tags,x.genres,x.keywords]){
+              if(!Array.isArray(a))continue;
+              for(const t of a){if(typeof t==='string')out.push(t.trim());else if(t&&typeof t==='object')out.push(str(t.name,t.label,t.text,t.tag));}
+            }
+            return [...new Set(out.filter(Boolean))];
+          };
+          const rows=works.map(x=>{
+            const d=parseDate(x), sales=num(x.sales_count), circle=str(x.circle,x.maker_name,x.circle_name);
+            const year=d?d.getFullYear():num(x.release_year), ageDays=d?Math.max(1,(now-d)/86400000):null;
+            return {
+              id:str(x.product_id), title:str(x.title), circle, year,
+              date:d?d.toISOString().slice(0,10):'', ts:d?d.getTime():null,
+              sales, ageDays, sales_per_day:sales!=null&&ageDays?sales/ageDays:null,
+              rating:num(x.rating), rating_count:num(x.rating_count), review_count:num(x.review_count),
+              duration_seconds:num(x.total_duration_seconds,x.duration_seconds), tags:tagList(x)
+            };
+          }).filter(x=>Number.isFinite(x.year)&&Number.isFinite(x.sales));
+
+          const marketByYear=new Map();
+          for(const y of new Set(rows.map(x=>x.year))) marketByYear.set(y,rows.filter(x=>x.year===y).map(x=>x.sales).sort((a,b)=>a-b));
+          for(const r of rows){const m=marketByYear.get(r.year)||[];r.same_year_sales_percentile=m.length?m.filter(v=>v<=r.sales).length/m.length:null;}
+
+          const brandOf=c=>{
+            const s=String(c).toLowerCase().replace(/\s+/g,'');
+            if(s.includes('bedroom'))return 'BEDROOM';
+            if(s.includes('honeyparfum')||s.includes('ハニパル'))return 'HoneyParfum';
+            return null;
+          };
+          const branded=rows.map(x=>({...x,brand:brandOf(x.circle)})).filter(x=>x.brand);
+          if(!branded.some(x=>x.brand==='BEDROOM'))throw new Error('No BEDROOM works');
+          if(!branded.some(x=>x.brand==='HoneyParfum'))throw new Error('No HoneyParfum works');
+
+          function cadenceDays(rs){
+            const ts=rs.map(x=>x.ts).filter(Number.isFinite).sort((a,b)=>a-b); const gaps=[];
+            for(let i=1;i<ts.length;i++)gaps.push((ts[i]-ts[i-1])/86400000);
+            return {median:med(gaps),mean:mean(gaps),min:gaps.length?Math.min(...gaps):null,max:gaps.length?Math.max(...gaps):null};
+          }
+          function tagStats(rs){
+            const map=new Map();
+            for(const r of rs)for(const tag of r.tags){if(!map.has(tag))map.set(tag,[]);map.get(tag).push(r)}
+            return [...map.entries()].map(([tag,arr])=>({
+              tag,count:arr.length,share:arr.length/rs.length,
+              sales_median:med(arr.map(x=>x.sales)),
+              sales_per_day_median:med(arr.map(x=>x.sales_per_day)),
+              percentile_median:med(arr.map(x=>x.same_year_sales_percentile)),
+              p90plus_share:arr.filter(x=>x.same_year_sales_percentile>=.9).length/arr.length,
+              p95plus_share:arr.filter(x=>x.same_year_sales_percentile>=.95).length/arr.length
+            })).sort((a,b)=>b.count-a.count||b.percentile_median-a.percentile_median);
+          }
+          function summarize(rs){
+            const byYear={};
+            for(const y of [...new Set(rs.map(x=>x.year))].sort()){
+              const a=rs.filter(x=>x.year===y), sales=a.map(x=>x.sales);
+              byYear[y]={
+                works:a.length,sales_total:sales.reduce((s,v)=>s+v,0),sales_mean:mean(sales),sales_median:med(sales),
+                sales_p75:q(sales,.75),sales_p90:q(sales,.9),sales_per_day_median:med(a.map(x=>x.sales_per_day)),
+                same_year_percentile_median:med(a.map(x=>x.same_year_sales_percentile)),
+                p90plus_share:a.filter(x=>x.same_year_sales_percentile>=.9).length/a.length,
+                p95plus_share:a.filter(x=>x.same_year_sales_percentile>=.95).length/a.length,
+                p99plus_share:a.filter(x=>x.same_year_sales_percentile>=.99).length/a.length,
+                hit_1000:a.filter(x=>x.sales>=1000).length,hit_3000:a.filter(x=>x.sales>=3000).length,hit_10000:a.filter(x=>x.sales>=10000).length,
+                cadence_days:cadenceDays(a)
+              };
+            }
+            const rc=rs.filter(x=>Number.isFinite(x.review_count)&&Number.isFinite(x.rating_count)&&x.rating_count>0).map(x=>x.review_count/x.rating_count);
+            return {
+              works:rs.length, circle_names:[...new Set(rs.map(x=>x.circle))],
+              sales_total:rs.reduce((s,x)=>s+x.sales,0),sales_median:med(rs.map(x=>x.sales)),sales_mean:mean(rs.map(x=>x.sales)),
+              sales_per_day_median:med(rs.map(x=>x.sales_per_day)),same_year_percentile_median:med(rs.map(x=>x.same_year_sales_percentile)),
+              p90plus_share:rs.filter(x=>x.same_year_sales_percentile>=.9).length/rs.length,
+              p95plus_share:rs.filter(x=>x.same_year_sales_percentile>=.95).length/rs.length,
+              p99plus_share:rs.filter(x=>x.same_year_sales_percentile>=.99).length/rs.length,
+              rating_median:med(rs.map(x=>x.rating)),rating_count_median:med(rs.map(x=>x.rating_count)),review_count_median:med(rs.map(x=>x.review_count)),review_to_rating_median:med(rc),
+              cadence_days:cadenceDays(rs),by_year:byYear,
+              tag_stats:tagStats(rs),
+              top_by_sales:[...rs].sort((a,b)=>b.sales-a.sales).slice(0,20),
+              top_by_sales_per_day:[...rs].filter(x=>Number.isFinite(x.sales_per_day)).sort((a,b)=>b.sales_per_day-a.sales_per_day).slice(0,20),
+              all_works:[...rs].sort((a,b)=>(b.ts||0)-(a.ts||0))
+            };
+          }
+          const brands={};
+          for(const brand of ['BEDROOM','HoneyParfum'])brands[brand]=summarize(branded.filter(x=>x.brand===brand));
+
+          const compareYear=y=>{
+            const o={year:y};
+            for(const b of ['BEDROOM','HoneyParfum'])o[b]=brands[b].by_year[y]||null;
+            return o;
+          };
+          const recent=branded.filter(x=>x.year>=2025);
+          const recentByBrand={};for(const b of ['BEDROOM','HoneyParfum'])recentByBrand[b]=summarize(recent.filter(x=>x.brand===b));
+
+          const out={
+            generated_at:new Date().toISOString(),source_rows:rows.length,
+            caveat:'sales_count is current cumulative sales. Same-year percentiles reduce but do not remove unequal release-date exposure; sales_per_day is a rough normalization because audio sales are front-loaded.',
+            brands,
+            recent_2025_2026:recentByBrand,
+            direct_year_comparison:[2021,2022,2023,2024,2025,2026].map(compareYear),
+            2025_focus:{BEDROOM:brands.BEDROOM.by_year[2025]||null,HoneyParfum:brands.HoneyParfum.by_year[2025]||null}
+          };
+          fs.mkdirSync('status',{recursive:true});
+          fs.writeFileSync('status/honeyparfum-vs-bedroom-audit.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify({
+            generated_at:out.generated_at,
+            BEDROOM:{works:brands.BEDROOM.works,sales_total:brands.BEDROOM.sales_total,median:brands.BEDROOM.sales_median,pct:brands.BEDROOM.same_year_percentile_median,p90:brands.BEDROOM.p90plus_share,by2025:brands.BEDROOM.by_year[2025]},
+            HoneyParfum:{works:brands.HoneyParfum.works,sales_total:brands.HoneyParfum.sales_total,median:brands.HoneyParfum.sales_median,pct:brands.HoneyParfum.same_year_percentile_median,p90:brands.HoneyParfum.p90plus_share,by2025:brands.HoneyParfum.by_year[2025]},
+            bedroom_tags:brands.BEDROOM.tag_stats.slice(0,15),honey_tags:brands.HoneyParfum.tag_stats.slice(0,15)
+          },null,2));
+          NODE
+
+      - name: Persist audit
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add status/honeyparfum-vs-bedroom-audit.json
+          git commit -m 'status: HoneyParfum vs BEDROOM audit'
+          git push
