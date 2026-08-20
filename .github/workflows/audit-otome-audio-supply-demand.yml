@@ -33,21 +33,53 @@ jobs:
           node - <<'NODE'
           const fs=require('node:fs');
           const raw=JSON.parse(fs.readFileSync('work/data/catalog/full/details.json','utf8'));
-          const items=Array.isArray(raw)?raw:(Array.isArray(raw.items)?raw.items:Object.values(raw));
           const now=new Date('2026-08-20T00:00:00+09:00');
           const q=(a,p)=>{if(!a.length)return null; const s=[...a].sort((x,y)=>x-y); const i=(s.length-1)*p,lo=Math.floor(i),hi=Math.ceil(i); return lo===hi?s[lo]:s[lo]+(s[hi]-s[lo])*(i-lo)};
           const median=a=>q(a,.5);
+
+          // details.json is not guaranteed to be a flat array. Discover work-like
+          // records by structure, but do not descend once a work record is found.
+          const works=[];
+          const seen=new Set();
+          function walk(v,depth=0){
+            if(v==null||depth>6)return;
+            if(Array.isArray(v)){ for(const x of v) walk(x,depth+1); return; }
+            if(typeof v!=='object')return;
+            const looksLikeWork=('sales_count' in v) && (('product_id' in v)||('title' in v)) && (('release_date_text' in v)||('release_date' in v)||('release_year' in v));
+            if(looksLikeWork){
+              const id=String(v.product_id||v.url||v.title||works.length);
+              if(!seen.has(id)){seen.add(id);works.push(v)}
+              return;
+            }
+            for(const x of Object.values(v)) walk(x,depth+1);
+          }
+          walk(raw);
+
           const rows=[];
-          for(const x of items){
-            const d=new Date(x.release_date || x.release_date_text || x.release_at || '');
+          for(const x of works){
+            const dateText=x.release_date || x.release_date_text || x.release_at || '';
+            let d=new Date(dateText);
+            // Japanese date strings are not parsed consistently by Date.
+            if(!Number.isFinite(d.getTime())){
+              const m=String(dateText).match(/(20\d{2})年(\d{1,2})月(\d{1,2})日/);
+              if(m)d=new Date(`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}T00:00:00+09:00`);
+            }
             const year=Number.isFinite(d.getTime())?d.getFullYear():Number(x.release_year);
             const sales=Number(x.sales_count);
             if(!Number.isFinite(year)||!Number.isFinite(sales)||sales<0)continue;
-            const circle=String(x.circle||x.maker_name||'').trim()||'(unknown)';
+            const circle=String(x.circle||x.maker_name||x.circle_name||'').trim()||'(unknown)';
             const ageDays=Number.isFinite(d.getTime())?Math.max(1,(now-d)/86400000):null;
             rows.push({year,sales,circle,ageDays});
           }
-          const out={generated_at:new Date().toISOString(),source_rows:rows.length,warning:'sales_count is current cumulative sales; year cohorts have unequal exposure time. sales_per_day is only a rough normalization, not first-year sales.' ,years:{}};
+          const out={
+            generated_at:new Date().toISOString(),
+            top_level_type:Array.isArray(raw)?'array':typeof raw,
+            top_level_keys:raw&&typeof raw==='object'&&!Array.isArray(raw)?Object.keys(raw).slice(0,30):[],
+            discovered_works:works.length,
+            source_rows:rows.length,
+            warning:'sales_count is current cumulative sales; year cohorts have unequal exposure time. sales_per_day is only a rough normalization, not first-year sales.',
+            years:{}
+          };
           for(const year of [2019,2020,2021,2022,2023,2024,2025,2026]){
             const r=rows.filter(x=>x.year===year); if(!r.length)continue;
             const sales=r.map(x=>x.sales);
@@ -79,8 +111,10 @@ jobs:
               sales_per_day_p25:q(daily,.25),
               sales_per_day_p75:q(daily,.75),
               median_age_days:median(r.map(x=>x.ageDays).filter(Boolean)),
+              top5_circles:circleSales.slice(0,5).map(([circle,sales])=>({circle,sales,share:total?sales/total:null}))
             };
           }
+          if(rows.length<1000)throw new Error(`Too few rows discovered: ${rows.length}; keys=${out.top_level_keys.join(',')}`);
           fs.mkdirSync('status',{recursive:true});
           fs.writeFileSync('status/otome-audio-supply-demand-audit.json',JSON.stringify(out,null,2)+'\n');
           console.log(JSON.stringify(out,null,2));
