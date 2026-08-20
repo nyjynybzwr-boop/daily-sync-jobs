@@ -1,0 +1,53 @@
+name: Serialize production dashboard R2 writers
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/serialize-dashboard-r2-writers.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ github.token }}
+      - name: Add shared concurrency group to dashboard writers
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          paths = [
+              Path('.github/workflows/refresh-production-dashboard-r2.yml'),
+              Path('.github/workflows/patch-production-emerging-words-r2.yml'),
+          ]
+          block = "\nconcurrency:\n  group: production-dashboard-r2-write\n  cancel-in-progress: false\n"
+          for path in paths:
+              text = path.read_text()
+              if 'group: production-dashboard-r2-write' in text:
+                  print(f'{path}: already serialized')
+                  continue
+              marker = '\npermissions:\n'
+              if marker not in text:
+                  raise SystemExit(f'{path}: permissions marker not found')
+              text = text.replace(marker, block + marker, 1)
+              path.write_text(text)
+              print(f'{path}: added shared concurrency')
+          PY
+      - name: Commit changes
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/workflows/refresh-production-dashboard-r2.yml .github/workflows/patch-production-emerging-words-r2.yml
+          if git diff --cached --quiet; then
+            echo 'No changes needed.'
+            exit 0
+          fi
+          git commit -m 'Serialize production dashboard R2 writes'
+          git push origin main
