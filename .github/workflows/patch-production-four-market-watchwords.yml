@@ -1,0 +1,130 @@
+name: Patch production four-market watchwords
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/patch-production-four-market-watchwords.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      R2_BUCKET_NAME: melosignal-data
+      PROD_BASE: https://dlsite-trend-radar.pages.dev
+    steps:
+      - name: Download current production dashboard
+        run: |
+          set -euo pipefail
+          curl -LfsS --max-time 90 "$PROD_BASE/data/dashboard.json?patch=$(date +%s)" -o /tmp/dashboard.json
+
+      - name: Remove only confirmed garbage from phrase buckets
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const p='/tmp/dashboard.json';
+          const j=JSON.parse(fs.readFileSync(p,'utf8'));
+          const specs={
+            otome_audio:{
+              report:j.media?.audio?.otome?.daily?.report || j.markets?.otome?.daily?.report,
+              reject:new Set(['プレイ属性','精液'])
+            },
+            bl_audio:{
+              report:j.media?.audio?.bl?.daily?.report || j.markets?.bl?.daily?.report,
+              reject:new Set([])
+            },
+            otome_manga:{
+              report:j.media?.comic?.otome?.daily?.report,
+              reject:new Set(['プレイ','白棒修正','白線修正','黒線修正','本文','実在の人物','+他','＋他','作者X','イラストや漫画','表紙デザイン','両方あります','キャラ紹介など','歳。入社3年目'])
+            },
+            bl_manga:{
+              report:j.media?.comic?.bl?.daily?.report,
+              reject:new Set(['憂瓏'])
+            }
+          };
+          function cleanPhraseArrays(report,reject){
+            if(!report) throw new Error('report missing');
+            const filter=a=>(Array.isArray(a)?a:[]).filter(x=>!reject.has(String(x?.label||'').trim()));
+            report.emerging_phrases=filter(report.emerging_phrases);
+            report.rising_phrases=Array.isArray(report.rising_phrases) ? filter(report.rising_phrases) : report.rising_phrases;
+            report.new_phrases=Array.isArray(report.new_phrases) ? filter(report.new_phrases) : report.new_phrases;
+            if(report.pending_candidates) report.pending_candidates.phrases=filter(report.pending_candidates.phrases);
+            if(report.auto_candidates) report.auto_candidates.phrases=filter(report.auto_candidates.phrases);
+          }
+          for(const {report,reject} of Object.values(specs)) cleanPhraseArrays(report,reject);
+          fs.writeFileSync(p,JSON.stringify(j));
+          console.log('patched dashboard bytes',fs.statSync(p).size);
+          NODE
+
+      - name: Upload patched dashboard to R2
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/data/dashboard.json" --file /tmp/dashboard.json --remote
+
+      - name: Verify production and record exact four-market lists
+        run: |
+          set -euo pipefail
+          ok=0
+          for attempt in $(seq 1 18); do
+            curl -LfsS --max-time 90 "$PROD_BASE/data/dashboard.json?verify=$(date +%s)-$attempt" -o /tmp/prod.json || true
+            if node - <<'NODE'
+          const fs=require('node:fs');
+          const j=JSON.parse(fs.readFileSync('/tmp/prod.json','utf8'));
+          const reports={
+            otome_audio:j.media?.audio?.otome?.daily?.report || j.markets?.otome?.daily?.report,
+            bl_audio:j.media?.audio?.bl?.daily?.report || j.markets?.bl?.daily?.report,
+            otome_manga:j.media?.comic?.otome?.daily?.report,
+            bl_manga:j.media?.comic?.bl?.daily?.report,
+          };
+          const reject={
+            otome_audio:['プレイ属性','精液'],
+            bl_audio:[],
+            otome_manga:['プレイ','白棒修正','白線修正','黒線修正','本文','実在の人物','+他','＋他','作者X','イラストや漫画','表紙デザイン','両方あります','キャラ紹介など','歳。入社3年目'],
+            bl_manga:['憂瓏'],
+          };
+          function labels(report){
+            if(!report) throw new Error('report missing');
+            const promoted=[...(report.auto_candidates?.tags||[]),...(report.auto_candidates?.phrases||[])];
+            const pset=new Set(promoted.map(x=>x.label));
+            const pending=[...(report.pending_candidates?.tags||[]),...(report.pending_candidates?.phrases||[])].filter(x=>!pset.has(x.label));
+            const qset=new Set(pending.map(x=>x.label));
+            const today=[...(report.emerging_tags||[]),...(report.emerging_phrases||[])].filter(x=>!pset.has(x.label)&&!qset.has(x.label));
+            return [...pending,...today].map(x=>x.label);
+          }
+          const markets={};
+          for(const [name,report] of Object.entries(reports)){
+            const got=labels(report);
+            const bad=reject[name].filter(x=>got.includes(x));
+            if(bad.length){console.error(name,bad,got);process.exit(2);}
+            markets[name]=got;
+          }
+          const out={checked_at:new Date().toISOString(),verified:true,markets};
+          fs.writeFileSync('/tmp/verified.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out,null,2));
+          NODE
+            then ok=1; break; fi
+            sleep 5
+          done
+          test "$ok" = 1
+
+      - name: Persist verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git clone --quiet "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" statusrepo
+          cd statusrepo
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          mkdir -p status
+          cp /tmp/verified.json status/production-four-market-watchwords-patched.json
+          git add status/production-four-market-watchwords-patched.json
+          git commit -m 'status: production four-market watchwords patched'
+          git push origin main
