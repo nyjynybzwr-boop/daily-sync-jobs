@@ -1,0 +1,14 @@
+{
+  "generated_at": "2026-08-20T13:58:36.028Z",
+  "ok": true,
+  "private_head": "228682d7592efed4e729a746de70d66bb86bc7d3",
+  "recent_supply_2025_2026": 5435,
+  "catalog_labels": 380,
+  "checks": [
+    "winpaths.js syntax",
+    "injector syntax",
+    "page assets",
+    "build wiring",
+    "recent supply baseline"
+  ]
+}
