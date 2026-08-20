@@ -1,0 +1,77 @@
+name: Diagnose otome manga ippou
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/diagnose-otome-manga-ippou.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout status repo
+        uses: actions/checkout@v4
+
+      - name: Fetch production dashboard
+        run: |
+          set -euo pipefail
+          curl -LfsS --max-time 60 "https://dlsite-trend-radar.pages.dev/data/dashboard.json?ts=$(date +%s)" -o /tmp/dashboard.json
+
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" /tmp/source
+
+      - name: Trace 一方 evidence
+        run: |
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const prod=JSON.parse(fs.readFileSync('/tmp/dashboard.json','utf8'));
+          const report=prod.media?.comic?.otome?.daily?.report;
+          if(!report) throw new Error('otome manga report missing');
+          const buckets={
+            pending:[...(report.pending_candidates?.phrases||[])],
+            today:[...(report.emerging_phrases||[])],
+            promoted:[...(report.auto_candidates?.phrases||[])],
+          };
+          const matches=[];
+          for(const [bucket,rows] of Object.entries(buckets)){
+            for(const row of rows){
+              if(String(row?.label||'').trim()==='一方') matches.push({bucket,row});
+            }
+          }
+          const rawPath='/tmp/source/data/manga/raw/2026-08-20.json';
+          const raw=fs.existsSync(rawPath)?JSON.parse(fs.readFileSync(rawPath,'utf8')):{items:[]};
+          const evidence=[];
+          for(const item of raw.items||[]){
+            const fields={title:item.title||'',description:item.description||'',description_long:item.description_long||'',tags:(item.tags||[]).join(' '),content_sections:(item.content_sections||[]).join(' ')};
+            for(const [field,text] of Object.entries(fields)){
+              const idx=String(text).indexOf('一方');
+              if(idx>=0){
+                evidence.push({rank:item.rank,product_id:item.product_id,title:item.title,circle:item.circle,field,snippet:String(text).slice(Math.max(0,idx-90),idx+140)});
+              }
+            }
+          }
+          const out={checked_at:new Date().toISOString(),production_matches:matches,evidence};
+          fs.mkdirSync('status',{recursive:true});
+          fs.writeFileSync('status/otome-manga-ippou-diagnosis.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out,null,2));
+          NODE
+
+      - name: Commit diagnosis
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add status/otome-manga-ippou-diagnosis.json
+          git commit -m 'status: diagnose otome manga 一方'
+          git push
