@@ -1,0 +1,155 @@
+{
+  "checked_at": "2026-08-20T01:57:10.126Z",
+  "production_matches": [
+    {
+      "bucket": "today",
+      "row": {
+        "label": "一方",
+        "category": "emerging_phrase",
+        "count": 2,
+        "share": 0.06666666666666667,
+        "avg_rank": 29.5,
+        "best_rank": 29,
+        "weighted_score": 0.40564413367260604,
+        "structural_evidence": true,
+        "circles": [
+          "きゃぺふろ",
+          "Vivid Aster"
+        ],
+        "works": [
+          {
+            "rank": 29,
+            "product_id": "RJ01258201",
+            "title": "セフレの市原が逃がしてくれない",
+            "url": "https://www.dlsite.com/girls-touch/work/=/product_id/RJ01258201.html",
+            "circle": "きゃぺふろ",
+            "structural": true
+          },
+          {
+            "rank": 30,
+            "product_id": "RJ01601883",
+            "title": "乙女ゲーに転生した私、激重鉄仮面王子の孕ませ確定鬼執着交尾でバッドエンド不可避",
+            "url": "https://www.dlsite.com/girls-touch/work/=/product_id/RJ01601883.html",
+            "circle": "Vivid Aster",
+            "structural": false
+          }
+        ],
+        "previous": {
+          "count": 2,
+          "share": 0.06666666666666667,
+          "avg_rank": 26,
+          "weighted_score": 0.42076065122987266
+        },
+        "delta": {
+          "count": 0,
+          "share": 0,
+          "weighted_score": -0.015116517557266618
+        },
+        "direction": "flat"
+      }
+    },
+    {
+      "bucket": "promoted",
+      "row": {
+        "label": "一方",
+        "category": "emerging_phrase",
+        "count": 2,
+        "share": 0.06666666666666667,
+        "avg_rank": 29.5,
+        "best_rank": 29,
+        "weighted_score": 0.40564413367260604,
+        "structural_evidence": true,
+        "circles": [
+          "きゃぺふろ",
+          "Vivid Aster"
+        ],
+        "works": [
+          {
+            "rank": 29,
+            "product_id": "RJ01258201",
+            "title": "セフレの市原が逃がしてくれない",
+            "url": "https://www.dlsite.com/girls-touch/work/=/product_id/RJ01258201.html",
+            "circle": "きゃぺふろ",
+            "structural": true
+          },
+          {
+            "rank": 30,
+            "product_id": "RJ01601883",
+            "title": "乙女ゲーに転生した私、激重鉄仮面王子の孕ませ確定鬼執着交尾でバッドエンド不可避",
+            "url": "https://www.dlsite.com/girls-touch/work/=/product_id/RJ01601883.html",
+            "circle": "Vivid Aster",
+            "structural": false
+          }
+        ],
+        "days_seen": 3,
+        "distinct_circles": 2
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "rank": 6,
+      "product_id": "RJ01538553",
+      "title": "放蕩貴族は元王太子妃との孕ませ婚で忙しい",
+      "circle": "強肉強食",
+      "field": "description_long",
+      "snippet": "せ婚で忙しい\n\n「女好きの放蕩」と評判の子爵家次男 アーティは、<br /> 名門侯爵家の令嬢にして元・王太子妃 ジゼルの元に婿入りすることに。<br /> <br /> 王太子に一方的な理由で離縁された後、実家の侯爵家領を治めているジゼルは、<br /> 侯爵領の将来の跡取りを産む必要があるため、新たな「夫」<br /> ─それも「経験豊富で女を早く孕ませられる男」を欲していた。<br /> <br /> <br /> 「子作りを前提に、私と結婚してくだ"
+    },
+    {
+      "rank": 6,
+      "product_id": "RJ01538553",
+      "title": "放蕩貴族は元王太子妃との孕ませ婚で忙しい",
+      "circle": "強肉強食",
+      "field": "content_sections",
+      "snippet": "せ婚で忙しい\n\n「女好きの放蕩」と評判の子爵家次男 アーティは、<br /> 名門侯爵家の令嬢にして元・王太子妃 ジゼルの元に婿入りすることに。<br /> <br /> 王太子に一方的な理由で離縁された後、実家の侯爵家領を治めているジゼルは、<br /> 侯爵領の将来の跡取りを産む必要があるため、新たな「夫」<br /> ─それも「経験豊富で女を早く孕ませられる男」を欲していた。<br /> <br /> <br /> 「子作りを前提に、私と結婚してくだ"
+    },
+    {
+      "rank": 25,
+      "product_id": "RJ01651838",
+      "title": "翠緑の花嫁〜夜伽指南のはずが、堅物皇太子に逃がしてもらえない〜",
+      "circle": "瑠璃色シクラメン",
+      "field": "description_long",
+      "snippet": "んでいた。<br /> しかしその知識を見込まれ、思いもよらない役目を任されることに…。\n\n次期皇帝として期待される真面目て実直な皇太子。<br /> 文武両道で民からの信頼も厚い一方、女性とほとんど縁がなく、恋愛に不慣れな一面を持つ。"
+    },
+    {
+      "rank": 25,
+      "product_id": "RJ01651838",
+      "title": "翠緑の花嫁〜夜伽指南のはずが、堅物皇太子に逃がしてもらえない〜",
+      "circle": "瑠璃色シクラメン",
+      "field": "content_sections",
+      "snippet": "んでいた。<br /> しかしその知識を見込まれ、思いもよらない役目を任されることに…。\n\n次期皇帝として期待される真面目て実直な皇太子。<br /> 文武両道で民からの信頼も厚い一方、女性とほとんど縁がなく、恋愛に不慣れな一面を持つ。"
+    },
+    {
+      "rank": 29,
+      "product_id": "RJ01258201",
+      "title": "セフレの市原が逃がしてくれない",
+      "circle": "きゃぺふろ",
+      "field": "description_long",
+      "snippet": " 過去に市原からかけられた言葉、<br /> 『梶川は俺のこと好きって言わないから好き』<br /> この言葉が呪いとなって、市原のことを信じることができないでいた。<br /> 一方、かたくなに信じようとしない梶川に苛立った市原は、”強硬手段”に出る――。\n\n片思いだと思っていたセフレからの両思い分からせセックス!\n\n【仕様】<br /> <br /> 漫画計82P<br /> (本編74P+男性視点おまけ漫画8P)<br /> +他<br /> (あと"
+    },
+    {
+      "rank": 29,
+      "product_id": "RJ01258201",
+      "title": "セフレの市原が逃がしてくれない",
+      "circle": "きゃぺふろ",
+      "field": "content_sections",
+      "snippet": " 過去に市原からかけられた言葉、<br /> 『梶川は俺のこと好きって言わないから好き』<br /> この言葉が呪いとなって、市原のことを信じることができないでいた。<br /> 一方、かたくなに信じようとしない梶川に苛立った市原は、”強硬手段”に出る――。\n\n片思いだと思っていたセフレからの両思い分からせセックス!\n\n【仕様】<br /> <br /> 漫画計82P<br /> (本編74P+男性視点おまけ漫画8P)<br /> +他<br /> (あと"
+    },
+    {
+      "rank": 30,
+      "product_id": "RJ01601883",
+      "title": "乙女ゲーに転生した私、激重鉄仮面王子の孕ませ確定鬼執着交尾でバッドエンド不可避",
+      "circle": "Vivid Aster",
+      "field": "description_long",
+      "snippet": "淫らな関係が始まってしまう…！<br /> <br /> 挿入しないなら大丈夫、そう思っていたスゼリアだけど、次第に前戯だけでは満足できなくなっていき…<br /> <br /> 一方、無挿入を貫いて来たエルの方にも変化が…?<br /> <br /> そんな中、別の縁談が舞い込んできて──！?<br /> <br /> <br /> 総ページ数88P <br /> <br /> 【購入特典】<br /> ・オリジナル原作小説<br /> ・表紙<br /"
+    },
+    {
+      "rank": 30,
+      "product_id": "RJ01601883",
+      "title": "乙女ゲーに転生した私、激重鉄仮面王子の孕ませ確定鬼執着交尾でバッドエンド不可避",
+      "circle": "Vivid Aster",
+      "field": "content_sections",
+      "snippet": "淫らな関係が始まってしまう…！<br /> <br /> 挿入しないなら大丈夫、そう思っていたスゼリアだけど、次第に前戯だけでは満足できなくなっていき…<br /> <br /> 一方、無挿入を貫いて来たエルの方にも変化が…?<br /> <br /> そんな中、別の縁談が舞い込んできて──！?<br /> <br /> <br /> 総ページ数88P <br /> <br /> 【購入特典】<br /> ・オリジナル原作小説<br /> ・表紙<br /"
+    }
+  ]
+}
