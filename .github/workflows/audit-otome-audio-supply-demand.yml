@@ -1,0 +1,96 @@
+name: Audit otome audio supply vs demand
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/audit-otome-audio-supply-demand.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+          cd work
+          git lfs pull --include='data/catalog/full/details.json'
+
+      - name: Compute cohort and concentration statistics
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const raw=JSON.parse(fs.readFileSync('work/data/catalog/full/details.json','utf8'));
+          const items=Array.isArray(raw)?raw:(Array.isArray(raw.items)?raw.items:Object.values(raw));
+          const now=new Date('2026-08-20T00:00:00+09:00');
+          const q=(a,p)=>{if(!a.length)return null; const s=[...a].sort((x,y)=>x-y); const i=(s.length-1)*p,lo=Math.floor(i),hi=Math.ceil(i); return lo===hi?s[lo]:s[lo]+(s[hi]-s[lo])*(i-lo)};
+          const median=a=>q(a,.5);
+          const rows=[];
+          for(const x of items){
+            const d=new Date(x.release_date || x.release_date_text || x.release_at || '');
+            const year=Number.isFinite(d.getTime())?d.getFullYear():Number(x.release_year);
+            const sales=Number(x.sales_count);
+            if(!Number.isFinite(year)||!Number.isFinite(sales)||sales<0)continue;
+            const circle=String(x.circle||x.maker_name||'').trim()||'(unknown)';
+            const ageDays=Number.isFinite(d.getTime())?Math.max(1,(now-d)/86400000):null;
+            rows.push({year,sales,circle,ageDays});
+          }
+          const out={generated_at:new Date().toISOString(),source_rows:rows.length,warning:'sales_count is current cumulative sales; year cohorts have unequal exposure time. sales_per_day is only a rough normalization, not first-year sales.' ,years:{}};
+          for(const year of [2019,2020,2021,2022,2023,2024,2025,2026]){
+            const r=rows.filter(x=>x.year===year); if(!r.length)continue;
+            const sales=r.map(x=>x.sales);
+            const total=sales.reduce((a,b)=>a+b,0);
+            const byCircle=new Map();
+            for(const x of r)byCircle.set(x.circle,(byCircle.get(x.circle)||0)+x.sales);
+            const circleSales=[...byCircle.entries()].sort((a,b)=>b[1]-a[1]);
+            const topShare=n=>total?circleSales.slice(0,n).reduce((a,b)=>a+b[1],0)/total:null;
+            const topWorks=[...sales].sort((a,b)=>b-a);
+            const workTopShare=p=>{const n=Math.max(1,Math.ceil(r.length*p));return total?topWorks.slice(0,n).reduce((a,b)=>a+b,0)/total:null};
+            const daily=r.filter(x=>x.ageDays).map(x=>x.sales/x.ageDays);
+            out.years[year]={
+              works:r.length,
+              circles:byCircle.size,
+              sales_total:total,
+              sales_mean:total/r.length,
+              sales_median:median(sales),
+              sales_p25:q(sales,.25),
+              sales_p75:q(sales,.75),
+              sales_p90:q(sales,.9),
+              share_sales_le_100:sales.filter(v=>v<=100).length/r.length,
+              share_sales_le_300:sales.filter(v=>v<=300).length/r.length,
+              top1_circle_share:topShare(1),
+              top5_circle_share:topShare(5),
+              top10_circle_share:topShare(10),
+              top1pct_works_sales_share:workTopShare(.01),
+              top10pct_works_sales_share:workTopShare(.10),
+              sales_per_day_median:median(daily),
+              sales_per_day_p25:q(daily,.25),
+              sales_per_day_p75:q(daily,.75),
+              median_age_days:median(r.map(x=>x.ageDays).filter(Boolean)),
+            };
+          }
+          fs.mkdirSync('status',{recursive:true});
+          fs.writeFileSync('status/otome-audio-supply-demand-audit.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out,null,2));
+          NODE
+
+      - name: Persist audit
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add status/otome-audio-supply-demand-audit.json
+          git commit -m 'status: otome audio supply demand audit'
+          git push
