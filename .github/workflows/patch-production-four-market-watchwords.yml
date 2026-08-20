@@ -6,6 +6,10 @@ on:
     paths:
       - '.github/workflows/patch-production-four-market-watchwords.yml'
 
+concurrency:
+  group: production-dashboard-r2-write
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -24,7 +28,7 @@ jobs:
           set -euo pipefail
           curl -LfsS --max-time 90 "$PROD_BASE/data/dashboard.json?patch=$(date +%s)" -o /tmp/dashboard.json
 
-      - name: Remove only confirmed garbage from phrase buckets
+      - name: Remove confirmed garbage from every phrase-candidate bucket
         run: |
           set -euo pipefail
           node - <<'NODE'
@@ -46,21 +50,20 @@ jobs:
             },
             bl_manga:{
               report:j.media?.comic?.bl?.daily?.report,
-              reject:new Set(['憂瓏'])
+              reject:new Set(['憂瓏','表紙'])
             }
           };
-          function cleanPhraseArrays(report,reject){
+          function clean(report,reject){
             if(!report) throw new Error('report missing');
-            const filter=a=>(Array.isArray(a)?a:[]).filter(x=>!reject.has(String(x?.label||'').trim()));
-            report.emerging_phrases=filter(report.emerging_phrases);
-            report.rising_phrases=Array.isArray(report.rising_phrases) ? filter(report.rising_phrases) : report.rising_phrases;
-            report.new_phrases=Array.isArray(report.new_phrases) ? filter(report.new_phrases) : report.new_phrases;
-            if(report.pending_candidates) report.pending_candidates.phrases=filter(report.pending_candidates.phrases);
-            if(report.auto_candidates) report.auto_candidates.phrases=filter(report.auto_candidates.phrases);
+            const f=a=>(Array.isArray(a)?a:[]).filter(x=>!reject.has(String(x?.label||'').trim()));
+            report.emerging_phrases=f(report.emerging_phrases);
+            report.rising_phrases=Array.isArray(report.rising_phrases)?f(report.rising_phrases):report.rising_phrases;
+            report.new_phrases=Array.isArray(report.new_phrases)?f(report.new_phrases):report.new_phrases;
+            if(report.pending_candidates) report.pending_candidates.phrases=f(report.pending_candidates.phrases);
+            if(report.auto_candidates) report.auto_candidates.phrases=f(report.auto_candidates.phrases);
           }
-          for(const {report,reject} of Object.values(specs)) cleanPhraseArrays(report,reject);
+          for(const {report,reject} of Object.values(specs)) clean(report,reject);
           fs.writeFileSync(p,JSON.stringify(j));
-          console.log('patched dashboard bytes',fs.statSync(p).size);
           NODE
 
       - name: Upload patched dashboard to R2
@@ -68,7 +71,7 @@ jobs:
           set -euo pipefail
           npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/data/dashboard.json" --file /tmp/dashboard.json --remote
 
-      - name: Verify production and record exact four-market lists
+      - name: Verify production promoted and watching buckets
         run: |
           set -euo pipefail
           ok=0
@@ -87,23 +90,24 @@ jobs:
             otome_audio:['プレイ属性','精液'],
             bl_audio:[],
             otome_manga:['プレイ','白棒修正','白線修正','黒線修正','本文','実在の人物','+他','＋他','作者X','イラストや漫画','表紙デザイン','両方あります','キャラ紹介など','歳。入社3年目','一方'],
-            bl_manga:['憂瓏'],
+            bl_manga:['憂瓏','表紙'],
           };
-          function labels(report){
+          function buckets(report){
             if(!report) throw new Error('report missing');
             const promoted=[...(report.auto_candidates?.tags||[]),...(report.auto_candidates?.phrases||[])];
             const pset=new Set(promoted.map(x=>x.label));
             const pending=[...(report.pending_candidates?.tags||[]),...(report.pending_candidates?.phrases||[])].filter(x=>!pset.has(x.label));
             const qset=new Set(pending.map(x=>x.label));
             const today=[...(report.emerging_tags||[]),...(report.emerging_phrases||[])].filter(x=>!pset.has(x.label)&&!qset.has(x.label));
-            return [...pending,...today].map(x=>x.label);
+            return {promoted:promoted.map(x=>x.label),watching:[...pending,...today].map(x=>x.label)};
           }
           const markets={};
           for(const [name,report] of Object.entries(reports)){
-            const got=labels(report);
-            const bad=reject[name].filter(x=>got.includes(x));
-            if(bad.length){console.error(name,bad,got);process.exit(2);}
-            markets[name]=got;
+            const b=buckets(report);
+            const all=[...b.promoted,...b.watching];
+            const bad=reject[name].filter(x=>all.includes(x));
+            if(bad.length){console.error(name,bad,b);process.exit(2);}
+            markets[name]=b;
           }
           const out={checked_at:new Date().toISOString(),verified:true,markets};
           fs.writeFileSync('/tmp/verified.json',JSON.stringify(out,null,2)+'\n');
@@ -124,7 +128,7 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           mkdir -p status
-          cp /tmp/verified.json status/production-four-market-watchwords-patched.json
-          git add status/production-four-market-watchwords-patched.json
-          git commit -m 'status: production four-market watchwords patched'
+          cp /tmp/verified.json status/production-four-market-word-buckets-patched.json
+          git add status/production-four-market-word-buckets-patched.json
+          git commit -m 'status: production four-market word buckets patched'
           git push origin main
