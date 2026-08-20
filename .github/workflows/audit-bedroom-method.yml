@@ -1,0 +1,92 @@
+name: Audit BEDROOM method
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/audit-bedroom-method.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+          cd work
+          git lfs pull --include='data/catalog/full/details.json'
+
+      - name: Analyze BEDROOM works against same-year market
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const raw=JSON.parse(fs.readFileSync('work/data/catalog/full/details.json','utf8'));
+          const now=new Date('2026-08-20T00:00:00+09:00');
+          const works=[]; const seen=new Set();
+          function walk(v,depth=0){
+            if(v==null||depth>6)return;
+            if(Array.isArray(v)){for(const x of v)walk(x,depth+1);return;}
+            if(typeof v!=='object')return;
+            const ok=('sales_count' in v)&&(('product_id' in v)||('title' in v))&&(('release_date_text' in v)||('release_date' in v)||('release_year' in v));
+            if(ok){const id=String(v.product_id||v.url||v.title||works.length);if(!seen.has(id)){seen.add(id);works.push(v)};return;}
+            for(const x of Object.values(v))walk(x,depth+1);
+          }
+          walk(raw);
+          const parseDate=x=>{
+            const t=x.release_date||x.release_date_text||x.release_at||'';
+            let d=new Date(t);
+            if(!Number.isFinite(d.getTime())){const m=String(t).match(/(20\d{2})年(\d{1,2})月(\d{1,2})日/);if(m)d=new Date(`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}T00:00:00+09:00`)}
+            return Number.isFinite(d.getTime())?d:null;
+          };
+          const num=(...xs)=>{for(const x of xs){const n=Number(x);if(Number.isFinite(n))return n}return null};
+          const str=(...xs)=>{for(const x of xs){if(typeof x==='string'&&x.trim())return x.trim()}return ''};
+          const tagList=x=>{
+            const cand=[x.tags,x.official_tags,x.genre_tags,x.genres,x.keywords];
+            const out=[];
+            for(const a of cand){if(!Array.isArray(a))continue;for(const t of a){if(typeof t==='string')out.push(t.trim());else if(t&&typeof t==='object')out.push(str(t.name,t.label,t.text,t.tag));}}
+            return [...new Set(out.filter(Boolean))];
+          };
+          const rows=works.map(x=>{
+            const d=parseDate(x); const sales=num(x.sales_count); const circle=str(x.circle,x.maker_name,x.circle_name);
+            const year=d?d.getFullYear():num(x.release_year);
+            const ageDays=d?Math.max(1,(now-d)/86400000):null;
+            return {id:str(x.product_id),title:str(x.title),circle,year,date:d?d.toISOString().slice(0,10):'',sales,ageDays,sales_per_day:sales!=null&&ageDays?sales/ageDays:null,price:num(x.price,x.price_value,x.sale_price),rating:num(x.rating),rating_count:num(x.rating_count),review_count:num(x.review_count),duration_seconds:num(x.total_duration_seconds,x.duration_seconds),tags:tagList(x)};
+          }).filter(x=>Number.isFinite(x.year)&&Number.isFinite(x.sales));
+          const bedroom=rows.filter(x=>x.circle.toLowerCase().includes('bedroom'));
+          if(!bedroom.length)throw new Error('No BEDROOM works found');
+          const q=(a,p)=>{a=a.filter(Number.isFinite).sort((a,b)=>a-b);if(!a.length)return null;const i=(a.length-1)*p,l=Math.floor(i),h=Math.ceil(i);return l===h?a[l]:a[l]+(a[h]-a[l])*(i-l)};
+          const med=a=>q(a,.5);
+          for(const b of bedroom){const market=rows.filter(x=>x.year===b.year).map(x=>x.sales).sort((a,b)=>a-b);const below=market.filter(v=>v<=b.sales).length;b.same_year_sales_percentile=market.length?below/market.length:null;}
+          const byYear={};
+          for(const y of [...new Set(bedroom.map(x=>x.year))].sort()){
+            const r=bedroom.filter(x=>x.year===y);const s=r.map(x=>x.sales);const d=r.map(x=>x.sales_per_day);
+            byYear[y]={works:r.length,sales_total:s.reduce((a,b)=>a+b,0),sales_median:med(s),sales_mean:s.reduce((a,b)=>a+b,0)/r.length,sales_per_day_median:med(d),same_year_percentile_median:med(r.map(x=>x.same_year_sales_percentile)),hit_1000:r.filter(x=>x.sales>=1000).length,hit_3000:r.filter(x=>x.sales>=3000).length,hit_10000:r.filter(x=>x.sales>=10000).length};
+          }
+          const tagCounts=new Map();for(const x of bedroom)for(const t of x.tags)tagCounts.set(t,(tagCounts.get(t)||0)+1);
+          const topTags=[...tagCounts.entries()].sort((a,b)=>b[1]-a[1]).slice(0,40).map(([tag,count])=>({tag,count,share:count/bedroom.length}));
+          const out={generated_at:new Date().toISOString(),market_source_rows:rows.length,bedroom_work_count:bedroom.length,circle_names:[...new Set(bedroom.map(x=>x.circle))],summary:{sales_total:bedroom.reduce((a,b)=>a+b.sales,0),sales_median:med(bedroom.map(x=>x.sales)),sales_per_day_median:med(bedroom.map(x=>x.sales_per_day)),same_year_percentile_median:med(bedroom.map(x=>x.same_year_sales_percentile)),price_median:med(bedroom.map(x=>x.price)),duration_minutes_median:(()=>{const v=med(bedroom.map(x=>x.duration_seconds));return v==null?null:v/60})(),rating_median:med(bedroom.map(x=>x.rating))},by_year:byYear,top_tags:topTags,top_by_sales:[...bedroom].sort((a,b)=>b.sales-a.sales).slice(0,20),top_by_sales_per_day:[...bedroom].filter(x=>x.sales_per_day!=null).sort((a,b)=>b.sales_per_day-a.sales_per_day).slice(0,20),all_works:[...bedroom].sort((a,b)=>String(b.date).localeCompare(String(a.date)))};
+          fs.mkdirSync('status',{recursive:true});
+          fs.writeFileSync('status/bedroom-method-audit.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify({bedroom_work_count:out.bedroom_work_count,summary:out.summary,by_year:out.by_year,top_tags:out.top_tags.slice(0,15),top_by_sales:out.top_by_sales.slice(0,10)},null,2));
+          NODE
+
+      - name: Persist audit
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add status/bedroom-method-audit.json
+          git commit -m 'status: BEDROOM method audit'
+          git push
