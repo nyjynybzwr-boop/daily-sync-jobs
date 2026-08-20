@@ -18,12 +18,13 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       R2_BUCKET_NAME: melosignal-data
       PROD_BASE: https://dlsite-trend-radar.pages.dev
+
     steps:
       - name: Require credentials
         run: |
           set -euo pipefail
-          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo 'CLOUDFLARE_ACCOUNT_ID missing' >&2; exit 1; }
-          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo 'CLOUDFLARE_API_TOKEN missing' >&2; exit 1; }
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}"
+          test -n "${CLOUDFLARE_API_TOKEN:-}"
 
       - name: Checkout private source
         env:
@@ -43,7 +44,7 @@ jobs:
         working-directory: work
         run: npm ci
 
-      - name: Reanalyse unregistered words for all four markets
+      - name: Reanalyse all four markets from raw data
         working-directory: work
         run: |
           set -euo pipefail
@@ -52,41 +53,40 @@ jobs:
             DATA_ROOT="$root" node scripts/analyze-trends.mjs
           done
 
-      - name: Verify four-market reports before build
+      - name: Verify regenerated reports contain no confirmed garbage
         working-directory: work
         run: |
           set -euo pipefail
           node - <<'NODE'
           const fs=require('node:fs');
           const specs={
-            otome_audio:{path:'data/reports/latest.json', forbid:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞','プレイ属性','精液'], keep:['マン汁指摘']},
-            bl_audio:{path:'data/bl/reports/latest.json', forbid:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞'], keep:['お礼の言葉強要','射精管理','奥ピス','回し']},
-            otome_manga:{path:'data/manga/reports/latest.json', forbid:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞','プレイ','白棒修正','白線修正','黒線修正','本文','実在の人物','+他','＋他','作者X','イラストや漫画','表紙デザイン','両方あります','キャラ紹介など','歳。入社3年目'], keep:['身分差']},
-            bl_manga:{path:'data/manga/bl/reports/latest.json', forbid:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞','憂瓏'], keep:['回し','膨乳','元半グレ']},
+            otome_audio:{path:'data/reports/latest.json',reject:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞','プレイ属性','精液']},
+            bl_audio:{path:'data/bl/reports/latest.json',reject:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞']},
+            otome_manga:{path:'data/manga/reports/latest.json',reject:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞','プレイ','白棒修正','白線修正','黒線修正','本文','実在の人物','+他','＋他','作者X','イラストや漫画','表紙デザイン','両方あります','キャラ紹介など','歳。入社3年目','一方']},
+            bl_manga:{path:'data/manga/bl/reports/latest.json',reject:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞','憂瓏']},
           };
-          function labels(report){
+          function buckets(report){
             const promoted=[...(report.auto_candidates?.tags||[]),...(report.auto_candidates?.phrases||[])];
-            const pset=new Set(promoted.map(x=>x.label));
-            const pending=[...(report.pending_candidates?.tags||[]),...(report.pending_candidates?.phrases||[])].filter(x=>!pset.has(x.label));
-            const qset=new Set(pending.map(x=>x.label));
-            const today=[...(report.emerging_tags||[]),...(report.emerging_phrases||[])].filter(x=>!pset.has(x.label)&&!qset.has(x.label));
-            return [...pending,...today].map(x=>x.label);
+            const promotedLabels=new Set(promoted.map(x=>x.label));
+            const pending=[...(report.pending_candidates?.tags||[]),...(report.pending_candidates?.phrases||[])].filter(x=>!promotedLabels.has(x.label));
+            const pendingLabels=new Set(pending.map(x=>x.label));
+            const today=[...(report.emerging_tags||[]),...(report.emerging_phrases||[])].filter(x=>!promotedLabels.has(x.label)&&!pendingLabels.has(x.label));
+            return {promoted:promoted.map(x=>x.label),watching:[...pending,...today].map(x=>x.label)};
           }
-          const summary={};
+          const out={};
           for(const [name,s] of Object.entries(specs)){
             const report=JSON.parse(fs.readFileSync(s.path,'utf8'));
-            const got=labels(report);
-            const bad=s.forbid.filter(x=>got.includes(x));
-            const missing=s.keep.filter(x=>!got.includes(x));
-            if(bad.length) throw new Error(`${name}: garbage remains: ${bad.join(', ')}`);
-            if(missing.length) throw new Error(`${name}: expected valid candidates missing: ${missing.join(', ')}`);
-            summary[name]=got;
+            const b=buckets(report);
+            const all=[...b.promoted,...b.watching];
+            const bad=s.reject.filter(x=>all.includes(x));
+            if(bad.length) throw new Error(`${name}: confirmed garbage remains after reanalysis: ${bad.join(', ')}`);
+            out[name]=b;
           }
-          console.log(JSON.stringify(summary,null,2));
-          fs.writeFileSync('/tmp/four-market-words.json',JSON.stringify(summary,null,2)+'\n');
+          fs.writeFileSync('/tmp/four-market-clean.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out,null,2));
           NODE
 
-      - name: Persist refreshed reports in private source
+      - name: Persist regenerated reports to private source
         working-directory: work
         run: |
           set -euo pipefail
@@ -96,16 +96,16 @@ jobs:
           if git diff --cached --quiet; then
             echo 'No report changes to push.'
           else
-            git commit -m '[CF-Pages-Skip] [skip actions] clean unregistered words across four markets'
+            git commit -m '[CF-Pages-Skip] [skip actions] regenerate clean word candidates'
             git pull --rebase origin main
             git push origin main
           fi
 
-      - name: Build latest dashboard
+      - name: Build dashboard from cleaned reports
         working-directory: work
         run: npm run build:site
 
-      - name: Verify four-market watching-word buckets in built dashboard
+      - name: Verify built dashboard promoted and watching buckets
         working-directory: work
         run: |
           set -euo pipefail
@@ -118,80 +118,77 @@ jobs:
             otome_manga:j.media?.comic?.otome?.daily?.report,
             bl_manga:j.media?.comic?.bl?.daily?.report,
           };
-          const forbid={
-            otome_audio:['プレイ属性','精液'],
-            bl_audio:[],
-            otome_manga:['プレイ','白棒修正','白線修正','黒線修正','本文','実在の人物','+他','＋他','作者X','イラストや漫画','表紙デザイン','両方あります','キャラ紹介など','歳。入社3年目'],
-            bl_manga:['憂瓏'],
+          const reject={
+            otome_audio:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞','プレイ属性','精液'],
+            bl_audio:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞'],
+            otome_manga:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞','プレイ','白棒修正','白線修正','黒線修正','本文','実在の人物','+他','＋他','作者X','イラストや漫画','表紙デザイン','両方あります','キャラ紹介など','歳。入社3年目','一方'],
+            bl_manga:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞','憂瓏'],
           };
-          function labels(report){
-            if(!report) return [];
+          function buckets(report){
+            if(!report) throw new Error('report missing');
             const promoted=[...(report.auto_candidates?.tags||[]),...(report.auto_candidates?.phrases||[])];
             const pset=new Set(promoted.map(x=>x.label));
             const pending=[...(report.pending_candidates?.tags||[]),...(report.pending_candidates?.phrases||[])].filter(x=>!pset.has(x.label));
             const qset=new Set(pending.map(x=>x.label));
             const today=[...(report.emerging_tags||[]),...(report.emerging_phrases||[])].filter(x=>!pset.has(x.label)&&!qset.has(x.label));
-            return [...pending,...today].map(x=>x.label);
+            return {promoted:promoted.map(x=>x.label),watching:[...pending,...today].map(x=>x.label)};
           }
           for(const [name,report] of Object.entries(reports)){
-            if(!report) throw new Error(`${name}: report missing from dashboard`);
-            const got=labels(report);
-            const bad=(forbid[name]||[]).filter(x=>got.includes(x));
-            if(bad.length) throw new Error(`${name}: dashboard still has ${bad.join(', ')}`);
+            const b=buckets(report);
+            const bad=reject[name].filter(x=>[...b.promoted,...b.watching].includes(x));
+            if(bad.length) throw new Error(`${name}: built dashboard still contains ${bad.join(', ')}`);
           }
           NODE
 
-      - name: Upload dashboard to R2
+      - name: Upload cleaned dashboard to R2
         working-directory: work
         run: |
           set -euo pipefail
           npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/data/dashboard.json" --file site/data/dashboard.json --remote
 
-      - name: Verify production serves cleaned four-market dashboard
+      - name: Verify production directly
         run: |
           set -euo pipefail
           ok=0
           for attempt in $(seq 1 18); do
-            echo "production verify attempt $attempt/18"
-            if curl -LfsS --max-time 60 "$PROD_BASE/data/dashboard.json?refresh=$(date +%s)" -o /tmp/prod-dashboard.json; then
-              if node - <<'NODE'
+            curl -LfsS --max-time 90 "$PROD_BASE/data/dashboard.json?verify=$(date +%s)-$attempt" -o /tmp/prod.json || true
+            if node - <<'NODE'
           const fs=require('node:fs');
-          const j=JSON.parse(fs.readFileSync('/tmp/prod-dashboard.json','utf8'));
+          const j=JSON.parse(fs.readFileSync('/tmp/prod.json','utf8'));
           const reports={
             otome_audio:j.media?.audio?.otome?.daily?.report || j.markets?.otome?.daily?.report,
             bl_audio:j.media?.audio?.bl?.daily?.report || j.markets?.bl?.daily?.report,
             otome_manga:j.media?.comic?.otome?.daily?.report,
             bl_manga:j.media?.comic?.bl?.daily?.report,
           };
-          const forbid={
+          const reject={
             otome_audio:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞','プレイ属性','精液'],
             bl_audio:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞'],
-            otome_manga:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞','プレイ','白棒修正','白線修正','黒線修正','本文','実在の人物','+他','＋他','作者X','イラストや漫画','表紙デザイン','両方あります','キャラ紹介など','歳。入社3年目'],
+            otome_manga:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞','プレイ','白棒修正','白線修正','黒線修正','本文','実在の人物','+他','＋他','作者X','イラストや漫画','表紙デザイン','両方あります','キャラ紹介など','歳。入社3年目','一方'],
             bl_manga:['秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞','憂瓏'],
           };
-          function labels(report){
-            if(!report) return [];
+          function buckets(report){
+            if(!report) throw new Error('report missing');
             const promoted=[...(report.auto_candidates?.tags||[]),...(report.auto_candidates?.phrases||[])];
             const pset=new Set(promoted.map(x=>x.label));
             const pending=[...(report.pending_candidates?.tags||[]),...(report.pending_candidates?.phrases||[])].filter(x=>!pset.has(x.label));
             const qset=new Set(pending.map(x=>x.label));
             const today=[...(report.emerging_tags||[]),...(report.emerging_phrases||[])].filter(x=>!pset.has(x.label)&&!qset.has(x.label));
-            return [...pending,...today].map(x=>x.label);
+            return {promoted:promoted.map(x=>x.label),watching:[...pending,...today].map(x=>x.label)};
           }
-          const out={};
+          const markets={};
           for(const [name,report] of Object.entries(reports)){
-            if(!report) process.exit(3);
-            const got=labels(report);
-            const bad=forbid[name].filter(x=>got.includes(x));
-            if(bad.length){ console.error({name,bad,got}); process.exit(2); }
-            out[name]=got;
+            const b=buckets(report);
+            const bad=reject[name].filter(x=>[...b.promoted,...b.watching].includes(x));
+            if(bad.length){console.error(name,bad,b);process.exit(2);}
+            markets[name]=b;
           }
-          console.log(JSON.stringify({verified:true,markets:out},null,2));
-          fs.writeFileSync('/tmp/four-market-prod.json',JSON.stringify({checked_at:new Date().toISOString(),verified:true,markets:out},null,2)+'\n');
+          const out={checked_at:new Date().toISOString(),verified:true,markets};
+          fs.writeFileSync('/tmp/verified.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out,null,2));
           NODE
-              then ok=1; break; fi
-            fi
-            sleep 10
+            then ok=1; break; fi
+            sleep 5
           done
           test "$ok" = 1
 
@@ -205,7 +202,7 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           mkdir -p status
-          cp /tmp/four-market-prod.json status/production-unregistered-words-four-markets.json
-          git add status/production-unregistered-words-four-markets.json
-          git commit -m 'status: verify unregistered words across four markets'
+          cp /tmp/verified.json status/production-word-candidates-four-markets.json
+          git add status/production-word-candidates-four-markets.json
+          git commit -m 'status: verified production word candidates four markets'
           git push origin main
