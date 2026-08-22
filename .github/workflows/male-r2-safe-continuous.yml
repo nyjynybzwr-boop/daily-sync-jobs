@@ -106,12 +106,27 @@ jobs:
           IDS_PATH='data/male/manga/catalog/index/ids.json'
           FROZEN='.tmp/male-r2-safe/ids.json'
 
+          retry() {
+            local attempt=1
+            local max=3
+            until "$@"; do
+              if [ "$attempt" -ge "$max" ]; then
+                echo "Command failed after $attempt attempts: $*" >&2
+                return 1
+              fi
+              echo "Transient failure; retrying ($attempt/$max): $*" >&2
+              sleep $((attempt * 5))
+              attempt=$((attempt + 1))
+            done
+          }
+
           # A bounded number of chunks per runner keeps recovery simple. Every
           # request inside each chunk remains serial; there are no parallel DLsite
           # workers. Progress is committed after every completed chunk.
           # Individual work-detail failures are recorded in the chunk payload and
-          # progress JSON but DO NOT stop the catalog crawl. Only an explicit
-          # DLsite safety stop or structural data corruption stops the chain.
+          # progress JSON but DO NOT stop the catalog crawl. We only stop for an
+          # explicit DLsite safety stop or a systemic failure affecting most of a
+          # chunk, so one bad work can never freeze the remaining 128k+ catalog.
           for batch in $(seq 1 8); do
             cp "$FROZEN" "$IDS_PATH"
             chunk_index="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String(Number(p.next_chunk||0)))")"
@@ -129,9 +144,16 @@ jobs:
             node - <<'NODE'
           const p=require('./data/male/r2/manga-progress.json');
           const c=p.last_chunk||{};
+          const attempted=Number(c.attempted_count||0);
+          const success=Number(c.success_count||0);
+          const matching=Number(c.expected_work_type_count||0);
+          const successRatio=attempted ? success/attempted : 0;
+          const typeRatio=success ? matching/success : 1;
           if (c.stopped_reason) throw new Error(`safety stop in chunk ${c.index}: ${c.stopped_reason}`);
-          if (c.expected_work_type_count !== c.success_count) throw new Error(`non-MNG work among successful details in chunk ${c.index}: ${c.expected_work_type_count}/${c.success_count}`);
+          if (attempted >= 20 && successRatio < 0.5) throw new Error(`systemic detail failure in chunk ${c.index}: ${success}/${attempted} succeeded`);
+          if (success >= 20 && typeRatio < 0.9) throw new Error(`systemic non-MNG mismatch in chunk ${c.index}: ${matching}/${success} successful details are MNG`);
           if (c.detail_error_count) console.warn(`continuing past ${c.detail_error_count} per-work detail error(s) in chunk ${c.index}`);
+          if (matching !== success) console.warn(`continuing past ${success-matching} non-MNG successful detail(s) in chunk ${c.index}`);
           NODE
 
             padded="$(printf '%05d' "$chunk_index")"
@@ -142,13 +164,13 @@ jobs:
             test -s "$manifest"
             test -s "$progress"
 
-            npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/male/manga/raw/chunk-${padded}.json.gz" --file "$chunk" --remote
-            npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/male/manga/manifest.json" --file "$manifest" --remote
+            retry npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/male/manga/raw/chunk-${padded}.json.gz" --file "$chunk" --remote
+            retry npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/male/manga/manifest.json" --file "$manifest" --remote
 
             # Restore the live catalog file before rebasing/pushing. Only progress
             # and manifest are persisted; the frozen ID file remains local.
             git checkout -- "$IDS_PATH"
-            bash scripts/ci/push.sh "$progress $manifest" "[CF-Pages-Skip] [skip actions] male manga safe R2 progress"
+            retry bash scripts/ci/push.sh "$progress $manifest" "[CF-Pages-Skip] [skip actions] male manga safe R2 progress"
 
             node -e "const p=require('./data/male/r2/manga-progress.json');console.log({processed:p.processed,pending:p.pending,next_chunk:p.next_chunk,stored_bytes:p.stored_bytes,errors:p.errors?.length||0,stopped_reason:p.stopped_reason})"
           done
