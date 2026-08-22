@@ -1,0 +1,175 @@
+name: Male manga safe continuous R2
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/male-r2-safe-continuous.yml'
+
+# Use the same concurrency key as the full index reconciliation so a newly
+# started safe detail crawl cancels any still-running 4,000+ page reconcile.
+# We intentionally do not run catalog reconciliation and detail crawling at
+# the same time against DLsite.
+concurrency:
+  group: male-manga-index-reconcile
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      R2_BUCKET_NAME: melosignal-data
+      MALE_MEDIA: manga
+      CHUNK_SIZE: '500'
+      # Strictly serial DLsite access. The one-second sleep is in addition to
+      # network latency, so normal request frequency stays below 1 request/sec.
+      DETAIL_DELAY_MS: '1000'
+      MALE_R2_MAX_BYTES: '7516192768'
+      PILOT: '0'
+      # Freeze the already-known ID ordering before any later reconciliation can
+      # replace ids.json. Failed reconciliation never replaced this production
+      # set, and collect-catalog-index.mjs appends new keys without reordering old
+      # ones, so the successful chunk 0 remains compatible with this snapshot.
+      MANGA_SNAPSHOT_SHA: '49e3f646cf55314445ced207b34443fdf2db4a84'
+
+    steps:
+      - name: Require credentials
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo 'CLOUDFLARE_ACCOUNT_ID missing' >&2; exit 1; }
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo 'CLOUDFLARE_API_TOKEN missing' >&2; exit 1; }
+
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: |
+          set -euo pipefail
+          npm ci >/tmp/npm-ci.log 2>&1
+          npm install --no-save devalue >>/tmp/npm-ci.log 2>&1
+
+      - name: Prepare frozen manga ID snapshot and preserve completed pilot
+        working-directory: work
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp/male-r2-safe
+          git cat-file -e "${MANGA_SNAPSHOT_SHA}^{commit}"
+          git show "${MANGA_SNAPSHOT_SHA}:data/male/manga/catalog/index/ids.json" > .tmp/male-r2-safe/ids.json
+          git show "${MANGA_SNAPSHOT_SHA}:data/male/r2/manga-progress.json" > .tmp/male-r2-safe/pilot-progress.json
+          git show "${MANGA_SNAPSHOT_SHA}:data/male/r2/manga-manifest.json" > .tmp/male-r2-safe/pilot-manifest.json
+
+          frozen_count="$(node -e "const i=require('./.tmp/male-r2-safe/ids.json');process.stdout.write(String(Object.keys(i).length))")"
+          next_chunk="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String(Number(p.next_chunk||0)))")"
+          processed="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String(Number(p.processed||0)))")"
+          echo "frozen_count=$frozen_count current_processed=$processed current_next_chunk=$next_chunk snapshot=$MANGA_SNAPSHOT_SHA"
+          test "$frozen_count" -ge 129000 || { echo "Frozen catalog unexpectedly small: $frozen_count" >&2; exit 2; }
+
+          # A reconciliation job may have reset progress to zero while we were
+          # switching strategies. Never re-request the already successful first
+          # 500 works: restore the known-good pilot cursor from the frozen commit.
+          if [ "$processed" -lt 500 ] || [ "$next_chunk" -lt 1 ]; then
+            echo 'Restoring known-good 500-work pilot cursor; no duplicate DLsite requests.'
+            cp .tmp/male-r2-safe/pilot-progress.json data/male/r2/manga-progress.json
+            cp .tmp/male-r2-safe/pilot-manifest.json data/male/r2/manga-manifest.json
+          fi
+
+          processed="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String(Number(p.processed||0)))")"
+          next_chunk="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String(Number(p.next_chunk||0)))")"
+          test "$processed" -ge 500 || { echo 'Known-good pilot progress could not be restored.' >&2; exit 2; }
+          test "$next_chunk" -ge 1 || { echo 'Known-good pilot cursor could not be restored.' >&2; exit 2; }
+
+      - name: Crawl safely in strict serial order
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          IDS_PATH='data/male/manga/catalog/index/ids.json'
+          FROZEN='.tmp/male-r2-safe/ids.json'
+
+          # A bounded number of chunks per runner keeps recovery simple. Every
+          # request inside each chunk remains serial; there are no parallel DLsite
+          # workers. Progress is committed after every completed chunk.
+          for batch in $(seq 1 8); do
+            cp "$FROZEN" "$IDS_PATH"
+            chunk_index="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String(Number(p.next_chunk||0)))")"
+            total="$(node -e "const i=require('./.tmp/male-r2-safe/ids.json');process.stdout.write(String(Object.keys(i).length))")"
+            offset=$((chunk_index * 500))
+            if [ "$offset" -ge "$total" ]; then
+              echo "Frozen manga catalog complete: next_chunk=$chunk_index total=$total"
+              git checkout -- "$IDS_PATH"
+              break
+            fi
+
+            echo "=== safe manga batch $batch / chunk $chunk_index / frozen total $total ==="
+            CHUNK_INDEX="$chunk_index" DETAIL_DELAY_MS="$DETAIL_DELAY_MS" node scripts/crawl-male-r2-chunk.mjs
+
+            node - <<'NODE'
+          const p=require('./data/male/r2/manga-progress.json');
+          const c=p.last_chunk||{};
+          if (c.stopped_reason) throw new Error(`safety stop in chunk ${c.index}: ${c.stopped_reason}`);
+          if (c.detail_error_count !== 0) throw new Error(`detail errors in chunk ${c.index}: ${c.detail_error_count}`);
+          if (c.expected_work_type_count !== c.success_count) throw new Error(`non-MNG work in chunk ${c.index}: ${c.expected_work_type_count}/${c.success_count}`);
+          NODE
+
+            padded="$(printf '%05d' "$chunk_index")"
+            chunk=".tmp/male-r2/manga/chunk-${padded}.json.gz"
+            manifest="data/male/r2/manga-manifest.json"
+            progress="data/male/r2/manga-progress.json"
+            test -s "$chunk"
+            test -s "$manifest"
+            test -s "$progress"
+
+            npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/male/manga/raw/chunk-${padded}.json.gz" --file "$chunk" --remote
+            npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/male/manga/manifest.json" --file "$manifest" --remote
+
+            # Restore the live catalog file before rebasing/pushing. Only progress
+            # and manifest are persisted; the frozen ID file remains local.
+            git checkout -- "$IDS_PATH"
+            bash scripts/ci/push.sh "$progress $manifest" "[CF-Pages-Skip] [skip actions] male manga safe R2 progress"
+
+            node -e "const p=require('./data/male/r2/manga-progress.json');console.log({processed:p.processed,pending:p.pending,next_chunk:p.next_chunk,stored_bytes:p.stored_bytes,errors:p.errors?.length||0,stopped_reason:p.stopped_reason})"
+          done
+
+      - name: Continue immediately while frozen catalog remains
+        working-directory: work
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git pull --rebase origin main
+          next_chunk="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String(Number(p.next_chunk||0)))")"
+          total="$(node -e "const i=require('./.tmp/male-r2-safe/ids.json');process.stdout.write(String(Object.keys(i).length))")"
+          stopped="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String(p.stopped_reason||''))")"
+          errors="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String((p.errors||[]).length))")"
+          offset=$((next_chunk * 500))
+          echo "continuation check: next_chunk=$next_chunk offset=$offset frozen_total=$total stopped=$stopped errors=$errors"
+          if [ -n "$stopped" ] || [ "$errors" != '0' ]; then
+            echo 'Not chaining after a crawl error or DLsite safety stop.'
+            exit 0
+          fi
+          if [ "$offset" -lt "$total" ]; then
+            echo 'Queueing the next strictly-serial safe manga R2 run.'
+            gh workflow run male-r2-safe-continuous.yml --repo "$GITHUB_REPOSITORY"
+          else
+            echo 'Frozen male manga R2 crawl is complete.'
+          fi
