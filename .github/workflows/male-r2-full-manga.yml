@@ -14,6 +14,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
   crawl:
@@ -70,7 +71,7 @@ jobs:
             exit 78
           fi
 
-      - name: Verify exact manga catalog count
+      - name: Verify exact accepted manga crawl count
         working-directory: work
         run: |
           set -euo pipefail
@@ -80,7 +81,7 @@ jobs:
           const i=require('./data/male/manga/catalog/index/ids.json');
           const ids=Object.keys(i).length;
           const total=Number(c.source_total_count||0);
-          console.log({ids,total,gap:total-ids,done:c.done,stopped_reason:c.stopped_reason});
+          console.log({ids,total,gap:total-ids,listing_total:c.source_listing_total_count??null,accepted_gap:c.accepted_gap??0,done:c.done,stopped_reason:c.stopped_reason});
           if (!c.done || c.stopped_reason || ids !== total) process.exit(2);
           NODE
 
@@ -140,3 +141,25 @@ jobs:
         run: |
           git pull --rebase origin main
           cat data/male/r2/manga-progress.json
+
+      - name: Continue immediately while manga remains
+        working-directory: work
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git pull --rebase origin main
+          pending="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String(Number(p.pending||0)))")"
+          stopped="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String(p.stopped_reason||''))")"
+          errors="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String((p.errors||[]).length))")"
+          echo "continuation check: pending=$pending stopped=$stopped errors=$errors"
+          if [ -n "$stopped" ] || [ "$errors" != '0' ]; then
+            echo 'Not chaining because the last run recorded a crawl error.'
+            exit 0
+          fi
+          if [ "$pending" -gt 0 ]; then
+            echo 'Queueing the next manga R2 run immediately.'
+            gh workflow run male-r2-full-manga.yml --repo "$GITHUB_REPOSITORY"
+          else
+            echo 'Male manga R2 crawl is complete.'
+          fi
