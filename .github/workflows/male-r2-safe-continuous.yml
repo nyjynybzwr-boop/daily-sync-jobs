@@ -109,6 +109,9 @@ jobs:
           # A bounded number of chunks per runner keeps recovery simple. Every
           # request inside each chunk remains serial; there are no parallel DLsite
           # workers. Progress is committed after every completed chunk.
+          # Individual work-detail failures are recorded in the chunk payload and
+          # progress JSON but DO NOT stop the catalog crawl. Only an explicit
+          # DLsite safety stop or structural data corruption stops the chain.
           for batch in $(seq 1 8); do
             cp "$FROZEN" "$IDS_PATH"
             chunk_index="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String(Number(p.next_chunk||0)))")"
@@ -127,8 +130,8 @@ jobs:
           const p=require('./data/male/r2/manga-progress.json');
           const c=p.last_chunk||{};
           if (c.stopped_reason) throw new Error(`safety stop in chunk ${c.index}: ${c.stopped_reason}`);
-          if (c.detail_error_count !== 0) throw new Error(`detail errors in chunk ${c.index}: ${c.detail_error_count}`);
-          if (c.expected_work_type_count !== c.success_count) throw new Error(`non-MNG work in chunk ${c.index}: ${c.expected_work_type_count}/${c.success_count}`);
+          if (c.expected_work_type_count !== c.success_count) throw new Error(`non-MNG work among successful details in chunk ${c.index}: ${c.expected_work_type_count}/${c.success_count}`);
+          if (c.detail_error_count) console.warn(`continuing past ${c.detail_error_count} per-work detail error(s) in chunk ${c.index}`);
           NODE
 
             padded="$(printf '%05d' "$chunk_index")"
@@ -162,10 +165,13 @@ jobs:
           stopped="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String(p.stopped_reason||''))")"
           errors="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String((p.errors||[]).length))")"
           offset=$((next_chunk * 500))
-          echo "continuation check: next_chunk=$next_chunk offset=$offset frozen_total=$total stopped=$stopped errors=$errors"
-          if [ -n "$stopped" ] || [ "$errors" != '0' ]; then
-            echo 'Not chaining after a crawl error or DLsite safety stop.'
+          echo "continuation check: next_chunk=$next_chunk offset=$offset frozen_total=$total stopped=$stopped per_work_errors=$errors"
+          if [ -n "$stopped" ]; then
+            echo 'Not chaining after an explicit DLsite safety stop.'
             exit 0
+          fi
+          if [ "$errors" != '0' ]; then
+            echo "Per-work detail errors are recorded but do not block continuation: $errors"
           fi
           if [ "$offset" -lt "$total" ]; then
             echo 'Queueing the next strictly-serial safe manga R2 run.'
