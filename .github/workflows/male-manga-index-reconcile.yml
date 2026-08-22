@@ -8,7 +8,9 @@ on:
 
 concurrency:
   group: male-manga-index-reconcile
-  cancel-in-progress: false
+  # A newer full reconciliation supersedes an older one. Keeping both alive only
+  # increases the chance that catalog mutations during the older scan create drift.
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -40,7 +42,13 @@ jobs:
           PROD_ROOT='data/male/manga/catalog/index'
           TMP_ROOT='.tmp/male-manga-reconcile/catalog'
           STATUS_FILE="$PROD_ROOT/reconcile-status.json"
-          BASE='https://www.dlsite.com/maniax-touch/works/type/=/work_type_category/comic'
+          # The previous default/newest-first full walk could shift while new works
+          # were inserted at page 1, producing duplicate pages and a small unique-ID
+          # deficit. Walk oldest-first so new releases append at the far end instead.
+          FULL_BASE='https://www.dlsite.com/maniax-touch/works/type/=/work_type_category/comic/order/release_a'
+          # After the stable full walk, re-read the newest pages once to include works
+          # released while the full scan was running.
+          NEWEST_BASE='https://www.dlsite.com/maniax-touch/works/type/=/work_type_category/comic/order/release_d'
           before_ids="$(node -e "const i=require('./data/male/manga/catalog/index/ids.json');process.stdout.write(String(Object.keys(i).length))")"
 
           rm -rf .tmp/male-manga-reconcile
@@ -52,9 +60,9 @@ jobs:
           # partial rescan into the old set. 500-page batches keep each collector
           # invocation bounded; the temp checkpoint naturally continues between them.
           for batch in $(seq 1 10); do
-            echo "=== fresh manga listing scan batch $batch ==="
+            echo "=== fresh manga oldest-first listing scan batch $batch ==="
             set +e
-            DLSITE_CATALOG_BASE="$BASE" \
+            DLSITE_CATALOG_BASE="$FULL_BASE" \
             DATA_ROOT="$TMP_ROOT" \
             MAX_PAGES_PER_RUN='500' \
             PAGE_DELAY_MS='1500' \
@@ -92,13 +100,13 @@ jobs:
             fi
           fi
 
-          # New releases can appear at the head while a two-hour full scan is
-          # running. Re-read the newest 500 pages once after reaching the end,
-          # preserving the fresh set, so those insertions are included too.
+          # New releases can appear while the full oldest-first scan is running.
+          # Re-read the newest 500 pages after reaching the end while preserving the
+          # fresh set. This captures those inserts without shifting the full-walk pages.
           if [ "$status" = 'ok' ]; then
-            echo '=== final newest-500 top-up after full scan ==='
+            echo '=== final newest-500 top-up after stable full scan ==='
             set +e
-            DLSITE_CATALOG_BASE="$BASE" \
+            DLSITE_CATALOG_BASE="$NEWEST_BASE" \
             DATA_ROOT="$TMP_ROOT" \
             CATALOG_RESCAN_FROM_START='1' \
             MAX_PAGES_PER_RUN='500' \
@@ -151,7 +159,7 @@ jobs:
             after_ids:Object.keys(prodIds).length,
             source_total_count:Number(prodCheckpoint.source_total_count || 0),
             gap:Number(prodCheckpoint.source_total_count || 0)-Object.keys(prodIds).length,
-            strategy:'fresh-full-scan-plus-newest-500-topup',
+            strategy:'oldest-first-full-scan-plus-newest-500-topup',
           };
           fs.writeFileSync(path, JSON.stringify(row,null,2)+'\n');
           console.log(row);
