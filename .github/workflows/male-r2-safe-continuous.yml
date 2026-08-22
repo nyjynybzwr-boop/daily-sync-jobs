@@ -28,16 +28,15 @@ jobs:
       R2_BUCKET_NAME: melosignal-data
       MALE_MEDIA: manga
       CHUNK_SIZE: '500'
-      # Keep DLsite access strictly serial and slower than the previous 800 ms
-      # pilot. Network latency is additional, so the actual request rate is
-      # below one request/second in normal operation.
+      # Strictly serial DLsite access. The one-second sleep is in addition to
+      # network latency, so normal request frequency stays below 1 request/sec.
       DETAIL_DELAY_MS: '1000'
       MALE_R2_MAX_BYTES: '7516192768'
       PILOT: '0'
       # Freeze the already-known ID ordering before any later reconciliation can
-      # replace ids.json. The existing 500-work pilot was collected from this
-      # insertion-ordered catalog family; collect-catalog-index.mjs only appends
-      # newly found IDs and does not reorder known keys, so chunk 0 remains valid.
+      # replace ids.json. Failed reconciliation never replaced this production
+      # set, and collect-catalog-index.mjs appends new keys without reordering old
+      # ones, so the successful chunk 0 remains compatible with this snapshot.
       MANGA_SNAPSHOT_SHA: '49e3f646cf55314445ced207b34443fdf2db4a84'
 
     steps:
@@ -68,21 +67,35 @@ jobs:
           npm ci >/tmp/npm-ci.log 2>&1
           npm install --no-save devalue >>/tmp/npm-ci.log 2>&1
 
-      - name: Prepare frozen manga ID snapshot
+      - name: Prepare frozen manga ID snapshot and preserve completed pilot
         working-directory: work
         run: |
           set -euo pipefail
           mkdir -p .tmp/male-r2-safe
           git cat-file -e "${MANGA_SNAPSHOT_SHA}^{commit}"
           git show "${MANGA_SNAPSHOT_SHA}:data/male/manga/catalog/index/ids.json" > .tmp/male-r2-safe/ids.json
+          git show "${MANGA_SNAPSHOT_SHA}:data/male/r2/manga-progress.json" > .tmp/male-r2-safe/pilot-progress.json
+          git show "${MANGA_SNAPSHOT_SHA}:data/male/r2/manga-manifest.json" > .tmp/male-r2-safe/pilot-manifest.json
+
           frozen_count="$(node -e "const i=require('./.tmp/male-r2-safe/ids.json');process.stdout.write(String(Object.keys(i).length))")"
           next_chunk="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String(Number(p.next_chunk||0)))")"
           processed="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String(Number(p.processed||0)))")"
-          echo "frozen_count=$frozen_count processed=$processed next_chunk=$next_chunk snapshot=$MANGA_SNAPSHOT_SHA"
+          echo "frozen_count=$frozen_count current_processed=$processed current_next_chunk=$next_chunk snapshot=$MANGA_SNAPSHOT_SHA"
           test "$frozen_count" -ge 129000 || { echo "Frozen catalog unexpectedly small: $frozen_count" >&2; exit 2; }
-          # Preserve the successful pilot instead of hitting the same 500 pages again.
-          test "$processed" -ge 500 || { echo 'Existing successful 500-work pilot is missing; refusing silent re-fetch.' >&2; exit 2; }
-          test "$next_chunk" -ge 1 || { echo 'Progress is not positioned after chunk 0; refusing silent re-fetch.' >&2; exit 2; }
+
+          # A reconciliation job may have reset progress to zero while we were
+          # switching strategies. Never re-request the already successful first
+          # 500 works: restore the known-good pilot cursor from the frozen commit.
+          if [ "$processed" -lt 500 ] || [ "$next_chunk" -lt 1 ]; then
+            echo 'Restoring known-good 500-work pilot cursor; no duplicate DLsite requests.'
+            cp .tmp/male-r2-safe/pilot-progress.json data/male/r2/manga-progress.json
+            cp .tmp/male-r2-safe/pilot-manifest.json data/male/r2/manga-manifest.json
+          fi
+
+          processed="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String(Number(p.processed||0)))")"
+          next_chunk="$(node -e "const p=require('./data/male/r2/manga-progress.json');process.stdout.write(String(Number(p.next_chunk||0)))")"
+          test "$processed" -ge 500 || { echo 'Known-good pilot progress could not be restored.' >&2; exit 2; }
+          test "$next_chunk" -ge 1 || { echo 'Known-good pilot cursor could not be restored.' >&2; exit 2; }
 
       - name: Crawl safely in strict serial order
         working-directory: work
