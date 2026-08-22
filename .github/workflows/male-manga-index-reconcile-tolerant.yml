@@ -1,0 +1,150 @@
+name: Male manga tolerant reconcile and R2 restart
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/male-manga-index-reconcile-tolerant.yml'
+
+concurrency:
+  group: male-manga-index-reconcile
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Rebuild manga ID set and accept only a tiny residual gap
+        working-directory: work
+        run: |
+          set -euo pipefail
+          PROD_ROOT='data/male/manga/catalog/index'
+          TMP_ROOT='.tmp/male-manga-tolerant/catalog'
+          FULL_BASE='https://www.dlsite.com/maniax-touch/works/type/=/work_type_category/comic/order/release_a'
+          NEWEST_BASE='https://www.dlsite.com/maniax-touch/works/type/=/work_type_category/comic/order/release_d'
+          MAX_TOLERATED_GAP=10
+          before_ids="$(node -e "const i=require('./data/male/manga/catalog/index/ids.json');process.stdout.write(String(Object.keys(i).length))")"
+
+          rm -rf .tmp/male-manga-tolerant
+          mkdir -p "$TMP_ROOT/index"
+
+          for batch in $(seq 1 10); do
+            echo "=== stable oldest-first manga scan batch $batch ==="
+            DLSITE_CATALOG_BASE="$FULL_BASE" DATA_ROOT="$TMP_ROOT" MAX_PAGES_PER_RUN='500' PAGE_DELAY_MS='1500' node scripts/collect-catalog-index.mjs
+            done_flag="$(node -e "const c=require('./.tmp/male-manga-tolerant/catalog/index/checkpoint.json');process.stdout.write(c.done?'1':'0')")"
+            stopped="$(node -e "const c=require('./.tmp/male-manga-tolerant/catalog/index/checkpoint.json');process.stdout.write(c.stopped_reason||'')")"
+            test -z "$stopped" || { echo "collector stopped: $stopped" >&2; exit 2; }
+            if [ "$done_flag" = '1' ]; then break; fi
+          done
+
+          done_flag="$(node -e "const c=require('./.tmp/male-manga-tolerant/catalog/index/checkpoint.json');process.stdout.write(c.done?'1':'0')")"
+          test "$done_flag" = '1' || { echo 'full scan did not reach the end' >&2; exit 2; }
+
+          echo '=== newest 500-page top-up ==='
+          DLSITE_CATALOG_BASE="$NEWEST_BASE" DATA_ROOT="$TMP_ROOT" CATALOG_RESCAN_FROM_START='1' MAX_PAGES_PER_RUN='500' PAGE_DELAY_MS='1500' node scripts/collect-catalog-index.mjs
+
+          read fresh_ids listing_total stopped done_flag gap <<<"$(node - <<'NODE'
+          const c=require('./.tmp/male-manga-tolerant/catalog/index/checkpoint.json');
+          const i=require('./.tmp/male-manga-tolerant/catalog/index/ids.json');
+          const ids=Object.keys(i).length;
+          const total=Number(c.source_total_count||0);
+          process.stdout.write(`${ids} ${total} ${c.stopped_reason||'none'} ${c.done?1:0} ${total-ids}`);
+          NODE
+          )"
+          echo "fresh_ids=$fresh_ids listing_total=$listing_total gap=$gap stopped=$stopped done=$done_flag"
+
+          test "$stopped" = 'none' || { echo "top-up stopped: $stopped" >&2; exit 2; }
+          test "$done_flag" = '1' || { echo 'checkpoint is not complete' >&2; exit 2; }
+          test "$gap" -ge 0 || { echo "negative catalog gap: $gap" >&2; exit 2; }
+          test "$gap" -le "$MAX_TOLERATED_GAP" || { echo "catalog gap too large: $gap > $MAX_TOLERATED_GAP" >&2; exit 2; }
+
+          cp "$TMP_ROOT/index/ids.json" "$PROD_ROOT/ids.json"
+          cp "$TMP_ROOT/index/checkpoint.json" "$PROD_ROOT/checkpoint.json"
+
+          FRESH_IDS="$fresh_ids" LISTING_TOTAL="$listing_total" GAP="$gap" BEFORE_IDS="$before_ids" MAX_GAP="$MAX_TOLERATED_GAP" node - <<'NODE'
+          const fs=require('node:fs');
+          const ids=Number(process.env.FRESH_IDS);
+          const listingTotal=Number(process.env.LISTING_TOTAL);
+          const gap=Number(process.env.GAP);
+          const maxGap=Number(process.env.MAX_GAP);
+          const now=new Date().toISOString();
+
+          const checkpointPath='data/male/manga/catalog/index/checkpoint.json';
+          const checkpoint=JSON.parse(fs.readFileSync(checkpointPath,'utf8'));
+          checkpoint.source_listing_total_count=listingTotal;
+          checkpoint.source_total_count=ids;
+          checkpoint.accepted_gap=gap;
+          checkpoint.acceptance_policy=`full_scan_complete_gap_le_${maxGap}`;
+          fs.writeFileSync(checkpointPath,JSON.stringify(checkpoint,null,2)+'\n');
+
+          const status={
+            schema_version:2,
+            updated_at:now,
+            status:gap===0?'ok':'ok_with_small_gap',
+            failure:null,
+            before_ids:Number(process.env.BEFORE_IDS||0),
+            after_ids:ids,
+            source_total_count:ids,
+            source_listing_total_count:listingTotal,
+            accepted_gap:gap,
+            max_tolerated_gap:maxGap,
+            strategy:'oldest-first-full-scan-plus-newest-500-topup',
+          };
+          fs.writeFileSync('data/male/manga/catalog/index/reconcile-status.json',JSON.stringify(status,null,2)+'\n');
+
+          const progress={
+            schema_version:1,market:'male',media:'manga',source_catalog_ids:ids,source_total_count:ids,
+            source_listing_total_count:listingTotal,accepted_gap:gap,chunk_size:500,processed:0,pending:ids,
+            next_chunk:0,stored_bytes:0,safety_cap_bytes:7516192768,errors:[],stopped_reason:null,last_chunk:null,
+            updated_at:now,pilot:false,
+          };
+          fs.writeFileSync('data/male/r2/manga-progress.json',JSON.stringify(progress,null,2)+'\n');
+
+          const manifest={
+            schema_version:1,market:'male',media:'manga',storage:'cloudflare-r2',bucket:'melosignal-data',prefix:'male/manga',
+            chunk_size:500,source_catalog_ids:ids,source_total_count:ids,source_listing_total_count:listingTotal,accepted_gap:gap,
+            stored_bytes:0,safety_cap_bytes:7516192768,next_chunk:0,pilot:false,pilot_estimate:null,chunks:[],updated_at:now,
+          };
+          fs.writeFileSync('data/male/r2/manga-manifest.json',JSON.stringify(manifest,null,2)+'\n');
+          console.log(status);
+          NODE
+
+      - name: Persist accepted index and reset manga R2 cursor
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/male/manga/catalog/index data/male/r2/manga-progress.json data/male/r2/manga-manifest.json
+          git commit -m "data: accept reconciled male manga IDs and reset R2 crawl"
+          for retry in 1 2 3 4 5; do
+            if git pull --rebase origin main && git push origin main; then break; fi
+            if [ "$retry" = 5 ]; then exit 1; fi
+            sleep $((retry * 5))
+          done
+
+      - name: Start male manga full R2 crawl from chunk zero
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run male-r2-full-manga.yml --repo "$GITHUB_REPOSITORY"
