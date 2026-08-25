@@ -1,0 +1,66 @@
+name: Analyze review appeal pilot
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/analyze-review-appeal-pilot.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      R2_BUCKET_NAME: melosignal-data
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci >/dev/null
+      - name: Download private R2 pilot chunk
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp/reviews-pilot
+          npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/reviews/otome-audio/raw/chunk-00000.json.gz" --file .tmp/reviews-pilot/chunk-00000.json.gz --remote >/dev/null
+      - name: Analyze appeal language without exporting raw reviews
+        working-directory: work
+        env:
+          REVIEW_CHUNK_GZ: .tmp/reviews-pilot/chunk-00000.json.gz
+          REVIEW_ANALYSIS_OUT: data/research/review-appeal-pilot.json
+        run: node scripts/analyze-review-appeal-pilot.mjs
+      - name: Verify output contains no raw review records
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const d=require('./data/research/review-appeal-pilot.json');
+          const text=JSON.stringify(d);
+          if(text.includes('review_text')||text.includes('member_review_id'))throw new Error('raw review field leaked into aggregate output');
+          if(!d.source?.reviews_analyzed)throw new Error('analysis output empty');
+          console.log({works:d.source.works_with_reviews,reviews:d.source.reviews_analyzed,dimensions:d.market_dimensions.length});
+          NODE
+      - name: Commit aggregate analysis to private source
+        working-directory: work
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add data/research/review-appeal-pilot.json
+          git commit -m '[CF-Pages-Skip] [skip actions] reviews: aggregate appeal pilot' || exit 0
+          git pull --rebase origin main
+          git push origin main
