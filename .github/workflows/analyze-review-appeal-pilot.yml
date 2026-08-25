@@ -43,16 +43,34 @@ jobs:
           REVIEW_CHUNK_GZ: .tmp/reviews-pilot/chunk-00000.json.gz
           REVIEW_ANALYSIS_OUT: data/research/review-appeal-pilot.json
         run: node scripts/analyze-review-appeal-pilot.mjs
-      - name: Verify output contains no raw review records
+      - name: Verify output contains aggregates only
         working-directory: work
         run: |
           set -euo pipefail
           node - <<'NODE'
           const d=require('./data/research/review-appeal-pilot.json');
-          const text=JSON.stringify(d);
-          if(text.includes('review_text')||text.includes('member_review_id'))throw new Error('raw review field leaked into aggregate output');
+          const forbiddenKeys=new Set(['review_text','member_review_id','review_body','reviews']);
+          function scan(value,path='root'){
+            if(Array.isArray(value)){
+              value.forEach((item,i)=>scan(item,`${path}[${i}]`));
+              return;
+            }
+            if(!value || typeof value!=='object')return;
+            for(const [key,child] of Object.entries(value)){
+              if(forbiddenKeys.has(key))throw new Error(`raw review key leaked at ${path}.${key}`);
+              scan(child,`${path}.${key}`);
+            }
+          }
+          scan(d);
           if(!d.source?.reviews_analyzed)throw new Error('analysis output empty');
-          console.log({works:d.source.works_with_reviews,reviews:d.source.reviews_analyzed,dimensions:d.market_dimensions.length});
+          if(!Array.isArray(d.works)||!Array.isArray(d.market_dimensions))throw new Error('aggregate shape missing');
+          const allowedWorkKeys=new Set(['product_id','title','circle','reviews_analyzed','categories','distinctive_phrases']);
+          for(const [i,work] of d.works.entries()){
+            for(const key of Object.keys(work)){
+              if(!allowedWorkKeys.has(key))throw new Error(`unexpected work field at works[${i}].${key}`);
+            }
+          }
+          console.log({works:d.source.works_with_reviews,reviews:d.source.reviews_analyzed,dimensions:d.market_dimensions.length,schema:d.schema_version});
           NODE
       - name: Commit aggregate analysis to private source
         working-directory: work
