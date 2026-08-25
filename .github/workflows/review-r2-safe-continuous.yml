@@ -1,0 +1,20 @@
+name: Review R2 safe continuous
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: review-r2-safe-continuous
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  paused:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Review crawl intentionally paused
+        run: |
+          echo 'Review crawl is intentionally paused while >100-review pagination is being solved.'
+          echo 'No DLsite requests are made by this workflow.'
