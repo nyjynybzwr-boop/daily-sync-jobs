@@ -1,0 +1,98 @@
+name: Review target fingerprint hardening once
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/review-target-fingerprint-hardening-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  harden:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Add ordered target SHA256 guard before any review request
+        working-directory: work
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/crawl-reviews-r2-chunk.mjs')
+          s = p.read_text()
+
+          old = "import { gzipSync } from 'node:zlib';"
+          new = "import { gzipSync } from 'node:zlib';\nimport { createHash } from 'node:crypto';"
+          assert s.count(old) == 1, 'crypto import anchor changed'
+          s = s.replace(old, new)
+
+          old = "const allTargets = Array.isArray(targetDoc?.targets) ? targetDoc.targets : [];\nconst start = CHUNK_INDEX * CHUNK_SIZE;"
+          new = """const allTargets = Array.isArray(targetDoc?.targets) ? targetDoc.targets : [];
+const targetFingerprint = `sha256:${createHash('sha256').update(JSON.stringify(allTargets.map((target) => [
+  String(target?.product_id || '').toUpperCase(),
+  String(target?.api_base || ''),
+  target?.expected_review_count == null ? null : Number(target.expected_review_count),
+]))).digest('hex')}`;
+const start = CHUNK_INDEX * CHUNK_SIZE;"""
+          assert s.count(old) == 1, 'target fingerprint anchor changed'
+          s = s.replace(old, new)
+
+          old = "if (previous.stopped_reason && !FORCE) throw new Error(`Progress has stopped_reason: ${previous.stopped_reason}`);\nif (!FORCE && previous.target_generated_at && previous.target_generated_at !== targetGeneratedAt) {"
+          new = """if (previous.stopped_reason && !FORCE) throw new Error(`Progress has stopped_reason: ${previous.stopped_reason}`);
+if (!FORCE && previous.target_fingerprint && previous.target_fingerprint !== targetFingerprint) {
+  throw new Error(`TARGET_FINGERPRINT_MISMATCH ${previous.target_fingerprint} -> ${targetFingerprint}`);
+}
+if (!FORCE && Number(previous.processed_target_works || 0) > 0 && !previous.target_fingerprint) {
+  if (!previous.target_generated_at || previous.target_generated_at !== targetGeneratedAt) {
+    throw new Error(`TARGET_FINGERPRINT_LEGACY_UNSAFE generated_at=${previous.target_generated_at || 'missing'} current=${targetGeneratedAt}`);
+  }
+  console.warn(`Migrating legacy review progress to target fingerprint ${targetFingerprint}`);
+}
+if (!FORCE && previous.target_generated_at && previous.target_generated_at !== targetGeneratedAt) {"""
+          assert s.count(old) == 1, 'previous fingerprint guard anchor changed'
+          s = s.replace(old, new)
+
+          old = "  target_generated_at: targetGeneratedAt,"
+          new = "  target_generated_at: targetGeneratedAt,\n  target_fingerprint: targetFingerprint,"
+          count = s.count(old)
+          assert count == 4, f'expected 4 output fingerprint anchors, got {count}'
+          s = s.replace(old, new)
+
+          old = "console.log(JSON.stringify({segment:SEGMENT,target_generated_at:targetGeneratedAt,chunk_index:CHUNK_INDEX"
+          new = "console.log(JSON.stringify({segment:SEGMENT,target_generated_at:targetGeneratedAt,target_fingerprint:targetFingerprint,chunk_index:CHUNK_INDEX"
+          assert s.count(old) == 1, 'console fingerprint anchor changed'
+          s = s.replace(old, new)
+
+          p.write_text(s)
+          PY
+          node --check scripts/crawl-reviews-r2-chunk.mjs
+          grep -q 'TARGET_FINGERPRINT_MISMATCH' scripts/crawl-reviews-r2-chunk.mjs
+          test "$(grep -c 'target_fingerprint: targetFingerprint' scripts/crawl-reviews-r2-chunk.mjs)" -eq 5
+
+      - name: Commit hardening to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add scripts/crawl-reviews-r2-chunk.mjs
+          git commit -m '[CF-Pages-Skip] [skip actions] reviews: freeze target ordering by SHA256' || exit 0
+          git pull --rebase origin main
+          git push origin main
