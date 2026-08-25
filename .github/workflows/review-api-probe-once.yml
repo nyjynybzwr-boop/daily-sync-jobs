@@ -30,17 +30,13 @@ jobs:
             Accept:'application/json,text/plain,*/*'
           };
           const tests=[
-            {key:'bl-30-p1-pickup',base:'bl',id:'RJ01498915',limit:30,page:1,mix:true},
-            {key:'bl-30-p2-pickup',base:'bl',id:'RJ01498915',limit:30,page:2,mix:true},
-            {key:'bl-20-p1-no-pickup',base:'bl',id:'RJ01498915',limit:20,page:1,mix:false},
-            {key:'bl-20-p2-no-pickup',base:'bl',id:'RJ01498915',limit:20,page:2,mix:false},
-            {key:'bl-10-p1-no-pickup',base:'bl',id:'RJ01498915',limit:10,page:1,mix:false},
-            {key:'bl-10-p2-no-pickup',base:'bl',id:'RJ01498915',limit:10,page:2,mix:false},
-            {key:'bl-10-p3-no-pickup',base:'bl',id:'RJ01498915',limit:10,page:3,mix:false},
-            {key:'bl-10-p4-no-pickup',base:'bl',id:'RJ01498915',limit:10,page:4,mix:false},
-            {key:'girls',base:'girls',id:'RJ01690068',limit:30,page:1,mix:false},
-            {key:'girls-drama',base:'girls-drama',id:'BJ02431592',limit:30,page:1,mix:false},
-            {key:'maniax',base:'maniax',id:'RJ01690975',limit:30,page:1,mix:false}
+            {key:'bl-20-p1',base:'bl',id:'RJ01498915',limit:20,page:1,mix:false},
+            {key:'bl-20-p2',base:'bl',id:'RJ01498915',limit:20,page:2,mix:false},
+            {key:'girls-audio',base:'girls',id:'RJ01690068',limit:20,page:1,mix:false},
+            {key:'girls-manga',base:'girls',id:'RJ01684516',limit:20,page:1,mix:false},
+            {key:'girls-drama',base:'girls-drama',id:'BJ02431592',limit:20,page:1,mix:false},
+            {key:'maniax-audio',base:'maniax',id:'RJ01690975',limit:20,page:1,mix:false},
+            {key:'maniax-manga',base:'maniax',id:'RJ01702966',limit:20,page:1,mix:false}
           ];
           const out={checked_at:new Date().toISOString(),tests:[]};
           for(const t of tests){
@@ -77,6 +73,6 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add status/review-api-probe.json
-          git commit -m 'status: review API pagination probe' || exit 0
+          git commit -m 'status: review API manga-base probe' || exit 0
           git pull --rebase origin main
           git push origin main
