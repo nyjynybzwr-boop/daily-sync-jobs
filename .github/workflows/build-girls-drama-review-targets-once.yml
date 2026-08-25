@@ -29,7 +29,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Enumerate commercial drama result grid safely
+      - name: Enumerate commercial drama listing safely
         working-directory: work
         run: |
           set -euo pipefail
@@ -45,43 +45,14 @@ jobs:
           const base='https://www.dlsite.com/girls-drama-touch/fsr/=/language/jp/sex_category%5B0%5D/female/work_category%5B0%5D/drama/order%5B0%5D/release_d/options_and_or/and/options%5B0%5D/JPN/per_page/30';
           const ids=[]; const seen=new Set(); let sourceTotal=null; const pages=[];
 
-          function extractMainListingHtml(html){
-            const openPattern=/<ul\b[^>]*class=(['"])([^'"]*)\1[^>]*>/gi;
-            let open;
-            while((open=openPattern.exec(html))){
-              const classes=new Set(open[2].split(/\s+/).filter(Boolean));
-              const isMain=classes.has('n_work_list')&&classes.has('type_grid')&&classes.has('type_horizontal')&&!classes.has('type_grid_min');
-              if(!isMain)continue;
-              const start=open.index;
-              let depth=1;
-              const ulPattern=/<\/?ul\b[^>]*>/gi;
-              ulPattern.lastIndex=openPattern.lastIndex;
-              let tag;
-              while((tag=ulPattern.exec(html))){
-                if(/^<\/ul\b/i.test(tag[0]))depth-=1; else depth+=1;
-                if(depth===0)return html.slice(start,ulPattern.lastIndex);
-              }
-              return null;
-            }
-            return null;
-          }
-
           function extractTotal(html){
             const text=String(html||'').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/\s+/g,' ');
             const m=text.match(/([\d,]+)\s*件中\s*[\d,]+\s*[-−ー~〜]\s*[\d,]+\s*件目/)||text.match(/全\s*([\d,]+)\s*件/);
             return m?Number(m[1].replace(/,/g,'')):null;
           }
 
-          function extractItems(listingHtml){
-            const items=new Map();
-            const linkPattern=/<a\b[^>]*href="([^"]*product_id\/((?:BJ|RJ|VJ|AJ)\d+)[^"]*)"[^>]*>([\s\S]{0,400}?)<\/a>/gi;
-            let m;
-            while((m=linkPattern.exec(listingHtml))){
-              const id=m[2].toUpperCase();
-              const title=m[3].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
-              if(!items.has(id)||title.length>items.get(id).title.length)items.set(id,{product_id:id,title});
-            }
-            return [...items.values()];
+          function extractIds(html){
+            return [...new Set([...html.matchAll(/product_id\/((?:BJ|RJ|VJ|AJ)\d+)/gi)].map(m=>m[1].toUpperCase()))];
           }
 
           async function fetchPage(page){
@@ -117,28 +88,28 @@ jobs:
               if(sourceTotal!==null&&sourceTotal!==observedTotal)console.warn(`source total changed ${sourceTotal} -> ${observedTotal}`);
               sourceTotal=observedTotal;
             }
-            const listing=extractMainListingHtml(html);
-            if(!listing)throw new Error(`Main result grid missing on page ${page}`);
-            const items=extractItems(listing);
-            if(items.length<1||items.length>30)throw new Error(`Unexpected main-grid item count ${items.length} page=${page}`);
+            const pageIds=extractIds(html);
+            if(pageIds.length<1||pageIds.length>30)throw new Error(`Unexpected page product-id count ${pageIds.length} page=${page}`);
             let added=0;
-            for(const item of items){
-              if(seen.has(item.product_id))continue;
-              seen.add(item.product_id);
-              ids.push(item);
+            for(const product_id of pageIds){
+              if(seen.has(product_id))continue;
+              seen.add(product_id);
+              ids.push(product_id);
               added+=1;
             }
-            pages.push({page,count:items.length,new_count:added,unique:ids.length});
-            console.log(`girls-drama page ${page}: grid=${items.length} new=${added} unique=${ids.length} sourceTotal=${sourceTotal}`);
+            pages.push({page,count:pageIds.length,new_count:added,unique:ids.length});
+            console.log(`girls-drama page ${page}: ids=${pageIds.length} new=${added} unique=${ids.length} sourceTotal=${sourceTotal}`);
             if(sourceTotal!==null){
               if(ids.length>sourceTotal)throw new Error(`Unique ids ${ids.length} exceeded source total ${sourceTotal}`);
               if(ids.length===sourceTotal)break;
+              const remaining=sourceTotal-ids.length;
+              if(remaining>=30&&pageIds.length!==30)throw new Error(`Short page ${pageIds.length} before final page; remaining=${remaining}`);
             }
             await sleep(1000);
           }
           if(sourceTotal==null)throw new Error('Could not parse girls-drama total count');
-          if(ids.length!==sourceTotal)throw new Error(`Unique result-grid ids ${ids.length} != source total ${sourceTotal}`);
-          const targets=ids.map(item=>({product_id:item.product_id,expected_review_count:null,title:item.title||'',circle:'',market:'drama',media:'audio',api_base:'girls-drama'}));
+          if(ids.length!==sourceTotal)throw new Error(`Unique listing ids ${ids.length} != source total ${sourceTotal}`);
+          const targets=ids.map(product_id=>({product_id,expected_review_count:null,title:'',circle:'',market:'drama',media:'audio',api_base:'girls-drama'}));
           const file='data/reviews/targets/girls-drama.json';
           let generatedAt=new Date().toISOString();
           try{
@@ -160,6 +131,6 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add data/reviews/targets/girls-drama.json
-          git commit -m '[CF-Pages-Skip] [skip actions] reviews: add girls-drama result-grid targets' || exit 0
+          git commit -m '[CF-Pages-Skip] [skip actions] reviews: add girls-drama listing targets' || exit 0
           git pull --rebase origin main
           git push origin main
