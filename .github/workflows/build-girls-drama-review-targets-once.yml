@@ -1,0 +1,78 @@
+name: Build girls-drama review targets once
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-girls-drama-review-targets-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Enumerate all commercial drama BJ ids safely
+        working-directory: work
+        run: |
+          set -euo pipefail
+          mkdir -p data/reviews/targets
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          const headers={
+            'User-Agent':'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+            'Accept-Language':'ja-JP,ja;q=0.9',
+            Accept:'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+          };
+          const base='https://www.dlsite.com/girls-drama-touch/fsr/=/language/jp/sex_category%5B0%5D/female/work_category%5B0%5D/drama/order%5B0%5D/release_d/options_and_or/and/options%5B0%5D/JPN/per_page/30';
+          const ids=[]; const seen=new Set(); let sourceTotal=null; const pages=[];
+          for(let page=1;page<=87;page++){
+            const url=`${base}/page/${page}/is_tl/1`;
+            const res=await fetch(url,{headers,redirect:'follow',signal:AbortSignal.timeout(30000)});
+            const html=await res.text();
+            if(res.status===403||res.status===429||/Access Denied|Too Many Requests|アクセスが集中|不正なアクセス/i.test(html))throw new Error(`STOP_HTTP_${res.status} page=${page}`);
+            if(!res.ok)throw new Error(`HTTP_${res.status} page=${page}`);
+            if(sourceTotal==null){
+              const text=html.replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/\s+/g,' ');
+              const m=text.match(/([\d,]+)\s*件中\s*[\d,]+\s*[-−ー~〜]\s*[\d,]+\s*件目/)||text.match(/全\s*([\d,]+)\s*件/);
+              if(m)sourceTotal=Number(m[1].replace(/,/g,''));
+            }
+            const pageIds=[...new Set([...html.matchAll(/product_id\/(BJ\d+)/gi)].map(m=>m[1].toUpperCase()))];
+            pages.push({page,count:pageIds.length});
+            for(const id of pageIds)if(!seen.has(id)){seen.add(id);ids.push(id)}
+            console.log(`girls-drama page ${page}: ${pageIds.length} ids, unique=${ids.length}, sourceTotal=${sourceTotal}`);
+            if(page<=86 && pageIds.length===0)throw new Error(`Unexpected empty page ${page} before expected end`);
+            if(page===87 && pageIds.length!==0)throw new Error(`Page 87 unexpectedly has ${pageIds.length} ids; pagination assumption changed`);
+            await sleep(1000);
+          }
+          if(sourceTotal==null)throw new Error('Could not parse girls-drama total count');
+          if(ids.length!==sourceTotal)throw new Error(`Unique BJ ids ${ids.length} != source total ${sourceTotal}`);
+          const targets=ids.map(product_id=>({product_id,expected_review_count:null,title:'',circle:'',market:'drama',media:'audio',api_base:'girls-drama'}));
+          const out={schema_version:1,generated_at:new Date().toISOString(),segment:'girls-drama',market:'drama',media:'audio',api_base:'girls-drama',source_work_count:ids.length,target_work_count:ids.length,expected_review_count_sum:null,review_count_known:false,pagination:pages,targets};
+          await fs.writeFile('data/reviews/targets/girls-drama.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify({sourceTotal,uniqueIds:ids.length,page86:pages.find(x=>x.page===86),page87:pages.find(x=>x.page===87)},null,2));
+          NODE
+      - name: Commit target manifest to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add data/reviews/targets/girls-drama.json
+          git commit -m '[CF-Pages-Skip] [skip actions] reviews: add girls-drama target manifest' || exit 0
+          git pull --rebase origin main
+          git push origin main
