@@ -1,0 +1,63 @@
+name: Review crawler smoke once
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/review-crawler-smoke-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build synthetic target and run real review crawler
+        working-directory: work
+        run: |
+          set -euo pipefail
+          mkdir -p data/reviews/targets
+          cat > data/reviews/targets/pilot-reviews.json <<'JSON'
+          {
+            "schema_version":1,
+            "segment":"pilot-reviews",
+            "market":"mixed",
+            "media":"mixed",
+            "api_base":"mixed",
+            "target_work_count":3,
+            "expected_review_count_sum":75,
+            "targets":[
+              {"product_id":"RJ01690068","expected_review_count":12,"title":"自由奔放ベーシスト","circle":"","market":"otome","media":"audio","api_base":"girls"},
+              {"product_id":"BJ02431592","expected_review_count":28,"title":"嘘つきコインランドリー","circle":"ひつじぐも","market":"drama","media":"audio","api_base":"girls-drama"},
+              {"product_id":"RJ01498915","expected_review_count":35,"title":"BL manga probe","circle":"","market":"bl","media":"manga","api_base":"bl"}
+            ]
+          }
+          JSON
+          node --check scripts/crawl-reviews-r2-chunk.mjs
+          REVIEW_SEGMENT=pilot-reviews REVIEW_CHUNK_SIZE=3 REVIEW_CHUNK_INDEX=0 REVIEW_DELAY_MS=1000 node scripts/crawl-reviews-r2-chunk.mjs
+          node - <<'NODE'
+          const fs=require('fs'),z=require('zlib');
+          const p=JSON.parse(fs.readFileSync('data/reviews/progress/pilot-reviews.json','utf8'));
+          if(p.processed_target_works!==3)throw new Error(`processed ${p.processed_target_works}`);
+          if(p.fetched_reviews!==75)throw new Error(`expected 75 reviews, got ${p.fetched_reviews}`);
+          if(p.errors.length)throw new Error(`errors: ${JSON.stringify(p.errors)}`);
+          const payload=JSON.parse(z.gunzipSync(fs.readFileSync('.tmp/reviews/pilot-reviews/chunk-00000.json.gz')));
+          if(payload.works.reduce((s,w)=>s+w.reviews.length,0)!==75)throw new Error('payload review total mismatch');
+          for(const w of payload.works){
+            for(const r of w.reviews){
+              if('reviewer_id' in r || 'nick_name' in r)throw new Error('PII field leaked into minimized review');
+            }
+          }
+          console.log(JSON.stringify({ok:true,fetched_reviews:p.fetched_reviews,api_requests:p.api_requests,gzip_bytes:p.last_chunk.gzip_bytes,discrepancies:p.discrepancies},null,2));
+          NODE
