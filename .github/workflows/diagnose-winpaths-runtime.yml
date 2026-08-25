@@ -1,0 +1,73 @@
+name: Diagnose winpaths runtime
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/diagnose-winpaths-runtime.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install browser runtime
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm install --silent playwright@1.55.0
+          npx playwright install chromium >/dev/null
+      - name: Exercise production winpaths
+        run: |
+          mkdir -p status
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const { chromium }=require('playwright');
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            const page=await browser.newPage();
+            const errors=[]; const consoles=[]; const responses=[];
+            page.on('pageerror',e=>errors.push(String(e?.stack||e)));
+            page.on('console',m=>{ if(['error','warning'].includes(m.type())) consoles.push({type:m.type(),text:m.text()}); });
+            page.on('response',r=>{ const u=r.url(); if(/winpaths|home-lazy-loader/.test(u)) responses.push({url:u,status:r.status()}); });
+            await page.goto('https://dlsite-trend-radar.pages.dev/',{waitUntil:'domcontentloaded',timeout:60000});
+            await page.waitForTimeout(2500);
+            const before=await page.evaluate(()=>({
+              market:document.body.dataset.market||null,
+              active:document.querySelector('.view-tab.active[data-view]')?.dataset.view||null,
+              winButton:Boolean(document.querySelector('.view-tab[data-view="winpaths"]')),
+              winButtonDisabled:Boolean(document.querySelector('.view-tab[data-view="winpaths"]')?.disabled),
+              winCommand:(document.querySelector('#winCommand')?.textContent||'').trim().slice(0,500),
+            }));
+            await page.locator('.view-tab[data-view="winpaths"]').click();
+            await page.waitForTimeout(8000);
+            const after=await page.evaluate(()=>({
+              market:document.body.dataset.market||null,
+              active:document.querySelector('.view-tab.active[data-view]')?.dataset.view||null,
+              winVisible:document.querySelector('#view-winpaths')?.classList.contains('active')||false,
+              winCommand:(document.querySelector('#winCommand')?.textContent||'').trim().slice(0,1500),
+              winPatterns:(document.querySelector('#winPatterns')?.textContent||'').trim().slice(0,500),
+              sync:(document.querySelector('#syncStatus')?.textContent||'').trim(),
+            }));
+            const out={checked_at:new Date().toISOString(),before,after,responses,errors,consoles};
+            fs.writeFileSync('status/winpaths-runtime-diagnosis.json',JSON.stringify(out,null,2)+'\n');
+            console.log(JSON.stringify(out,null,2));
+            await browser.close();
+          })().catch(e=>{fs.writeFileSync('status/winpaths-runtime-diagnosis.json',JSON.stringify({checked_at:new Date().toISOString(),fatal:String(e?.stack||e)},null,2)+'\n');console.error(e);process.exit(1)});
+          NODE
+      - name: Persist runtime diagnosis
+        if: always()
+        run: |
+          test -f status/winpaths-runtime-diagnosis.json || printf '{"checked_at":"%s","fatal":"diagnosis did not create result"}\n' "$(date -u +%FT%TZ)" > status/winpaths-runtime-diagnosis.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add status/winpaths-runtime-diagnosis.json
+          git commit -m 'status: diagnose winpaths runtime' || exit 0
+          git pull --rebase origin main
+          git push origin main
