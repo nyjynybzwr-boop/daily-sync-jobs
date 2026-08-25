@@ -27,37 +27,43 @@ jobs:
           const H={
             'User-Agent':'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
             'Accept-Language':'ja-JP,ja;q=0.9',
-            Accept:'application/json,text/plain,*/*',
-            Referer:'https://www.dlsite.com/'
+            Accept:'application/json,text/plain,*/*'
           };
           const tests=[
-            {key:'bl-main-p1',base:'bl',id:'RJ01498915',limit:30,page:1},
-            {key:'bl-main-p2',base:'bl',id:'RJ01498915',limit:30,page:2},
-            {key:'bl-touch-p1',base:'bl-touch',id:'RJ01498915',limit:30,page:1},
-            {key:'girls-p1',base:'girls',id:'RJ01690068',limit:30,page:1},
-            {key:'girls-touch-p1',base:'girls-touch',id:'RJ01690068',limit:30,page:1},
-            {key:'girls-drama-p1',base:'girls-drama',id:'BJ02431592',limit:30,page:1},
-            {key:'girls-drama-touch-p1',base:'girls-drama-touch',id:'BJ02431592',limit:30,page:1},
-            {key:'maniax-p1',base:'maniax',id:'RJ01690975',limit:30,page:1},
-            {key:'maniax-touch-p1',base:'maniax-touch',id:'RJ01690975',limit:30,page:1}
+            {key:'bl-30-p1-pickup',base:'bl',id:'RJ01498915',limit:30,page:1,mix:true},
+            {key:'bl-30-p2-pickup',base:'bl',id:'RJ01498915',limit:30,page:2,mix:true},
+            {key:'bl-20-p1-no-pickup',base:'bl',id:'RJ01498915',limit:20,page:1,mix:false},
+            {key:'bl-20-p2-no-pickup',base:'bl',id:'RJ01498915',limit:20,page:2,mix:false},
+            {key:'bl-10-p1-no-pickup',base:'bl',id:'RJ01498915',limit:10,page:1,mix:false},
+            {key:'bl-10-p2-no-pickup',base:'bl',id:'RJ01498915',limit:10,page:2,mix:false},
+            {key:'bl-10-p3-no-pickup',base:'bl',id:'RJ01498915',limit:10,page:3,mix:false},
+            {key:'bl-10-p4-no-pickup',base:'bl',id:'RJ01498915',limit:10,page:4,mix:false},
+            {key:'girls',base:'girls',id:'RJ01690068',limit:30,page:1,mix:false},
+            {key:'girls-drama',base:'girls-drama',id:'BJ02431592',limit:30,page:1,mix:false},
+            {key:'maniax',base:'maniax',id:'RJ01690975',limit:30,page:1,mix:false}
           ];
           const out={checked_at:new Date().toISOString(),tests:[]};
           for(const t of tests){
-            const url=`https://www.dlsite.com/${t.base}/api/review?product_id=${t.id}&limit=${t.limit}&mix_pickup=true&page=${t.page}&order=regist_d&locale=ja_JP`;
-            const row={...t,url,status:null,content_type:null,is_success:null,count:null,review_ids:[],review_text_chars:[],sample_titles:[],sample_texts:[],error:null};
+            const url=`https://www.dlsite.com/${t.base}/api/review?product_id=${t.id}&limit=${t.limit}&mix_pickup=${t.mix?'true':'false'}&page=${t.page}&order=regist_d&locale=ja_JP`;
+            const row={...t,url,status:null,is_success:null,count:null,review_ids:[],review_text_chars:[],sample_titles:[],sample_texts:[],json_keys:[],metadata:{},error:null};
             try{
               const res=await fetch(url,{headers:{...H,Referer:`https://www.dlsite.com/${t.base}/work/=/product_id/${t.id}.html`},redirect:'follow'});
-              row.status=res.status; row.content_type=res.headers.get('content-type');
+              row.status=res.status;
               const body=await res.text();
               let j;
               try{j=JSON.parse(body)}catch{row.error=`non-json: ${body.slice(0,180)}`; out.tests.push(row); continue}
+              row.json_keys=Object.keys(j||{});
               row.is_success=Boolean(j?.is_success);
               const list=Array.isArray(j?.review_list)?j.review_list:[];
               row.count=list.length;
               row.review_ids=list.map(x=>x.member_review_id||null);
               row.review_text_chars=list.map(x=>String(x.review_text||'').length);
-              row.sample_titles=list.slice(0,3).map(x=>x.review_title||'');
-              row.sample_texts=list.slice(0,3).map(x=>String(x.review_text||'').slice(0,120));
+              row.sample_titles=list.slice(0,2).map(x=>x.review_title||'');
+              row.sample_texts=list.slice(0,2).map(x=>String(x.review_text||'').slice(0,100));
+              for(const [k,v] of Object.entries(j||{})){
+                if(k==='review_list'||k==='reviewer_genre_list') continue;
+                if(['string','number','boolean'].includes(typeof v)||v===null) row.metadata[k]=v;
+              }
               if(j?.error_msg) row.error=String(j.error_msg);
             }catch(e){row.error=String(e?.message||e)}
             out.tests.push(row);
@@ -71,6 +77,6 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add status/review-api-probe.json
-          git commit -m 'status: review API probe' || exit 0
+          git commit -m 'status: review API pagination probe' || exit 0
           git pull --rebase origin main
           git push origin main
