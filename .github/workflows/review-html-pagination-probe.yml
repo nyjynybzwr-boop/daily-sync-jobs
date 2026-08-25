@@ -42,7 +42,7 @@ jobs:
           REVIEW_PROBE_ID: ${{ inputs.product_id || 'RJ01603829' }}
           REVIEW_PROBE_SEGMENT: ${{ inputs.segment || 'otome-audio' }}
           REVIEW_PROBE_OUT: data/research/review-html-pagination-probe.json
-          REVIEW_PROBE_DELAY_MS: '1500'
+          REVIEW_PROBE_DELAY_MS: '2000'
         run: node scripts/probe-review-html-pagination.mjs
       - name: Verify probe stores diagnostics only
         working-directory: work
