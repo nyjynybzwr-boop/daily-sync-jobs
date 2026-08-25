@@ -1,0 +1,83 @@
+name: Probe review pagination stall
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/probe-review-pagination-stall.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Probe pagination shapes only
+        run: |
+          set -euo pipefail
+          mkdir -p status
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
+          const id='RJ01603829';
+          const base='girls';
+          const headers={
+            'User-Agent':'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+            'Accept-Language':'ja-JP,ja;q=0.9',
+            Accept:'application/json,text/plain,*/*',
+          };
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          const configs=[
+            {key:'limit20-new',limit:20,order:'regist_d',pages:15},
+            {key:'limit10-new',limit:10,order:'regist_d',pages:25},
+            {key:'limit50-new',limit:50,order:'regist_d',pages:8},
+            {key:'limit20-default',limit:20,order:null,pages:15},
+            {key:'limit20-top',limit:20,order:'helpful',pages:15},
+          ];
+          const results=[];
+          for(const cfg of configs){
+            const seen=new Set();
+            const pages=[];
+            for(let page=1;page<=cfg.pages;page++){
+              const params=new URLSearchParams({product_id:id,limit:String(cfg.limit),mix_pickup:'false',page:String(page),locale:'ja_JP'});
+              if(cfg.order) params.set('order',cfg.order);
+              const url=`https://www.dlsite.com/${base}/api/review?${params}`;
+              let status=null,isSuccess=false,error=null,list=[];
+              try{
+                const res=await fetch(url,{headers,redirect:'follow',signal:AbortSignal.timeout(30000)});
+                status=res.status;
+                const body=await res.text();
+                const json=JSON.parse(body);
+                isSuccess=json?.is_success===true;
+                error=json?.error_msg||null;
+                list=Array.isArray(json?.review_list)?json.review_list:[];
+              }catch(e){error=String(e?.message||e)}
+              let added=0;
+              for(const r of list){
+                const rid=String(r?.member_review_id||r?.review_id||`${r?.regist_date||''}:${r?.review_title||''}`);
+                if(!seen.has(rid)){seen.add(rid);added++}
+              }
+              pages.push({page,status,is_success:isSuccess,count:list.length,new_count:added,unique_total:seen.size,error});
+              if(!isSuccess||list.length<cfg.limit) break;
+              await sleep(750);
+            }
+            results.push({...cfg,unique_total:seen.size,pages});
+          }
+          const out={checked_at:new Date().toISOString(),product_id:id,contains_review_text:false,results};
+          await fs.writeFile('status/review-pagination-stall.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out,null,2));
+          NODE
+      - name: Persist counts-only probe
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add status/review-pagination-stall.json
+          git commit -m 'status: review pagination stall probe' || exit 0
+          git pull --rebase origin main
+          git push origin main
