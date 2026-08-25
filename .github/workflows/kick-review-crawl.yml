@@ -1,0 +1,24 @@
+name: Kick review crawl
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/kick-review-crawl.yml'
+      - '.github/triggers/review-crawl-now'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  kick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch safe review crawler
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run review-r2-safe-continuous.yml --repo "$GITHUB_REPOSITORY"
+          echo 'Dispatched safe review R2 crawler.'
