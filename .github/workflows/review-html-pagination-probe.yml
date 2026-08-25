@@ -1,0 +1,65 @@
+name: Review HTML pagination probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      product_id:
+        description: 'Known stalled review product id'
+        required: false
+        default: 'RJ01603829'
+      segment:
+        description: 'Review target segment'
+        required: false
+        default: 'otome-audio'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-html-pagination-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Probe one stalled work with at most two HTML requests
+        working-directory: work
+        env:
+          REVIEW_PROBE_ID: ${{ inputs.product_id }}
+          REVIEW_PROBE_SEGMENT: ${{ inputs.segment }}
+          REVIEW_PROBE_OUT: data/research/review-html-pagination-probe.json
+          REVIEW_PROBE_DELAY_MS: '1500'
+        run: node scripts/probe-review-html-pagination.mjs
+      - name: Verify probe stores diagnostics only
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const d=require('./data/research/review-html-pagination-probe.json');
+          if(d.raw_review_text_saved!==false)throw new Error('raw review storage flag invalid');
+          if(Number(d.request_count)>2)throw new Error('probe request budget exceeded');
+          const text=JSON.stringify(d);
+          if(/review_text|review_body|raw_html/i.test(text))throw new Error('raw review/html field leaked');
+          console.log({product_id:d.product_id,api_base:d.api_base,requests:d.request_count,first:d.first?.http_status,second:d.second?.http_status||null});
+          NODE
+      - name: Commit diagnostics to private source
+        working-directory: work
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add data/research/review-html-pagination-probe.json
+          git commit -m '[CF-Pages-Skip] [skip actions] reviews: HTML pagination probe' || exit 0
+          git pull --rebase origin main
+          git push origin main
