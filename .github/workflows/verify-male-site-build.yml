@@ -1,0 +1,87 @@
+name: Verify male market site build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/verify-male-site-build.yml'
+
+concurrency:
+  group: verify-male-site-build
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install
+        working-directory: work
+        run: npm ci
+
+      - name: Run production build and record result
+        id: verify
+        working-directory: work
+        shell: bash
+        run: |
+          set +e
+          npm run build:site > /tmp/male-site-build.log 2>&1
+          rc=$?
+          cat /tmp/male-site-build.log
+          set -e
+          node - "$rc" <<'NODE'
+          const fs=require('fs');
+          const rc=Number(process.argv[2]);
+          let checks={build_exit_code:rc};
+          let ok=rc===0;
+          try{
+            const d=JSON.parse(fs.readFileSync('site/data/dashboard.json','utf8'));
+            const meta=d.product?.available_markets?.find(x=>x.id==='male');
+            const audio=d.media?.audio?.male;
+            const comic=d.media?.comic?.male;
+            checks={...checks,
+              male_enabled:Boolean(meta?.enabled),
+              male_audio_day:audio?.daily?.works?.length||0,
+              male_audio_date:audio?.daily?.date||null,
+              male_comic_day:comic?.daily?.works?.length||0,
+              male_comic_date:comic?.daily?.date||null,
+              male_in_markets:Boolean(d.markets?.male),
+              guard_loaded:fs.readFileSync('site/index.html','utf8').includes('male-market-guard.js'),
+              catalog_male_button:fs.readFileSync('site/all.html','utf8').includes('data-market="male"'),
+            };
+            ok=ok&&checks.male_enabled&&checks.male_audio_day===30&&checks.male_comic_day===30&&checks.male_in_markets&&checks.guard_loaded&&checks.catalog_male_button;
+          }catch(error){checks.dashboard_error=String(error?.stack||error);ok=false;}
+          const result={checked_at:new Date().toISOString(),ok,checks};
+          fs.mkdirSync('artifacts/ci',{recursive:true});
+          fs.writeFileSync('artifacts/ci/male-site-build-check.json',JSON.stringify(result,null,2)+'\n');
+          console.log(result);
+          process.exit(ok?0:1);
+          NODE
+
+      - name: Publish verification marker
+        if: always()
+        working-directory: work
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f artifacts/ci/male-site-build-check.json || printf '{"checked_at":"%s","ok":false,"checks":{"marker":"build step failed before marker"}}\n' "$(date -u +%FT%TZ)" > artifacts/ci/male-site-build-check.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '4189826+github-actions[bot]@users.noreply.github.com'
+          git add artifacts/ci/male-site-build-check.json
+          git commit -m '[CF-Pages-Skip] [skip actions] ci: verify male site build' || exit 0
+          git pull --rebase origin main
+          git push origin HEAD:main
