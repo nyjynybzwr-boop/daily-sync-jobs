@@ -139,9 +139,16 @@ jobs:
           if(sourceTotal==null)throw new Error('Could not parse girls-drama total count');
           if(ids.length!==sourceTotal)throw new Error(`Unique result-grid ids ${ids.length} != source total ${sourceTotal}`);
           const targets=ids.map(item=>({product_id:item.product_id,expected_review_count:null,title:item.title||'',circle:'',market:'drama',media:'audio',api_base:'girls-drama'}));
-          const out={schema_version:2,generated_at:new Date().toISOString(),segment:'girls-drama',market:'drama',media:'audio',api_base:'girls-drama',source_work_count:ids.length,target_work_count:ids.length,known_zero_skipped_count:0,unknown_review_count_target_count:ids.length,expected_review_count_sum_known:0,review_count_known:false,pagination:pages,targets};
-          await fs.writeFile('data/reviews/targets/girls-drama.json',JSON.stringify(out,null,2)+'\n');
-          console.log(JSON.stringify({sourceTotal,uniqueIds:ids.length,lastPage:pages.at(-1)},null,2));
+          const file='data/reviews/targets/girls-drama.json';
+          let generatedAt=new Date().toISOString();
+          try{
+            const old=JSON.parse(await fs.readFile(file,'utf8'));
+            const signature=list=>list.map(x=>`${x.product_id}\u0000${x.expected_review_count??''}\u0000${x.api_base}`).join('\n');
+            if(Number(old?.schema_version||0)>=2&&old?.generated_at&&Array.isArray(old?.targets)&&signature(old.targets)===signature(targets))generatedAt=old.generated_at;
+          }catch{}
+          const out={schema_version:2,generated_at:generatedAt,segment:'girls-drama',market:'drama',media:'audio',api_base:'girls-drama',source_work_count:ids.length,target_work_count:ids.length,known_zero_skipped_count:0,unknown_review_count_target_count:ids.length,expected_review_count_sum_known:0,review_count_known:false,pagination:pages,targets};
+          await fs.writeFile(file,JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify({sourceTotal,uniqueIds:ids.length,lastPage:pages.at(-1),generatedAt},null,2));
           NODE
 
       - name: Commit target manifest to private source
