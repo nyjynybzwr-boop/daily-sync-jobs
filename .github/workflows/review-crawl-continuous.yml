@@ -122,6 +122,8 @@ jobs:
             set -e
 
             REVIEW_CHUNK_INDEX="$chunk_index" REVIEW_CRAWL_LOG="$log" node scripts/record-review-pagination-stalls.mjs
+            stall_count="$(grep -c 'Review pagination repeated a full page' "$log" || true)"
+            echo "pagination stalls this chunk=${stall_count}"
 
             chunk=".tmp/reviews/${REVIEW_SEGMENT}/chunk-${padded}.json.gz"
             test -s "$chunk"
@@ -163,6 +165,10 @@ jobs:
             if [ "$health_rc" -ne 0 ]; then
               echo "Review health check exited $health_rc after chunk/progress were safely persisted; not chaining." >&2
               exit "$health_rc"
+            fi
+            if [ "$stall_count" -ge 10 ]; then
+              echo "Systemic pagination-stall rate detected (${stall_count}/100 max); chunk is safely persisted but automatic chaining stops." >&2
+              exit 5
             fi
 
             git pull --rebase origin main
