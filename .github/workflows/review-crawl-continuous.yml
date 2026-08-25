@@ -1,0 +1,165 @@
+name: Review crawl safe continuous
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/triggers/review-crawl-start'
+
+concurrency:
+  group: dlsite-review-crawl-global
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      R2_BUCKET_NAME: melosignal-data
+      REVIEW_CHUNK_SIZE: '100'
+      REVIEW_DELAY_MS: '1000'
+      REVIEW_R2_MAX_BYTES: '5368709120'
+
+    steps:
+      - name: Require credentials
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}"
+          test -n "${CLOUDFLARE_API_TOKEN:-}"
+          test -n "${SOURCE_REPO:-}"
+          test -n "${SYNC_TOKEN:-}"
+
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Select first unfinished segment
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE' >> "$GITHUB_ENV"
+          import fs from 'node:fs';
+          const segments=['otome-audio','bl-audio','otome-manga','bl-manga','male-audio','male-manga'];
+          let selected='';
+          for(const s of segments){
+            const tp=`data/reviews/targets/${s}.json`;
+            if(!fs.existsSync(tp)) throw new Error(`Missing review target manifest: ${tp}`);
+            const t=JSON.parse(fs.readFileSync(tp,'utf8'));
+            const pp=`data/reviews/progress/${s}.json`;
+            const p=fs.existsSync(pp)?JSON.parse(fs.readFileSync(pp,'utf8')):{};
+            if(p.stopped_reason) throw new Error(`Existing safety stop for ${s}: ${p.stopped_reason}`);
+            if(Number(p.processed_target_works||0)<Number(t.target_work_count||t.targets?.length||0)){selected=s;break;}
+          }
+          console.log(`REVIEW_SEGMENT=${selected}`);
+          console.log(`REVIEW_ALL_DONE=${selected?'0':'1'}`);
+          NODE
+
+      - name: Crawl bounded chunks serially
+        if: env.REVIEW_ALL_DONE != '1'
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          retry() {
+            local attempt=1 max=3
+            until "$@"; do
+              if [ "$attempt" -ge "$max" ]; then return 1; fi
+              echo "Transient command failure; retrying $attempt/$max: $*" >&2
+              sleep $((attempt * 5))
+              attempt=$((attempt + 1))
+            done
+          }
+
+          for batch in $(seq 1 4); do
+            target="data/reviews/targets/${REVIEW_SEGMENT}.json"
+            progress="data/reviews/progress/${REVIEW_SEGMENT}.json"
+            manifest="data/reviews/manifests/${REVIEW_SEGMENT}.json"
+            total="$(node -e "const t=require('./${target}');process.stdout.write(String(t.target_work_count||t.targets.length))")"
+            if [ -f "$progress" ]; then
+              processed="$(node -e "const p=require('./${progress}');process.stdout.write(String(Number(p.processed_target_works||0)))")"
+              chunk_index="$(node -e "const p=require('./${progress}');process.stdout.write(String(Number(p.next_chunk||0)))")"
+            else
+              processed=0
+              chunk_index=0
+            fi
+            echo "segment=${REVIEW_SEGMENT} batch=$batch processed=$processed total=$total next_chunk=$chunk_index"
+            if [ "$processed" -ge "$total" ]; then
+              echo "Segment ${REVIEW_SEGMENT} complete."
+              break
+            fi
+
+            REVIEW_CHUNK_INDEX="$chunk_index" node scripts/crawl-reviews-r2-chunk.mjs
+
+            node - <<'NODE'
+          const fs=require('fs');
+          const s=process.env.REVIEW_SEGMENT;
+          const p=JSON.parse(fs.readFileSync(`data/reviews/progress/${s}.json`,'utf8'));
+          const c=p.last_chunk||{};
+          const attempted=Number(c.attempted_target_works||0);
+          const errors=Number(c.error_count||0);
+          if(c.stopped_reason) throw new Error(`review safety stop: ${c.stopped_reason}`);
+          if(attempted>=20 && errors/attempted>=0.5) throw new Error(`systemic review failure: ${errors}/${attempted} works failed`);
+          if(errors) console.warn(`continuing past ${errors} ordinary per-work review errors`);
+          if(c.discrepancy_count) console.warn(`${c.discrepancy_count} expected-vs-fetched review count discrepancies recorded`);
+          NODE
+
+            padded="$(printf '%05d' "$chunk_index")"
+            chunk=".tmp/reviews/${REVIEW_SEGMENT}/chunk-${padded}.json.gz"
+            test -s "$chunk"
+            test -s "$progress"
+            test -s "$manifest"
+            retry npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/reviews/${REVIEW_SEGMENT}/raw/chunk-${padded}.json.gz" --file "$chunk" --remote
+            retry npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/reviews/${REVIEW_SEGMENT}/manifest.json" --file "$manifest" --remote
+            retry bash scripts/ci/push.sh "$progress $manifest" "[CF-Pages-Skip] [skip actions] reviews: ${REVIEW_SEGMENT} chunk ${chunk_index}"
+            git pull --rebase origin main
+          done
+
+      - name: Chain next run while any segment remains
+        if: env.REVIEW_ALL_DONE != '1'
+        working-directory: work
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git pull --rebase origin main
+          remaining="$(node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const ss=['otome-audio','bl-audio','otome-manga','bl-manga','male-audio','male-manga'];
+          let n=0;
+          for(const s of ss){
+            const t=JSON.parse(fs.readFileSync(`data/reviews/targets/${s}.json`,'utf8'));
+            const pp=`data/reviews/progress/${s}.json`;
+            const p=fs.existsSync(pp)?JSON.parse(fs.readFileSync(pp,'utf8')):{};
+            if(p.stopped_reason){console.error(`safety stop ${s}: ${p.stopped_reason}`);process.exit(3)}
+            if(Number(p.processed_target_works||0)<Number(t.target_work_count||t.targets.length)) n++;
+          }
+          process.stdout.write(String(n));
+          NODE
+          )"
+          echo "remaining review segments=$remaining"
+          if [ "$remaining" -gt 0 ]; then
+            gh workflow run review-crawl-continuous.yml --repo "$GITHUB_REPOSITORY"
+          else
+            echo 'All configured review target segments complete.'
+          fi
