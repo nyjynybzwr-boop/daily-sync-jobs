@@ -1,0 +1,749 @@
+{
+  "checked_at": "2026-08-25T14:58:17.030Z",
+  "product_id": "RJ01603829",
+  "contains_review_text": false,
+  "results": [
+    {
+      "key": "limit20-new",
+      "limit": 20,
+      "order": "regist_d",
+      "pages": [
+        {
+          "page": 1,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 20,
+          "unique_total": 20,
+          "error": null
+        },
+        {
+          "page": 2,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 20,
+          "unique_total": 40,
+          "error": null
+        },
+        {
+          "page": 3,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 20,
+          "unique_total": 60,
+          "error": null
+        },
+        {
+          "page": 4,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 20,
+          "unique_total": 80,
+          "error": null
+        },
+        {
+          "page": 5,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 20,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 6,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 7,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 8,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 9,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 10,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 11,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 12,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 13,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 14,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 15,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        }
+      ],
+      "unique_total": 100
+    },
+    {
+      "key": "limit10-new",
+      "limit": 10,
+      "order": "regist_d",
+      "pages": [
+        {
+          "page": 1,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 10,
+          "unique_total": 10,
+          "error": null
+        },
+        {
+          "page": 2,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 10,
+          "unique_total": 20,
+          "error": null
+        },
+        {
+          "page": 3,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 10,
+          "unique_total": 30,
+          "error": null
+        },
+        {
+          "page": 4,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 10,
+          "unique_total": 40,
+          "error": null
+        },
+        {
+          "page": 5,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 10,
+          "unique_total": 50,
+          "error": null
+        },
+        {
+          "page": 6,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 10,
+          "unique_total": 60,
+          "error": null
+        },
+        {
+          "page": 7,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 10,
+          "unique_total": 70,
+          "error": null
+        },
+        {
+          "page": 8,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 10,
+          "unique_total": 80,
+          "error": null
+        },
+        {
+          "page": 9,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 10,
+          "unique_total": 90,
+          "error": null
+        },
+        {
+          "page": 10,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 10,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 11,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 12,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 13,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 14,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 15,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 16,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 17,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 18,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 19,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 20,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 21,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 22,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 23,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 24,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 25,
+          "status": 200,
+          "is_success": true,
+          "count": 10,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        }
+      ],
+      "unique_total": 100
+    },
+    {
+      "key": "limit50-new",
+      "limit": 50,
+      "order": "regist_d",
+      "pages": [
+        {
+          "page": 1,
+          "status": 200,
+          "is_success": true,
+          "count": 50,
+          "new_count": 50,
+          "unique_total": 50,
+          "error": null
+        },
+        {
+          "page": 2,
+          "status": 200,
+          "is_success": true,
+          "count": 50,
+          "new_count": 50,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 3,
+          "status": 200,
+          "is_success": true,
+          "count": 50,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 4,
+          "status": 200,
+          "is_success": true,
+          "count": 50,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 5,
+          "status": 200,
+          "is_success": true,
+          "count": 50,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 6,
+          "status": 200,
+          "is_success": true,
+          "count": 50,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 7,
+          "status": 200,
+          "is_success": true,
+          "count": 50,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 8,
+          "status": 200,
+          "is_success": true,
+          "count": 50,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        }
+      ],
+      "unique_total": 100
+    },
+    {
+      "key": "limit20-default",
+      "limit": 20,
+      "order": null,
+      "pages": [
+        {
+          "page": 1,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 20,
+          "unique_total": 20,
+          "error": null
+        },
+        {
+          "page": 2,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 20,
+          "unique_total": 40,
+          "error": null
+        },
+        {
+          "page": 3,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 20,
+          "unique_total": 60,
+          "error": null
+        },
+        {
+          "page": 4,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 20,
+          "unique_total": 80,
+          "error": null
+        },
+        {
+          "page": 5,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 20,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 6,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 7,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 8,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 9,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 10,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 11,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 12,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 13,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 14,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 15,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        }
+      ],
+      "unique_total": 100
+    },
+    {
+      "key": "limit20-top",
+      "limit": 20,
+      "order": "helpful",
+      "pages": [
+        {
+          "page": 1,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 20,
+          "unique_total": 20,
+          "error": null
+        },
+        {
+          "page": 2,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 20,
+          "unique_total": 40,
+          "error": null
+        },
+        {
+          "page": 3,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 20,
+          "unique_total": 60,
+          "error": null
+        },
+        {
+          "page": 4,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 20,
+          "unique_total": 80,
+          "error": null
+        },
+        {
+          "page": 5,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 20,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 6,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 7,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 8,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 9,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 10,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 11,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 12,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 13,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 14,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        },
+        {
+          "page": 15,
+          "status": 200,
+          "is_success": true,
+          "count": 20,
+          "new_count": 0,
+          "unique_total": 100,
+          "error": null
+        }
+      ],
+      "unique_total": 100
+    }
+  ]
+}
