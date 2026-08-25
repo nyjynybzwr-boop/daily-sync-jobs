@@ -21,7 +21,7 @@ jobs:
     env:
       R2_BUCKET_NAME: melosignal-data
       REVIEW_CHUNK_SIZE: '100'
-      REVIEW_DELAY_MS: '1000'
+      REVIEW_DELAY_MS: '2000'
       REVIEW_R2_MAX_BYTES: '5368709120'
 
     steps:
@@ -57,15 +57,17 @@ jobs:
           set -euo pipefail
           node --input-type=module <<'NODE' >> "$GITHUB_ENV"
           import fs from 'node:fs';
-          const segments=['otome-audio','bl-audio','otome-manga','bl-manga','male-audio','male-manga'];
+          const segments=['otome-audio','bl-audio','otome-manga','bl-manga','male-audio','male-manga','girls-drama'];
           let selected='';
           for(const s of segments){
             const tp=`data/reviews/targets/${s}.json`;
             if(!fs.existsSync(tp)) throw new Error(`Missing review target manifest: ${tp}`);
             const t=JSON.parse(fs.readFileSync(tp,'utf8'));
+            if(Number(t.schema_version||0)<2) throw new Error(`${s}: review target must be schema v2+`);
             const pp=`data/reviews/progress/${s}.json`;
             const p=fs.existsSync(pp)?JSON.parse(fs.readFileSync(pp,'utf8')):{};
             if(p.stopped_reason) throw new Error(`Existing safety stop for ${s}: ${p.stopped_reason}`);
+            if(p.target_generated_at && p.target_generated_at!==t.generated_at) throw new Error(`${s}: frozen target snapshot changed`);
             if(Number(p.processed_target_works||0)<Number(t.target_work_count||t.targets?.length||0)){selected=s;break;}
           }
           console.log(`REVIEW_SEGMENT=${selected}`);
@@ -95,6 +97,7 @@ jobs:
             target="data/reviews/targets/${REVIEW_SEGMENT}.json"
             progress="data/reviews/progress/${REVIEW_SEGMENT}.json"
             manifest="data/reviews/manifests/${REVIEW_SEGMENT}.json"
+            stalls="data/reviews/stalls/${REVIEW_SEGMENT}.json"
             total="$(node -e "const t=require('./${target}');process.stdout.write(String(t.target_work_count||t.targets.length))")"
             if [ -f "$progress" ]; then
               processed="$(node -e "const p=require('./${progress}');process.stdout.write(String(Number(p.processed_target_works||0)))")"
@@ -103,14 +106,34 @@ jobs:
               processed=0
               chunk_index=0
             fi
-            echo "segment=${REVIEW_SEGMENT} batch=$batch processed=$processed total=$total next_chunk=$chunk_index"
+            echo "segment=${REVIEW_SEGMENT} batch=$batch processed=$processed total=$total next_chunk=$chunk_index delay=${REVIEW_DELAY_MS}ms"
             if [ "$processed" -ge "$total" ]; then
               echo "Segment ${REVIEW_SEGMENT} complete."
               break
             fi
 
-            REVIEW_CHUNK_INDEX="$chunk_index" node scripts/crawl-reviews-r2-chunk.mjs
+            padded="$(printf '%05d' "$chunk_index")"
+            mkdir -p ".tmp/reviews/${REVIEW_SEGMENT}"
+            log=".tmp/reviews/${REVIEW_SEGMENT}/crawl-${padded}.log"
 
+            set +e
+            REVIEW_CHUNK_INDEX="$chunk_index" node scripts/crawl-reviews-r2-chunk.mjs 2>&1 | tee "$log"
+            crawler_rc=${PIPESTATUS[0]}
+            set -e
+
+            REVIEW_CHUNK_INDEX="$chunk_index" REVIEW_CRAWL_LOG="$log" node scripts/record-review-pagination-stalls.mjs
+
+            chunk=".tmp/reviews/${REVIEW_SEGMENT}/chunk-${padded}.json.gz"
+            test -s "$chunk"
+            test -s "$progress"
+            test -s "$manifest"
+            test -s "$stalls"
+
+            retry npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/reviews/${REVIEW_SEGMENT}/raw/chunk-${padded}.json.gz" --file "$chunk" --remote
+            retry npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/reviews/${REVIEW_SEGMENT}/manifest.json" --file "$manifest" --remote
+            retry bash scripts/ci/push.sh "$progress $manifest $stalls" "[CF-Pages-Skip] [skip actions] reviews: ${REVIEW_SEGMENT} chunk ${chunk_index}"
+
+            set +e
             node - <<'NODE'
           const fs=require('fs');
           const s=process.env.REVIEW_SEGMENT;
@@ -118,20 +141,30 @@ jobs:
           const c=p.last_chunk||{};
           const attempted=Number(c.attempted_target_works||0);
           const errors=Number(c.error_count||0);
-          if(c.stopped_reason) throw new Error(`review safety stop: ${c.stopped_reason}`);
-          if(attempted>=20 && errors/attempted>=0.5) throw new Error(`systemic review failure: ${errors}/${attempted} works failed`);
+          if(c.stopped_reason||p.stopped_reason){
+            console.error(`review safety stop: ${c.stopped_reason||p.stopped_reason}`);
+            process.exit(3);
+          }
+          if(attempted>=20 && errors/attempted>=0.20){
+            console.error(`systemic review failure: ${errors}/${attempted} works failed`);
+            process.exit(4);
+          }
           if(errors) console.warn(`continuing past ${errors} ordinary per-work review errors`);
           if(c.discrepancy_count) console.warn(`${c.discrepancy_count} expected-vs-fetched review count discrepancies recorded`);
+          console.log({segment:s,processed:p.processed_target_works,pending:p.pending_target_works,fetched_reviews:p.fetched_reviews,api_requests:p.api_requests,errors,discrepancies:c.discrepancy_count||0,stopped_reason:p.stopped_reason||null});
           NODE
+            health_rc=$?
+            set -e
 
-            padded="$(printf '%05d' "$chunk_index")"
-            chunk=".tmp/reviews/${REVIEW_SEGMENT}/chunk-${padded}.json.gz"
-            test -s "$chunk"
-            test -s "$progress"
-            test -s "$manifest"
-            retry npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/reviews/${REVIEW_SEGMENT}/raw/chunk-${padded}.json.gz" --file "$chunk" --remote
-            retry npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/reviews/${REVIEW_SEGMENT}/manifest.json" --file "$manifest" --remote
-            retry bash scripts/ci/push.sh "$progress $manifest" "[CF-Pages-Skip] [skip actions] reviews: ${REVIEW_SEGMENT} chunk ${chunk_index}"
+            if [ "$crawler_rc" -ne 0 ]; then
+              echo "Crawler exited $crawler_rc after chunk/progress were safely persisted; not chaining." >&2
+              exit "$crawler_rc"
+            fi
+            if [ "$health_rc" -ne 0 ]; then
+              echo "Review health check exited $health_rc after chunk/progress were safely persisted; not chaining." >&2
+              exit "$health_rc"
+            fi
+
             git pull --rebase origin main
           done
 
@@ -145,13 +178,14 @@ jobs:
           git pull --rebase origin main
           remaining="$(node --input-type=module <<'NODE'
           import fs from 'node:fs';
-          const ss=['otome-audio','bl-audio','otome-manga','bl-manga','male-audio','male-manga'];
+          const ss=['otome-audio','bl-audio','otome-manga','bl-manga','male-audio','male-manga','girls-drama'];
           let n=0;
           for(const s of ss){
             const t=JSON.parse(fs.readFileSync(`data/reviews/targets/${s}.json`,'utf8'));
             const pp=`data/reviews/progress/${s}.json`;
             const p=fs.existsSync(pp)?JSON.parse(fs.readFileSync(pp,'utf8')):{};
             if(p.stopped_reason){console.error(`safety stop ${s}: ${p.stopped_reason}`);process.exit(3)}
+            if(p.target_generated_at && p.target_generated_at!==t.generated_at){console.error(`snapshot changed ${s}`);process.exit(4)}
             if(Number(p.processed_target_works||0)<Number(t.target_work_count||t.targets.length)) n++;
           }
           process.stdout.write(String(n));
@@ -159,6 +193,8 @@ jobs:
           )"
           echo "remaining review segments=$remaining"
           if [ "$remaining" -gt 0 ]; then
+            echo 'Cooling down for 60 seconds before the next bounded run.'
+            sleep 60
             gh workflow run review-crawl-continuous.yml --repo "$GITHUB_REPOSITORY"
           else
             echo 'All configured review target segments complete.'
