@@ -1,4 +1,4 @@
-# verification trigger v2: male patch now runs before the home lazy-loader transform
+# verification trigger v3: distinguish safe gated build from fully enabled catalog-ready build
 name: Verify male market site build
 
 on:
@@ -34,7 +34,7 @@ jobs:
         working-directory: work
         run: npm ci
 
-      - name: Run production build and record result
+      - name: Run production site build and record result
         id: verify
         working-directory: work
         shell: bash
@@ -54,7 +54,9 @@ jobs:
             const meta=d.product?.available_markets?.find(x=>x.id==='male');
             const audio=d.media?.audio?.male;
             const comic=d.media?.comic?.male;
+            const catalogReady=Boolean(d.product?.male_catalog_ready);
             checks={...checks,
+              catalog_ready:catalogReady,
               male_enabled:Boolean(meta?.enabled),
               male_audio_day:audio?.daily?.works?.length||0,
               male_audio_date:audio?.daily?.date||null,
@@ -63,8 +65,10 @@ jobs:
               male_in_markets:Boolean(d.markets?.male),
               guard_loaded:fs.readFileSync('site/index.html','utf8').includes('male-market-guard.js'),
               catalog_male_button:fs.readFileSync('site/all.html','utf8').includes('data-market="male"'),
+              sharded_search_module:fs.readFileSync('site/all.js','utf8').includes('all-male-sharded-search.js'),
             };
-            ok=ok&&checks.male_enabled&&checks.male_audio_day===30&&checks.male_comic_day===30&&checks.male_in_markets&&checks.guard_loaded&&checks.catalog_male_button;
+            const activationCorrect=catalogReady?checks.male_enabled:!checks.male_enabled;
+            ok=ok&&activationCorrect&&checks.male_audio_day===30&&checks.male_comic_day===30&&checks.male_in_markets&&checks.guard_loaded&&checks.catalog_male_button&&checks.sharded_search_module;
           }catch(error){checks.dashboard_error=String(error?.stack||error);ok=false;}
           const result={checked_at:new Date().toISOString(),ok,checks};
           fs.mkdirSync('artifacts/ci',{recursive:true});
@@ -81,7 +85,7 @@ jobs:
           set -euo pipefail
           test -f artifacts/ci/male-site-build-check.json || printf '{"checked_at":"%s","ok":false,"checks":{"marker":"build step failed before marker"}}\n' "$(date -u +%FT%TZ)" > artifacts/ci/male-site-build-check.json
           git config user.name 'github-actions[bot]'
-          git config user.email '4189826+github-actions[bot]@users.noreply.github.com'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add artifacts/ci/male-site-build-check.json
           git commit -m '[CF-Pages-Skip] [skip actions] ci: verify male site build' || exit 0
           git pull --rebase origin main
