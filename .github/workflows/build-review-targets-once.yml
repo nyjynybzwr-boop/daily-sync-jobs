@@ -1,0 +1,132 @@
+name: Build review target manifests once
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-review-targets-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      R2_BUCKET_NAME: melosignal-data
+    steps:
+      - name: Checkout private source without LFS smudge
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Hydrate female and BL full catalogs
+        working-directory: work
+        run: |
+          set -euo pipefail
+          git lfs pull --include='data/catalog/full/details.json,data/bl/catalog/full/details.json,data/manga/catalog/full/details.json,data/manga/bl/catalog/full/details.json' --exclude=''
+          for f in data/catalog/full/details.json data/bl/catalog/full/details.json data/manga/catalog/full/details.json data/manga/bl/catalog/full/details.json; do
+            test -s "$f" || { echo "missing $f" >&2; exit 2; }
+            head -c 32 "$f"
+            echo
+          done
+
+      - name: Download completed male R2 detail chunks
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp/review-targets/male/audio .tmp/review-targets/male/manga
+          audio_chunks="$(node -e "const p=require('./data/male/r2/audio-progress.json'); if(p.pending!==0||p.stopped_reason) process.exit(2); process.stdout.write(String(p.next_chunk))")"
+          manga_chunks="$(node -e "const p=require('./data/male/r2/manga-progress.json'); if(p.pending!==0||p.stopped_reason) process.exit(2); process.stdout.write(String(p.next_chunk))")"
+          echo "male audio chunks=$audio_chunks manga chunks=$manga_chunks"
+          for media in audio manga; do
+            if [ "$media" = audio ]; then total="$audio_chunks"; else total="$manga_chunks"; fi
+            for i in $(seq 0 $((total-1))); do
+              pad="$(printf '%05d' "$i")"
+              npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/male/${media}/raw/chunk-${pad}.json.gz" --file ".tmp/review-targets/male/${media}/chunk-${pad}.json.gz" --remote >/dev/null
+            done
+          done
+
+      - name: Build target manifests
+        working-directory: work
+        run: |
+          set -euo pipefail
+          mkdir -p data/reviews/targets data/reviews/progress data/reviews/manifests
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
+          import path from 'node:path';
+          import { gunzipSync } from 'node:zlib';
+
+          const specs=[
+            {segment:'otome-audio',market:'otome',media:'audio',api_base:'girls',file:'data/catalog/full/details.json'},
+            {segment:'bl-audio',market:'bl',media:'audio',api_base:'bl',file:'data/bl/catalog/full/details.json'},
+            {segment:'otome-manga',market:'otome',media:'manga',api_base:'girls',file:'data/manga/catalog/full/details.json'},
+            {segment:'bl-manga',market:'bl',media:'manga',api_base:'bl',file:'data/manga/bl/catalog/full/details.json'},
+          ];
+          const clean=s=>String(s??'').replace(/\s+/g,' ').trim();
+          const reviewCount=x=>Math.max(0,Number(x?.review_count ?? x?.reviews ?? 0)||0);
+          const validId=id=>/^(?:RJ|BJ|VJ|AJ)\d+$/.test(String(id||'').toUpperCase());
+          const makeTarget=(item,spec)=>({
+            product_id:String(item?.product_id||'').toUpperCase(),
+            expected_review_count:reviewCount(item),
+            title:clean(item?.title||item?.work_name||item?.name||''),
+            circle:clean(item?.circle||item?.circle_name||''),
+            market:spec.market,
+            media:spec.media,
+            api_base:spec.api_base,
+          });
+          const outputs=[];
+          for(const spec of specs){
+            const map=JSON.parse(await fs.readFile(spec.file,'utf8'));
+            const works=Array.isArray(map)?map:Object.values(map);
+            const targets=works.filter(x=>validId(x?.product_id)&&reviewCount(x)>0).map(x=>makeTarget(x,spec));
+            const seen=new Set();
+            const dedup=targets.filter(x=>!seen.has(x.product_id)&&seen.add(x.product_id));
+            const expectedReviews=dedup.reduce((s,x)=>s+x.expected_review_count,0);
+            const out={schema_version:1,generated_at:new Date().toISOString(),segment:spec.segment,market:spec.market,media:spec.media,api_base:spec.api_base,source_work_count:works.length,target_work_count:dedup.length,expected_review_count_sum:expectedReviews,targets:dedup};
+            await fs.writeFile(`data/reviews/targets/${spec.segment}.json`,JSON.stringify(out,null,2)+'\n');
+            outputs.push({segment:spec.segment,source_works:works.length,target_works:dedup.length,expected_reviews:expectedReviews});
+          }
+
+          for(const media of ['audio','manga']){
+            const spec={segment:`male-${media}`,market:'male',media,api_base:'maniax'};
+            const dir=`.tmp/review-targets/male/${media}`;
+            const files=(await fs.readdir(dir)).filter(x=>x.endsWith('.json.gz')).sort();
+            const works=[];
+            for(const f of files){
+              const payload=JSON.parse(gunzipSync(await fs.readFile(path.join(dir,f))).toString('utf8'));
+              for(const item of payload.works||[]) if(!item?.detail_error) works.push(item);
+            }
+            const targets=works.filter(x=>validId(x?.product_id)&&reviewCount(x)>0).map(x=>makeTarget(x,spec));
+            const seen=new Set();
+            const dedup=targets.filter(x=>!seen.has(x.product_id)&&seen.add(x.product_id));
+            const expectedReviews=dedup.reduce((s,x)=>s+x.expected_review_count,0);
+            const out={schema_version:1,generated_at:new Date().toISOString(),segment:spec.segment,market:spec.market,media:spec.media,api_base:spec.api_base,source_work_count:works.length,target_work_count:dedup.length,expected_review_count_sum:expectedReviews,targets:dedup};
+            await fs.writeFile(`data/reviews/targets/${spec.segment}.json`,JSON.stringify(out,null,2)+'\n');
+            outputs.push({segment:spec.segment,source_works:works.length,target_works:dedup.length,expected_reviews:expectedReviews});
+          }
+          const summary={schema_version:1,generated_at:new Date().toISOString(),segments:outputs,total_source_works:outputs.reduce((s,x)=>s+x.source_works,0),total_target_works:outputs.reduce((s,x)=>s+x.target_works,0),expected_review_count_sum:outputs.reduce((s,x)=>s+x.expected_reviews,0)};
+          await fs.writeFile('data/reviews/targets/summary.json',JSON.stringify(summary,null,2)+'\n');
+          console.log(JSON.stringify(summary,null,2));
+          NODE
+
+      - name: Commit target manifests to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add data/reviews/targets
+          git commit -m '[CF-Pages-Skip] [skip actions] reviews: build all-market target manifests' || exit 0
+          git pull --rebase origin main
+          git push origin main
