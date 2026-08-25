@@ -1,0 +1,25 @@
+name: Kick review target builds
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/kick-review-build.yml'
+      - '.github/triggers/review-build-now'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  kick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch both target builders
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run build-review-targets-once.yml --repo "$GITHUB_REPOSITORY"
+          gh workflow run build-girls-drama-review-targets-once.yml --repo "$GITHUB_REPOSITORY"
+          echo 'Dispatched six-market v2 target build and girls-drama result-grid target build.'
