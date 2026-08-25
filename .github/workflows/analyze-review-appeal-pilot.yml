@@ -64,7 +64,7 @@ jobs:
           scan(d);
           if(!d.source?.reviews_analyzed)throw new Error('analysis output empty');
           if(!Array.isArray(d.works)||!Array.isArray(d.market_dimensions))throw new Error('aggregate shape missing');
-          const allowedWorkKeys=new Set(['product_id','title','circle','reviews_analyzed','categories','distinctive_phrases']);
+          const allowedWorkKeys=new Set(['product_id','title','circle','reviews_analyzed','categories','distinctive_dimensions','distinctive_phrases']);
           for(const [i,work] of d.works.entries()){
             for(const key of Object.keys(work)){
               if(!allowedWorkKeys.has(key))throw new Error(`unexpected work field at works[${i}].${key}`);
