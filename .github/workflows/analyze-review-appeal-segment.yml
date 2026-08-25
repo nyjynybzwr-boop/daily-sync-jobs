@@ -16,6 +16,9 @@ on:
           - male-manga
           - girls-drama
         default: otome-audio
+  push:
+    paths:
+      - '.github/workflows/analyze-review-appeal-segment.yml'
 
 permissions:
   contents: read
@@ -26,7 +29,7 @@ jobs:
     timeout-minutes: 120
     env:
       R2_BUCKET_NAME: melosignal-data
-      REVIEW_SEGMENT: ${{ inputs.segment }}
+      REVIEW_SEGMENT: ${{ inputs.segment || 'otome-audio' }}
     steps:
       - name: Checkout private source
         env:
@@ -76,9 +79,9 @@ jobs:
       - name: Analyze all downloaded review chunks
         working-directory: work
         env:
-          REVIEW_CHUNK_DIR: .tmp/reviews-analysis/${{ inputs.segment }}
-          REVIEW_ANALYSIS_FULL_GZ: .tmp/reviews-analysis/${{ inputs.segment }}-appeal.json.gz
-          REVIEW_ANALYSIS_SUMMARY: data/research/review-appeal-summary/${{ inputs.segment }}.json
+          REVIEW_CHUNK_DIR: .tmp/reviews-analysis/${{ inputs.segment || 'otome-audio' }}
+          REVIEW_ANALYSIS_FULL_GZ: .tmp/reviews-analysis/${{ inputs.segment || 'otome-audio' }}-appeal.json.gz
+          REVIEW_ANALYSIS_SUMMARY: data/research/review-appeal-summary/${{ inputs.segment || 'otome-audio' }}.json
         run: node scripts/analyze-review-appeal-segment.mjs
 
       - name: Verify derived outputs contain aggregates only
