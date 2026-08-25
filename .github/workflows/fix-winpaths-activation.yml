@@ -1,0 +1,54 @@
+name: Fix winpaths activation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/fix-winpaths-activation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Patch winpaths activation
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const file='web/winpaths.js';
+          let src=fs.readFileSync(file,'utf8');
+          const needle=`tab?.addEventListener('click', () => { setTimeout(() => void activate(), 0); });\n\nnew MutationObserver(() => {`;
+          const replacement=`tab?.addEventListener('click', () => { setTimeout(() => void activate(), 0); });\n\n// The home navigation controller intentionally intercepts the user's first\n// tab click and performs a deferred synthetic switch. In that route the\n// button-level listener above can be bypassed, leaving the view visible but\n// never starting the winpaths fetch. Treat the view becoming active as the\n// canonical activation signal too. loadCurrent/loadYearly are internally\n// deduplicated, so this is safe for clicks, swipes and direct links alike.\nif (root) {\n  new MutationObserver(() => {\n    if (root.classList.contains('active')) void activate();\n  }).observe(root, { attributes: true, attributeFilter: ['class'] });\n}\n\nnew MutationObserver(() => {`;
+          if(src.includes('canonical activation signal too')){
+            console.log('winpaths activation fix already present');
+          }else{
+            if(!src.includes(needle))throw new Error('winpaths activation marker not found');
+            src=src.replace(needle,replacement);
+            fs.writeFileSync(file,src);
+          }
+          NODE
+          node --check web/winpaths.js
+          grep -q 'canonical activation signal too' web/winpaths.js
+      - name: Commit fix
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add web/winpaths.js
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'fix: load winpaths when deferred tab becomes active'
+          git pull --rebase origin main
+          git push origin HEAD:main
