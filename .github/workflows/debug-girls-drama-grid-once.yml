@@ -1,0 +1,62 @@
+name: Debug girls-drama main grid once
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/debug-girls-drama-grid-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Inspect three pages only
+        run: |
+          set -euo pipefail
+          mkdir -p status
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          const headers={'User-Agent':'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1','Accept-Language':'ja-JP,ja;q=0.9',Accept:'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'};
+          const base='https://www.dlsite.com/girls-drama-touch/fsr/=/language/jp/sex_category%5B0%5D/female/work_category%5B0%5D/drama/order%5B0%5D/release_d/options_and_or/and/options%5B0%5D/JPN/per_page/30';
+          function main(html){
+            const open=/<ul\b[^>]*class=(['"])([^'"]*)\1[^>]*>/gi; let m;
+            while((m=open.exec(html))){
+              const c=new Set(m[2].split(/\s+/).filter(Boolean));
+              if(!(c.has('n_work_list')&&c.has('type_grid')&&c.has('type_horizontal')&&!c.has('type_grid_min')))continue;
+              const start=m.index;let depth=1;const u=/<\/?ul\b[^>]*>/gi;u.lastIndex=open.lastIndex;let t;
+              while((t=u.exec(html))){if(/^<\/ul\b/i.test(t[0]))depth--;else depth++;if(depth===0)return html.slice(start,u.lastIndex)}
+            }
+            return null;
+          }
+          function total(html){const text=html.replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/\s+/g,' ');const m=text.match(/([\d,]+)\s*件中\s*[\d,]+\s*[-−ー~〜]\s*[\d,]+\s*件目/)||text.match(/全\s*([\d,]+)\s*件/);return m?Number(m[1].replace(/,/g,'')):null}
+          const out={checked_at:new Date().toISOString(),pages:[]};
+          for(let page=1;page<=3;page++){
+            const url=`${base}/page/${page}/is_tl/1`;
+            const res=await fetch(url,{headers,redirect:'follow',signal:AbortSignal.timeout(30000)});
+            const html=await res.text(); const grid=main(html);
+            const all=[...new Set([...html.matchAll(/product_id\/((?:BJ|RJ|VJ|AJ)\d+)/gi)].map(x=>x[1].toUpperCase()))];
+            const gridIds=grid?[...new Set([...grid.matchAll(/product_id\/((?:BJ|RJ|VJ|AJ)\d+)/gi)].map(x=>x[1].toUpperCase()))]:[];
+            out.pages.push({page,status:res.status,bytes:Buffer.byteLength(html),source_total:total(html),main_grid:Boolean(grid),all_id_count:all.length,grid_id_count:gridIds.length,id_prefix_counts:Object.fromEntries(['BJ','RJ','VJ','AJ'].map(p=>[p,gridIds.filter(id=>id.startsWith(p)).length])),first_ids:gridIds.slice(0,5)});
+            await sleep(1000);
+          }
+          await fs.writeFile('status/girls-drama-grid-debug.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out,null,2));
+          NODE
+      - name: Persist diagnostic counts
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add status/girls-drama-grid-debug.json
+          git commit -m 'status: girls-drama main-grid diagnostic' || exit 0
+          git pull --rebase origin main
+          git push origin main
