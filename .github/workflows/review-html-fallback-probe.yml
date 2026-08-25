@@ -11,9 +11,6 @@ on:
         description: 'DLsite base (girls/maniax/etc)'
         required: true
         default: 'girls'
-  push:
-    paths:
-      - '.github/workflows/review-html-fallback-probe.yml'
 
 permissions:
   contents: read
@@ -39,7 +36,7 @@ jobs:
         working-directory: work
         env:
           PROBE_LIVE: '1'
-          PRODUCT_ID: ${{ inputs.product_id || 'RJ01603829' }}
-          API_BASE: ${{ inputs.api_base || 'girls' }}
+          PRODUCT_ID: ${{ inputs.product_id }}
+          API_BASE: ${{ inputs.api_base }}
           PROBE_DELAY_MS: '1500'
         run: node scripts/probe-review-html-fallback.mjs
