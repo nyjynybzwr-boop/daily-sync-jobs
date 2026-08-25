@@ -123,15 +123,25 @@ jobs:
             const expectedReviews=dedup.reduce((s,x)=>s+(x.expected_review_count??0),0);
             return {valid,dedup,knownZero,unknown,expectedReviews};
           };
+          const targetSignature=targets=>targets.map(x=>`${x.product_id}\u0000${x.expected_review_count??''}\u0000${x.api_base}`).join('\n');
+          async function stableGeneratedAt(file,targets){
+            try{
+              const old=JSON.parse(await fs.readFile(file,'utf8'));
+              if(Number(old?.schema_version||0)>=2 && old?.generated_at && Array.isArray(old?.targets) && targetSignature(old.targets)===targetSignature(targets)) return old.generated_at;
+            }catch{}
+            return new Date().toISOString();
+          }
           const outputs=[];
 
           for(const spec of specs){
             const map=JSON.parse(await fs.readFile(spec.file,'utf8'));
             const works=Array.isArray(map)?map:Object.values(map);
             const b=buildSegment(works,spec);
-            const out={schema_version:2,generated_at:new Date().toISOString(),segment:spec.segment,market:spec.market,media:spec.media,api_base:spec.api_base,source_work_count:works.length,valid_id_work_count:b.valid.length,target_work_count:b.dedup.length,known_zero_skipped_count:b.knownZero,unknown_review_count_target_count:b.unknown,expected_review_count_sum_known:b.expectedReviews,targets:b.dedup};
-            await fs.writeFile(`data/reviews/targets/${spec.segment}.json`,JSON.stringify(out,null,2)+'\n');
-            outputs.push({segment:spec.segment,source_works:works.length,target_works:b.dedup.length,known_zero_skipped:b.knownZero,unknown_targets:b.unknown,expected_reviews_known:b.expectedReviews});
+            const file=`data/reviews/targets/${spec.segment}.json`;
+            const generatedAt=await stableGeneratedAt(file,b.dedup);
+            const out={schema_version:2,generated_at:generatedAt,segment:spec.segment,market:spec.market,media:spec.media,api_base:spec.api_base,source_work_count:works.length,valid_id_work_count:b.valid.length,target_work_count:b.dedup.length,known_zero_skipped_count:b.knownZero,unknown_review_count_target_count:b.unknown,expected_review_count_sum_known:b.expectedReviews,targets:b.dedup};
+            await fs.writeFile(file,JSON.stringify(out,null,2)+'\n');
+            outputs.push({segment:spec.segment,source_works:works.length,target_works:b.dedup.length,known_zero_skipped:b.knownZero,unknown_targets:b.unknown,expected_reviews_known:b.expectedReviews,generated_at:generatedAt});
           }
 
           for(const media of ['audio','manga']){
@@ -144,9 +154,11 @@ jobs:
               for(const item of payload.works||[]) works.push(item);
             }
             const b=buildSegment(works,spec);
-            const out={schema_version:2,generated_at:new Date().toISOString(),segment:spec.segment,market:spec.market,media:spec.media,api_base:spec.api_base,source_work_count:works.length,valid_id_work_count:b.valid.length,target_work_count:b.dedup.length,known_zero_skipped_count:b.knownZero,unknown_review_count_target_count:b.unknown,expected_review_count_sum_known:b.expectedReviews,targets:b.dedup};
-            await fs.writeFile(`data/reviews/targets/${spec.segment}.json`,JSON.stringify(out,null,2)+'\n');
-            outputs.push({segment:spec.segment,source_works:works.length,target_works:b.dedup.length,known_zero_skipped:b.knownZero,unknown_targets:b.unknown,expected_reviews_known:b.expectedReviews});
+            const file=`data/reviews/targets/${spec.segment}.json`;
+            const generatedAt=await stableGeneratedAt(file,b.dedup);
+            const out={schema_version:2,generated_at:generatedAt,segment:spec.segment,market:spec.market,media:spec.media,api_base:spec.api_base,source_work_count:works.length,valid_id_work_count:b.valid.length,target_work_count:b.dedup.length,known_zero_skipped_count:b.knownZero,unknown_review_count_target_count:b.unknown,expected_review_count_sum_known:b.expectedReviews,targets:b.dedup};
+            await fs.writeFile(file,JSON.stringify(out,null,2)+'\n');
+            outputs.push({segment:spec.segment,source_works:works.length,target_works:b.dedup.length,known_zero_skipped:b.knownZero,unknown_targets:b.unknown,expected_reviews_known:b.expectedReviews,generated_at:generatedAt});
           }
           const summary={schema_version:2,generated_at:new Date().toISOString(),segments:outputs,total_source_works:outputs.reduce((s,x)=>s+x.source_works,0),total_target_works:outputs.reduce((s,x)=>s+x.target_works,0),known_zero_skipped_total:outputs.reduce((s,x)=>s+x.known_zero_skipped,0),unknown_review_count_target_total:outputs.reduce((s,x)=>s+x.unknown_targets,0),expected_review_count_sum_known:outputs.reduce((s,x)=>s+x.expected_reviews_known,0)};
           await fs.writeFile('data/reviews/targets/summary.json',JSON.stringify(summary,null,2)+'\n');
