@@ -11,9 +11,6 @@ on:
         description: 'Review target segment'
         required: false
         default: 'otome-audio'
-  push:
-    paths:
-      - '.github/workflows/review-html-pagination-probe.yml'
 
 permissions:
   contents: read
