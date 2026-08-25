@@ -1,15 +1,15 @@
 {
-  "checked_at": "2026-08-25T13:40:26.850Z",
+  "checked_at": "2026-08-25T13:41:43.427Z",
   "tests": [
     {
-      "key": "bl-main-p1",
+      "key": "bl-30-p1-pickup",
       "base": "bl",
       "id": "RJ01498915",
       "limit": 30,
       "page": 1,
+      "mix": true,
       "url": "https://www.dlsite.com/bl/api/review?product_id=RJ01498915&limit=30&mix_pickup=true&page=1&order=regist_d&locale=ja_JP",
       "status": 200,
-      "content_type": "application/json; charset=UTF-8",
       "is_success": true,
       "count": 30,
       "review_ids": [
@@ -78,48 +78,99 @@
       ],
       "sample_titles": [
         "続編待ってましたわー!",
-        "待ってました!!続編!",
-        "続編嬉しすぎる"
+        "待ってました!!続編!"
       ],
       "sample_texts": [
-        "pixivの試し読みから待ちに待ったDLsiteでの購入ですよ!!\n本編は全52P、番外編は全24Pでした。\n今巻は綺麗に終わらず、3巻に続く!的な感じで締まりました。もう既に次巻が楽しみなんですけど泣\n\nまず最初に思ったのは私たちの心を読",
-        "前回の時もそうでしたが、かなりえろえろです。\nアルバートのおちんちん兵器かよってくらいでかいよ\nリリューのおしりがもうアルバート専用のまんこや\n\nアルバートのデカチンでリリューのお腹ボコッてなるのかなり好き\nアルバートよ一日中リリューを犯し",
-        "まさか続きが見られるとは思ってませんでした!ありがとうございます!!\n1で部屋から繋がったまま(受けの兄にそのまま挨拶するの強過ぎた)馬車に移動し、馬車の中でも繋がったままで\n攻めの家に到着し受けをベッドにおろした直後から見られるとは…。\n"
+        "pixivの試し読みから待ちに待ったDLsiteでの購入ですよ!!\n本編は全52P、番外編は全24Pでした。\n今巻は綺麗に終わらず、3巻に続く!的な感じで締まりました。もう既に次巻が楽しみなんですけど",
+        "前回の時もそうでしたが、かなりえろえろです。\nアルバートのおちんちん兵器かよってくらいでかいよ\nリリューのおしりがもうアルバート専用のまんこや\n\nアルバートのデカチンでリリューのお腹ボコッてなるのかな"
       ],
+      "json_keys": [
+        "is_success",
+        "error_msg",
+        "product_id",
+        "product_name",
+        "is_reserve",
+        "review_deny",
+        "mix_pickup",
+        "order",
+        "limit",
+        "page",
+        "review_list",
+        "count",
+        "reviewer_genre_list"
+      ],
+      "metadata": {
+        "is_success": true,
+        "error_msg": "",
+        "product_id": "RJ01498915",
+        "product_name": "成り代わりモブは逃げられない2",
+        "is_reserve": false,
+        "review_deny": false,
+        "mix_pickup": true,
+        "order": "regist_d",
+        "limit": 30,
+        "page": 1,
+        "count": "35"
+      },
       "error": null
     },
     {
-      "key": "bl-main-p2",
+      "key": "bl-30-p2-pickup",
       "base": "bl",
       "id": "RJ01498915",
       "limit": 30,
       "page": 2,
+      "mix": true,
       "url": "https://www.dlsite.com/bl/api/review?product_id=RJ01498915&limit=30&mix_pickup=true&page=2&order=regist_d&locale=ja_JP",
       "status": 200,
-      "content_type": "application/json; charset=UTF-8",
       "is_success": true,
       "count": 0,
       "review_ids": [],
       "review_text_chars": [],
       "sample_titles": [],
       "sample_texts": [],
+      "json_keys": [
+        "is_success",
+        "error_msg",
+        "product_id",
+        "product_name",
+        "is_reserve",
+        "review_deny",
+        "mix_pickup",
+        "order",
+        "limit",
+        "page",
+        "review_list",
+        "count",
+        "reviewer_genre_list"
+      ],
+      "metadata": {
+        "is_success": true,
+        "error_msg": "",
+        "product_id": "RJ01498915",
+        "product_name": "成り代わりモブは逃げられない2",
+        "is_reserve": false,
+        "review_deny": false,
+        "mix_pickup": true,
+        "order": "regist_d",
+        "limit": 30,
+        "page": 2,
+        "count": "35"
+      },
       "error": null
     },
     {
-      "key": "bl-touch-p1",
-      "base": "bl-touch",
+      "key": "bl-20-p1-no-pickup",
+      "base": "bl",
       "id": "RJ01498915",
-      "limit": 30,
+      "limit": 20,
       "page": 1,
-      "url": "https://www.dlsite.com/bl-touch/api/review?product_id=RJ01498915&limit=30&mix_pickup=true&page=1&order=regist_d&locale=ja_JP",
+      "mix": false,
+      "url": "https://www.dlsite.com/bl/api/review?product_id=RJ01498915&limit=20&mix_pickup=false&page=1&order=regist_d&locale=ja_JP",
       "status": 200,
-      "content_type": "application/json; charset=UTF-8",
       "is_success": true,
-      "count": 30,
+      "count": 20,
       "review_ids": [
-        "2049387",
-        "2049395",
-        "2052845",
         "2132067",
         "2128321",
         "2108455",
@@ -134,24 +185,14 @@
         "2054908",
         "2053722",
         "2053057",
+        "2052845",
         "2051590",
         "2051308",
         "2051253",
         "2051220",
-        "2051161",
-        "2051010",
-        "2050716",
-        "2050643",
-        "2050222",
-        "2050017",
-        "2049995",
-        "2049966",
-        "2049913"
+        "2051161"
       ],
       "review_text_chars": [
-        315,
-        204,
-        753,
         181,
         277,
         409,
@@ -166,11 +207,77 @@
         295,
         154,
         227,
+        753,
         294,
         175,
         348,
         235,
-        182,
+        182
+      ],
+      "sample_titles": [
+        "大好きな作品の続きです。",
+        "不憫受けと容赦ない責め最高!!"
+      ],
+      "sample_texts": [
+        "DL版出るの凄い待っていて嬉しくて買いました。\n受の悲惨さとエロさも、攻のネジが何本か抜けてる感じのヤバさなど、とても楽しませてもらいました。\n転生ものは大好物なのです。その上で、BLで、ちょっと頭の",
+        "可哀想は可愛くてエロいです!\n\n最後らへんまで受けに救いの兆しがないとこや、攻めの容赦ないHで受けの人権気にして無さそうなとこが好きです!\n\n広告でみて、1部を購入後気づいたら2部も購入しててびっくり"
+      ],
+      "json_keys": [
+        "is_success",
+        "error_msg",
+        "product_id",
+        "product_name",
+        "is_reserve",
+        "review_deny",
+        "mix_pickup",
+        "order",
+        "limit",
+        "page",
+        "review_list"
+      ],
+      "metadata": {
+        "is_success": true,
+        "error_msg": "",
+        "product_id": "RJ01498915",
+        "product_name": "成り代わりモブは逃げられない2",
+        "is_reserve": false,
+        "review_deny": false,
+        "mix_pickup": false,
+        "order": "regist_d",
+        "limit": 20,
+        "page": 1
+      },
+      "error": null
+    },
+    {
+      "key": "bl-20-p2-no-pickup",
+      "base": "bl",
+      "id": "RJ01498915",
+      "limit": 20,
+      "page": 2,
+      "mix": false,
+      "url": "https://www.dlsite.com/bl/api/review?product_id=RJ01498915&limit=20&mix_pickup=false&page=2&order=regist_d&locale=ja_JP",
+      "status": 200,
+      "is_success": true,
+      "count": 15,
+      "review_ids": [
+        "2051010",
+        "2050716",
+        "2050643",
+        "2050222",
+        "2050017",
+        "2049995",
+        "2049966",
+        "2049913",
+        "2049801",
+        "2049574",
+        "2049421",
+        "2049387",
+        "2049309",
+        "2049395",
+        "2050810"
+      ],
+      "review_text_chars": [
         167,
         164,
         222,
@@ -178,136 +285,406 @@
         188,
         262,
         151,
-        182
+        182,
+        163,
+        156,
+        196,
+        315,
+        217,
+        204,
+        56
       ],
       "sample_titles": [
-        "続編待ってましたわー!",
-        "待ってました!!続編!",
-        "続編嬉しすぎる"
+        "待ってたし待ってる",
+        "Good"
       ],
       "sample_texts": [
-        "pixivの試し読みから待ちに待ったDLsiteでの購入ですよ!!\n本編は全52P、番外編は全24Pでした。\n今巻は綺麗に終わらず、3巻に続く!的な感じで締まりました。もう既に次巻が楽しみなんですけど泣\n\nまず最初に思ったのは私たちの心を読",
-        "前回の時もそうでしたが、かなりえろえろです。\nアルバートのおちんちん兵器かよってくらいでかいよ\nリリューのおしりがもうアルバート専用のまんこや\n\nアルバートのデカチンでリリューのお腹ボコッてなるのかなり好き\nアルバートよ一日中リリューを犯し",
-        "まさか続きが見られるとは思ってませんでした!ありがとうございます!!\n1で部屋から繋がったまま(受けの兄にそのまま挨拶するの強過ぎた)馬車に移動し、馬車の中でも繋がったままで\n攻めの家に到着し受けをベッドにおろした直後から見られるとは…。\n"
+        "なろう系BL?綺麗な作画で三白眼の受けって珍しいような気がして特徴的ですね。とてもかわいい。電子化ずっと待ってたのでほんとに嬉しいし期待通りでした。流れてきたこの作者さまの泥酔君漫画からたどってこのモ",
+        "様々な言語の翻訳本が出るのを待っています:)\n内容は最高です!!!!\n日本語が上手ではなく、内容を100%理解するのは難しいですが、本当に完璧です。\n早く次の便が出るといいですね。\nとても楽しみにして"
       ],
+      "json_keys": [
+        "is_success",
+        "error_msg",
+        "product_id",
+        "product_name",
+        "is_reserve",
+        "review_deny",
+        "mix_pickup",
+        "order",
+        "limit",
+        "page",
+        "review_list"
+      ],
+      "metadata": {
+        "is_success": true,
+        "error_msg": "",
+        "product_id": "RJ01498915",
+        "product_name": "成り代わりモブは逃げられない2",
+        "is_reserve": false,
+        "review_deny": false,
+        "mix_pickup": false,
+        "order": "regist_d",
+        "limit": 20,
+        "page": 2
+      },
       "error": null
     },
     {
-      "key": "girls-p1",
+      "key": "bl-10-p1-no-pickup",
+      "base": "bl",
+      "id": "RJ01498915",
+      "limit": 10,
+      "page": 1,
+      "mix": false,
+      "url": "https://www.dlsite.com/bl/api/review?product_id=RJ01498915&limit=10&mix_pickup=false&page=1&order=regist_d&locale=ja_JP",
+      "status": 200,
+      "is_success": true,
+      "count": 10,
+      "review_ids": [
+        "2132067",
+        "2128321",
+        "2108455",
+        "2087911",
+        "2087049",
+        "2066664",
+        "2065641",
+        "2060004",
+        "2058890",
+        "2057680"
+      ],
+      "review_text_chars": [
+        181,
+        277,
+        409,
+        231,
+        226,
+        219,
+        186,
+        176,
+        372,
+        205
+      ],
+      "sample_titles": [
+        "大好きな作品の続きです。",
+        "不憫受けと容赦ない責め最高!!"
+      ],
+      "sample_texts": [
+        "DL版出るの凄い待っていて嬉しくて買いました。\n受の悲惨さとエロさも、攻のネジが何本か抜けてる感じのヤバさなど、とても楽しませてもらいました。\n転生ものは大好物なのです。その上で、BLで、ちょっと頭の",
+        "可哀想は可愛くてエロいです!\n\n最後らへんまで受けに救いの兆しがないとこや、攻めの容赦ないHで受けの人権気にして無さそうなとこが好きです!\n\n広告でみて、1部を購入後気づいたら2部も購入しててびっくり"
+      ],
+      "json_keys": [
+        "is_success",
+        "error_msg",
+        "product_id",
+        "product_name",
+        "is_reserve",
+        "review_deny",
+        "mix_pickup",
+        "order",
+        "limit",
+        "page",
+        "review_list"
+      ],
+      "metadata": {
+        "is_success": true,
+        "error_msg": "",
+        "product_id": "RJ01498915",
+        "product_name": "成り代わりモブは逃げられない2",
+        "is_reserve": false,
+        "review_deny": false,
+        "mix_pickup": false,
+        "order": "regist_d",
+        "limit": 10,
+        "page": 1
+      },
+      "error": null
+    },
+    {
+      "key": "bl-10-p2-no-pickup",
+      "base": "bl",
+      "id": "RJ01498915",
+      "limit": 10,
+      "page": 2,
+      "mix": false,
+      "url": "https://www.dlsite.com/bl/api/review?product_id=RJ01498915&limit=10&mix_pickup=false&page=2&order=regist_d&locale=ja_JP",
+      "status": 200,
+      "is_success": true,
+      "count": 10,
+      "review_ids": [
+        "2055109",
+        "2054908",
+        "2053722",
+        "2053057",
+        "2052845",
+        "2051590",
+        "2051308",
+        "2051253",
+        "2051220",
+        "2051161"
+      ],
+      "review_text_chars": [
+        226,
+        295,
+        154,
+        227,
+        753,
+        294,
+        175,
+        348,
+        235,
+        182
+      ],
+      "sample_titles": [
+        "待ってました～!!",
+        "かわいそかわいい"
+      ],
+      "sample_texts": [
+        "全作が絵柄、ストーリー、エロさ加減が本当にお気に入りで続編を作られていると知ったときから今か今かのまっていました!\nエロだけじゃなくて、ストーリーも面白いのが素晴らしい…w\n個人的には無自覚サイコパス",
+        "1が販売された頃からずっっっと読みたかったんですが、絶対読み終わった後に続編に恋焦がれて悶絶すると思って耐えまくっていたところ今回ちょうど続編が出たので1と2合わせて購入し読了しました!結果かわいそう"
+      ],
+      "json_keys": [
+        "is_success",
+        "error_msg",
+        "product_id",
+        "product_name",
+        "is_reserve",
+        "review_deny",
+        "mix_pickup",
+        "order",
+        "limit",
+        "page",
+        "review_list"
+      ],
+      "metadata": {
+        "is_success": true,
+        "error_msg": "",
+        "product_id": "RJ01498915",
+        "product_name": "成り代わりモブは逃げられない2",
+        "is_reserve": false,
+        "review_deny": false,
+        "mix_pickup": false,
+        "order": "regist_d",
+        "limit": 10,
+        "page": 2
+      },
+      "error": null
+    },
+    {
+      "key": "bl-10-p3-no-pickup",
+      "base": "bl",
+      "id": "RJ01498915",
+      "limit": 10,
+      "page": 3,
+      "mix": false,
+      "url": "https://www.dlsite.com/bl/api/review?product_id=RJ01498915&limit=10&mix_pickup=false&page=3&order=regist_d&locale=ja_JP",
+      "status": 200,
+      "is_success": true,
+      "count": 10,
+      "review_ids": [
+        "2051010",
+        "2050716",
+        "2050643",
+        "2050222",
+        "2050017",
+        "2049995",
+        "2049966",
+        "2049913",
+        "2049801",
+        "2049574"
+      ],
+      "review_text_chars": [
+        167,
+        164,
+        222,
+        155,
+        188,
+        262,
+        151,
+        182,
+        163,
+        156
+      ],
+      "sample_titles": [
+        "待ってたし待ってる",
+        "Good"
+      ],
+      "sample_texts": [
+        "なろう系BL?綺麗な作画で三白眼の受けって珍しいような気がして特徴的ですね。とてもかわいい。電子化ずっと待ってたのでほんとに嬉しいし期待通りでした。流れてきたこの作者さまの泥酔君漫画からたどってこのモ",
+        "様々な言語の翻訳本が出るのを待っています:)\n内容は最高です!!!!\n日本語が上手ではなく、内容を100%理解するのは難しいですが、本当に完璧です。\n早く次の便が出るといいですね。\nとても楽しみにして"
+      ],
+      "json_keys": [
+        "is_success",
+        "error_msg",
+        "product_id",
+        "product_name",
+        "is_reserve",
+        "review_deny",
+        "mix_pickup",
+        "order",
+        "limit",
+        "page",
+        "review_list"
+      ],
+      "metadata": {
+        "is_success": true,
+        "error_msg": "",
+        "product_id": "RJ01498915",
+        "product_name": "成り代わりモブは逃げられない2",
+        "is_reserve": false,
+        "review_deny": false,
+        "mix_pickup": false,
+        "order": "regist_d",
+        "limit": 10,
+        "page": 3
+      },
+      "error": null
+    },
+    {
+      "key": "bl-10-p4-no-pickup",
+      "base": "bl",
+      "id": "RJ01498915",
+      "limit": 10,
+      "page": 4,
+      "mix": false,
+      "url": "https://www.dlsite.com/bl/api/review?product_id=RJ01498915&limit=10&mix_pickup=false&page=4&order=regist_d&locale=ja_JP",
+      "status": 200,
+      "is_success": true,
+      "count": 5,
+      "review_ids": [
+        "2049421",
+        "2049387",
+        "2049309",
+        "2049395",
+        "2050810"
+      ],
+      "review_text_chars": [
+        196,
+        315,
+        217,
+        204,
+        56
+      ],
+      "sample_titles": [
+        "2話がでるなんて感激っ!",
+        "続編待ってましたわー!"
+      ],
+      "sample_texts": [
+        "え…?\nもっと支払わなくて良いのですか?\nお値段と内容が釣り合ってないですよ?\n内容豪華すぎませんか?\n\n前巻が良すぎて、私の中のNo.1だったのですが、今回もやばいです。大体続編が出ると…なことが多",
+        "pixivの試し読みから待ちに待ったDLsiteでの購入ですよ!!\n本編は全52P、番外編は全24Pでした。\n今巻は綺麗に終わらず、3巻に続く!的な感じで締まりました。もう既に次巻が楽しみなんですけど"
+      ],
+      "json_keys": [
+        "is_success",
+        "error_msg",
+        "product_id",
+        "product_name",
+        "is_reserve",
+        "review_deny",
+        "mix_pickup",
+        "order",
+        "limit",
+        "page",
+        "review_list"
+      ],
+      "metadata": {
+        "is_success": true,
+        "error_msg": "",
+        "product_id": "RJ01498915",
+        "product_name": "成り代わりモブは逃げられない2",
+        "is_reserve": false,
+        "review_deny": false,
+        "mix_pickup": false,
+        "order": "regist_d",
+        "limit": 10,
+        "page": 4
+      },
+      "error": null
+    },
+    {
+      "key": "girls",
       "base": "girls",
       "id": "RJ01690068",
       "limit": 30,
       "page": 1,
-      "url": "https://www.dlsite.com/girls/api/review?product_id=RJ01690068&limit=30&mix_pickup=true&page=1&order=regist_d&locale=ja_JP",
+      "mix": false,
+      "url": "https://www.dlsite.com/girls/api/review?product_id=RJ01690068&limit=30&mix_pickup=false&page=1&order=regist_d&locale=ja_JP",
       "status": 200,
-      "content_type": "application/json; charset=UTF-8",
       "is_success": true,
       "count": 12,
       "review_ids": [
-        "2131229",
-        "2131199",
-        "2131171",
         "2132641",
         "2132243",
         "2132185",
         "2131780",
         "2131306",
         "2131328",
-        "2131186",
-        "2131131",
-        "2132001"
-      ],
-      "review_text_chars": [
-        766,
-        821,
-        805,
-        818,
-        627,
-        499,
-        550,
-        808,
-        489,
-        699,
-        824,
-        656
-      ],
-      "sample_titles": [
-        "もっと続きが聴きたくなる完成度",
-        "愛なんて名前をつけるまえに。",
-        "聞こえますか?いま沼の中から話しかけています"
-      ],
-      "sample_texts": [
-        "まずサークルさんの1作品目とは思えないほど完成度が高くて驚きました。没入感・生活感重視というのがセナレイくんの魅力がよく伝わるし、シナリオが代々木さんなので納得の良さ…そこに富永さんのお芝居が加わって、玲くんが本当にそこにいます泣\n\nたっぷ",
-        "本作は前日譚と人物紹介やあらすじをお読みになってからお聴き頂くのをおすすめします。\n\nバンドマンがクズでもいいのは音楽を愛しバンドに全振りしてるから生活力なくても性格クズでも目を瞑れるのですが\n\n「ね、慰めて?」\nって言う男はクズですよ玲く",
-        "作品内容読んだ時点でヤバいと思ってましたが玲くん沼底なしでした。みんな一緒に沼に沈みましょうね!\n\nお腹空いたって言うくせにまたカレー?って文句言うし、準備してたのにえっちしたくなったってベッド連れてかれるし、ゴムつけてくれないし、現実でそ"
-      ],
-      "error": null
-    },
-    {
-      "key": "girls-touch-p1",
-      "base": "girls-touch",
-      "id": "RJ01690068",
-      "limit": 30,
-      "page": 1,
-      "url": "https://www.dlsite.com/girls-touch/api/review?product_id=RJ01690068&limit=30&mix_pickup=true&page=1&order=regist_d&locale=ja_JP",
-      "status": 200,
-      "content_type": "application/json; charset=UTF-8",
-      "is_success": true,
-      "count": 12,
-      "review_ids": [
         "2131229",
-        "2131199",
-        "2131171",
-        "2132641",
-        "2132243",
-        "2132185",
-        "2131780",
-        "2131306",
-        "2131328",
         "2131186",
         "2131131",
+        "2131171",
+        "2131199",
         "2132001"
       ],
       "review_text_chars": [
-        766,
-        821,
-        805,
         818,
         627,
         499,
         550,
         808,
         489,
+        766,
         699,
         824,
+        805,
+        821,
         656
       ],
       "sample_titles": [
-        "もっと続きが聴きたくなる完成度",
-        "愛なんて名前をつけるまえに。",
-        "聞こえますか?いま沼の中から話しかけています"
+        "愛おしいクズは無罪の法則",
+        "ずっとセナレイくんのことを考えています"
       ],
       "sample_texts": [
-        "まずサークルさんの1作品目とは思えないほど完成度が高くて驚きました。没入感・生活感重視というのがセナレイくんの魅力がよく伝わるし、シナリオが代々木さんなので納得の良さ…そこに富永さんのお芝居が加わって、玲くんが本当にそこにいます泣\n\nたっぷ",
-        "本作は前日譚と人物紹介やあらすじをお読みになってからお聴き頂くのをおすすめします。\n\nバンドマンがクズでもいいのは音楽を愛しバンドに全振りしてるから生活力なくても性格クズでも目を瞑れるのですが\n\n「ね、慰めて?」\nって言う男はクズですよ玲く",
-        "作品内容読んだ時点でヤバいと思ってましたが玲くん沼底なしでした。みんな一緒に沼に沈みましょうね!\n\nお腹空いたって言うくせにまたカレー?って文句言うし、準備してたのにえっちしたくなったってベッド連れてかれるし、ゴムつけてくれないし、現実でそ"
+        "タイトル通りです。クズでも愛おしければ何をしても許してしまう、そんな魅力がセナレイにはあります。\n仕事から帰ってきてる疲れている中、カレー作るなんて偉すぎる自分。そんな素晴らしい私(ヒロイン)に対して",
+        "冒頭の前日譚を読んでから聴かせていただきましたが、サークルさんのこだわりがとても感じることが出来ました。\n富永さんの日常感あふれる話し方、そこにいます。\nセナレイくんとの生活が富永さんの声と、そしてS"
       ],
+      "json_keys": [
+        "is_success",
+        "error_msg",
+        "product_id",
+        "product_name",
+        "is_reserve",
+        "review_deny",
+        "mix_pickup",
+        "order",
+        "limit",
+        "page",
+        "review_list"
+      ],
+      "metadata": {
+        "is_success": true,
+        "error_msg": "",
+        "product_id": "RJ01690068",
+        "product_name": "自由奔放ベーシスト彼氏は、あなたを誰にも渡せない。#嫉妬まかせの俺ペースえっち♡ #イメプ責め本気甘えっち♡【知らなかった?俺は最低なんだよ】",
+        "is_reserve": false,
+        "review_deny": false,
+        "mix_pickup": false,
+        "order": "regist_d",
+        "limit": 30,
+        "page": 1
+      },
       "error": null
     },
     {
-      "key": "girls-drama-p1",
+      "key": "girls-drama",
       "base": "girls-drama",
       "id": "BJ02431592",
       "limit": 30,
       "page": 1,
-      "url": "https://www.dlsite.com/girls-drama/api/review?product_id=BJ02431592&limit=30&mix_pickup=true&page=1&order=regist_d&locale=ja_JP",
+      "mix": false,
+      "url": "https://www.dlsite.com/girls-drama/api/review?product_id=BJ02431592&limit=30&mix_pickup=false&page=1&order=regist_d&locale=ja_JP",
       "status": 200,
-      "content_type": "application/json; charset=UTF-8",
       "is_success": true,
       "count": 28,
       "review_ids": [
-        "255697",
-        "255698",
         "255746",
         "255742",
         "255738",
@@ -317,6 +694,8 @@
         "255704",
         "255703",
         "255700",
+        "255698",
+        "255697",
         "255693",
         "255692",
         "255673",
@@ -336,8 +715,6 @@
         "255650"
       ],
       "review_text_chars": [
-        841,
-        263,
         270,
         542,
         800,
@@ -347,6 +724,8 @@
         284,
         773,
         819,
+        263,
+        841,
         479,
         480,
         337,
@@ -366,109 +745,49 @@
         308
       ],
       "sample_titles": [
-        "二人の幸せの在処",
-        "2人の幸せを願います",
-        "ツンデレでいじわる"
+        "ツンデレでいじわる",
+        "幸せになってね"
       ],
       "sample_texts": [
-        "どれだけ練り込めば、こんな物語が生まれるのか…\n\n本編は、想像以上に容赦なく心を掻き乱してきます。\n事前に前日譚を読んでおくと、晴くんの過去がより鮮明に見えてきます。\n\nサクラコインランドリーを舞台に、何度も繰り返された選択と後悔。\nその果",
-        "全巻聞きました。\n晴くんは暁くん、健太くん、夜見くんとの直接的な関係は無いようなのでどんなお話になるのかな?と楽しみにしていました。\n\n相互依存と聞くとあまり肯定的なイメージは持てないことが多いですが晴くんとの話はお互いの関係を2人とも大切",
-        "ツンデレでぶっきらぼうだけど 優しい所もあって、声がとても良かったです!\n\n舐め音がとてもエッチでした!\n\n桜を見に行きたくなりました!\n\n私はヴァイオリンが弾けるのですが、ヴァイオリンが印象的でした!\nヴァイオリンの音色、味わい深くて良い"
+        "ツンデレでぶっきらぼうだけど 優しい所もあって、声がとても良かったです!\n\n舐め音がとてもエッチでした!\n\n桜を見に行きたくなりました!\n\n私はヴァイオリンが弾けるのですが、ヴァイオリンが印象的でした",
+        "晴くんの瞳に引き寄せられる印象的なビジュアルと、500円硬貨で過去に戻れるというストーリーに惹かれての購入です。\n\nはじめは、晴くんの話し方に優しさを感じながらもヒロインとの空気感にどこかぎこちなさを"
       ],
+      "json_keys": [
+        "is_success",
+        "error_msg",
+        "product_id",
+        "product_name",
+        "is_reserve",
+        "review_deny",
+        "mix_pickup",
+        "order",
+        "limit",
+        "page",
+        "review_list"
+      ],
+      "metadata": {
+        "is_success": true,
+        "error_msg": "",
+        "product_id": "BJ02431592",
+        "product_name": "嘘つきコインランドリー Vol.4 晴くんは最初の夜が終わらない CV. 富永修平",
+        "is_reserve": false,
+        "review_deny": false,
+        "mix_pickup": false,
+        "order": "regist_d",
+        "limit": 30,
+        "page": 1
+      },
       "error": null
     },
     {
-      "key": "girls-drama-touch-p1",
-      "base": "girls-drama-touch",
-      "id": "BJ02431592",
-      "limit": 30,
-      "page": 1,
-      "url": "https://www.dlsite.com/girls-drama-touch/api/review?product_id=BJ02431592&limit=30&mix_pickup=true&page=1&order=regist_d&locale=ja_JP",
-      "status": 200,
-      "content_type": "application/json; charset=UTF-8",
-      "is_success": true,
-      "count": 28,
-      "review_ids": [
-        "255697",
-        "255698",
-        "255746",
-        "255742",
-        "255738",
-        "255719",
-        "255715",
-        "255713",
-        "255704",
-        "255703",
-        "255700",
-        "255693",
-        "255692",
-        "255673",
-        "255668",
-        "255664",
-        "255667",
-        "255665",
-        "255663",
-        "255648",
-        "255722",
-        "255718",
-        "255670",
-        "255662",
-        "255660",
-        "255657",
-        "255649",
-        "255650"
-      ],
-      "review_text_chars": [
-        841,
-        263,
-        270,
-        542,
-        800,
-        833,
-        389,
-        776,
-        284,
-        773,
-        819,
-        479,
-        480,
-        337,
-        532,
-        569,
-        810,
-        581,
-        299,
-        825,
-        800,
-        822,
-        390,
-        827,
-        798,
-        790,
-        812,
-        308
-      ],
-      "sample_titles": [
-        "二人の幸せの在処",
-        "2人の幸せを願います",
-        "ツンデレでいじわる"
-      ],
-      "sample_texts": [
-        "どれだけ練り込めば、こんな物語が生まれるのか…\n\n本編は、想像以上に容赦なく心を掻き乱してきます。\n事前に前日譚を読んでおくと、晴くんの過去がより鮮明に見えてきます。\n\nサクラコインランドリーを舞台に、何度も繰り返された選択と後悔。\nその果",
-        "全巻聞きました。\n晴くんは暁くん、健太くん、夜見くんとの直接的な関係は無いようなのでどんなお話になるのかな?と楽しみにしていました。\n\n相互依存と聞くとあまり肯定的なイメージは持てないことが多いですが晴くんとの話はお互いの関係を2人とも大切",
-        "ツンデレでぶっきらぼうだけど 優しい所もあって、声がとても良かったです!\n\n舐め音がとてもエッチでした!\n\n桜を見に行きたくなりました!\n\n私はヴァイオリンが弾けるのですが、ヴァイオリンが印象的でした!\nヴァイオリンの音色、味わい深くて良い"
-      ],
-      "error": null
-    },
-    {
-      "key": "maniax-p1",
+      "key": "maniax",
       "base": "maniax",
       "id": "RJ01690975",
       "limit": 30,
       "page": 1,
-      "url": "https://www.dlsite.com/maniax/api/review?product_id=RJ01690975&limit=30&mix_pickup=true&page=1&order=regist_d&locale=ja_JP",
+      "mix": false,
+      "url": "https://www.dlsite.com/maniax/api/review?product_id=RJ01690975&limit=30&mix_pickup=false&page=1&order=regist_d&locale=ja_JP",
       "status": 200,
-      "content_type": "application/json; charset=UTF-8",
       "is_success": true,
       "count": 8,
       "review_ids": [
@@ -493,57 +812,37 @@
       ],
       "sample_titles": [
         "あむちゃんの攻めがたまらないです!",
-        "吐息がリアルすぎる",
-        "R18にギリギリ行かないからこそ感じるものってあるよね"
+        "吐息がリアルすぎる"
       ],
       "sample_texts": [
-        "あむちゃんのこれまでの作品の中で、本作が一番気に入りました!酔っていたからかな、あむちゃんからの攻めが前作より強かったと思います。\n音のクオリティが高くて、声の近さが鮮明に感じられます。あむちゃんが本当にそばにいるようで、魔法みたいです。\n",
-        "最初のシリーズからあむちゃんの声が好きになって聴きはじめましたが、今作は特に音声の質感が本当に吐息を感じるほどで、囁きが中毒になります!!!!\nあむちゃんとの出会いのシーンからでも街中の環境音が聞こえてきて、シーンごとの臨場感が溢れてて作中",
-        "端的に内容を申し上げますと「決してR18ではないがR15作品の中では限りなくR18に近いと思う作品」です。\n下着が見えそうで見えないスカート…\nラッキースケベで留まる恋愛漫画…\n熱烈なキスの末、いざ事が始まるっ!次のシーンで朝チュン…\nそん"
+        "あむちゃんのこれまでの作品の中で、本作が一番気に入りました!酔っていたからかな、あむちゃんからの攻めが前作より強かったと思います。\n音のクオリティが高くて、声の近さが鮮明に感じられます。あむちゃんが本",
+        "最初のシリーズからあむちゃんの声が好きになって聴きはじめましたが、今作は特に音声の質感が本当に吐息を感じるほどで、囁きが中毒になります!!!!\nあむちゃんとの出会いのシーンからでも街中の環境音が聞こえ"
       ],
-      "error": null
-    },
-    {
-      "key": "maniax-touch-p1",
-      "base": "maniax-touch",
-      "id": "RJ01690975",
-      "limit": 30,
-      "page": 1,
-      "url": "https://www.dlsite.com/maniax-touch/api/review?product_id=RJ01690975&limit=30&mix_pickup=true&page=1&order=regist_d&locale=ja_JP",
-      "status": 200,
-      "content_type": "application/json; charset=UTF-8",
-      "is_success": true,
-      "count": 8,
-      "review_ids": [
-        "2134313",
-        "2134074",
-        "2133832",
-        "2133873",
-        "2133854",
-        "2133632",
-        "2133497",
-        "2133474"
+      "json_keys": [
+        "is_success",
+        "error_msg",
+        "product_id",
+        "product_name",
+        "is_reserve",
+        "review_deny",
+        "mix_pickup",
+        "order",
+        "limit",
+        "page",
+        "review_list"
       ],
-      "review_text_chars": [
-        275,
-        178,
-        346,
-        243,
-        423,
-        172,
-        206,
-        604
-      ],
-      "sample_titles": [
-        "あむちゃんの攻めがたまらないです!",
-        "吐息がリアルすぎる",
-        "R18にギリギリ行かないからこそ感じるものってあるよね"
-      ],
-      "sample_texts": [
-        "あむちゃんのこれまでの作品の中で、本作が一番気に入りました!酔っていたからかな、あむちゃんからの攻めが前作より強かったと思います。\n音のクオリティが高くて、声の近さが鮮明に感じられます。あむちゃんが本当にそばにいるようで、魔法みたいです。\n",
-        "最初のシリーズからあむちゃんの声が好きになって聴きはじめましたが、今作は特に音声の質感が本当に吐息を感じるほどで、囁きが中毒になります!!!!\nあむちゃんとの出会いのシーンからでも街中の環境音が聞こえてきて、シーンごとの臨場感が溢れてて作中",
-        "端的に内容を申し上げますと「決してR18ではないがR15作品の中では限りなくR18に近いと思う作品」です。\n下着が見えそうで見えないスカート…\nラッキースケベで留まる恋愛漫画…\n熱烈なキスの末、いざ事が始まるっ!次のシーンで朝チュン…\nそん"
-      ],
+      "metadata": {
+        "is_success": true,
+        "error_msg": "",
+        "product_id": "RJ01690975",
+        "product_name": "酔ったあむちゃんをお持ち帰りシたら、逆に襲われた♡",
+        "is_reserve": false,
+        "review_deny": false,
+        "mix_pickup": false,
+        "order": "regist_d",
+        "limit": 30,
+        "page": 1
+      },
       "error": null
     }
   ]
