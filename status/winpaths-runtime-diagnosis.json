@@ -1,39 +1,89 @@
 {
-  "checked_at": "2026-08-25T11:37:54.611Z",
-  "before": {
-    "market": "otome",
-    "active": "trend",
-    "winButton": true,
-    "winButtonDisabled": false,
-    "winCommand": "物語構造の差を計算中..."
-  },
-  "after": {
-    "market": "otome",
-    "active": "winpaths",
-    "winVisible": true,
-    "winCommand": "物語構造の差を計算中...",
-    "winPatterns": "",
-    "sync": "更新 8/25 10:58"
-  },
-  "responses": [
-    {
-      "url": "https://dlsite-trend-radar.pages.dev/winpaths-view.css?rev=20260822h",
-      "status": 200
+  "checked_at": "2026-08-25T11:40:48.880Z",
+  "clicked": {
+    "name": "clicked-from-home",
+    "before": {
+      "market": "otome",
+      "active": "trend",
+      "winButton": true,
+      "winButtonDisabled": false,
+      "winCommand": "物語構造の差を計算中..."
     },
-    {
-      "url": "https://dlsite-trend-radar.pages.dev/home-lazy-loader.js?rev=20260822e",
-      "status": 200
+    "after": {
+      "market": "otome",
+      "active": "winpaths",
+      "winVisible": true,
+      "winCommand": "物語構造の差を計算中...",
+      "winPatterns": "",
+      "sync": "更新 8/25 10:58"
     },
-    {
-      "url": "https://dlsite-trend-radar.pages.dev/winpaths.js?rev=20260822h",
-      "status": 200
-    }
-  ],
-  "errors": [],
-  "consoles": [
-    {
-      "type": "warning",
-      "text": "The resource https://dlsite-trend-radar.pages.dev/melosignal-logo.png was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
-    }
-  ]
+    "responses": [
+      {
+        "url": "https://dlsite-trend-radar.pages.dev/winpaths-view.css?rev=20260822h",
+        "status": 200
+      },
+      {
+        "url": "https://dlsite-trend-radar.pages.dev/home-lazy-loader.js?rev=20260822e",
+        "status": 200
+      },
+      {
+        "url": "https://dlsite-trend-radar.pages.dev/winpaths.js?rev=20260822h",
+        "status": 200
+      }
+    ],
+    "errors": [],
+    "consoles": [
+      {
+        "type": "warning",
+        "text": "The resource https://dlsite-trend-radar.pages.dev/melosignal-logo.png was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+      }
+    ]
+  },
+  "direct": {
+    "name": "direct-view",
+    "before": {
+      "market": "otome",
+      "active": "winpaths",
+      "winButton": true,
+      "winButtonDisabled": false,
+      "winCommand": "差が最も強い設計転換点関係の境界が変わる性的場面所有・主導権を身体で示す着地事後に安心・愛情を返す上位群9/30作30%比較群1/30作3%「関係の境界が変わる」を転換点にして、性的場面を「所有・主導権を身体で示す」として使い、「事後に安心・愛情を返す」で関係を更新する。"
+    },
+    "after": {
+      "market": "otome",
+      "active": "winpaths",
+      "winVisible": true,
+      "winCommand": "差が最も強い設計転換点関係の境界が変わる性的場面所有・主導権を身体で示す着地事後に安心・愛情を返す上位群9/30作30%比較群1/30作3%「関係の境界が変わる」を転換点にして、性的場面を「所有・主導権を身体で示す」として使い、「事後に安心・愛情を返す」で関係を更新する。",
+      "winPatterns": "",
+      "sync": "勝ち筋データ"
+    },
+    "responses": [
+      {
+        "url": "https://dlsite-trend-radar.pages.dev/?view=winpaths",
+        "status": 200
+      },
+      {
+        "url": "https://dlsite-trend-radar.pages.dev/home-lazy-loader.js?rev=20260822e",
+        "status": 200
+      },
+      {
+        "url": "https://dlsite-trend-radar.pages.dev/winpaths-view.css?rev=20260822h",
+        "status": 200
+      },
+      {
+        "url": "https://dlsite-trend-radar.pages.dev/winpaths.js?rev=20260822h",
+        "status": 200
+      },
+      {
+        "url": "https://dlsite-trend-radar.pages.dev/data/winpaths.json",
+        "status": 200
+      }
+    ],
+    "errors": [],
+    "consoles": [
+      {
+        "type": "warning",
+        "text": "The resource https://dlsite-trend-radar.pages.dev/melosignal-logo.png was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+      }
+    ]
+  }
 }
