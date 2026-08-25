@@ -51,21 +51,27 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Check all seven target manifests are ready
+      - name: Check all seven frozen v2 target manifests are ready
         id: targets
         working-directory: work
         run: |
           set -euo pipefail
           segments=(otome-audio bl-audio otome-manga bl-manga male-audio male-manga girls-drama)
-          missing=0
+          ready=1
           for segment in "${segments[@]}"; do
             f="data/reviews/targets/${segment}.json"
             if [ ! -s "$f" ]; then
               echo "Target not ready yet: $f"
-              missing=1
+              ready=0
+              continue
+            fi
+            version="$(node -e "const t=require('./${f}');process.stdout.write(String(Number(t.schema_version||0)))")"
+            if [ "$version" -lt 2 ]; then
+              echo "Target is still pre-v2 and must not be crawled: $segment schema=$version"
+              ready=0
             fi
           done
-          if [ "$missing" -ne 0 ]; then
+          if [ "$ready" -ne 1 ]; then
             echo 'ready=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -75,7 +81,8 @@ jobs:
           for(const segment of segments){
             const t=JSON.parse(fs.readFileSync(`data/reviews/targets/${segment}.json`,'utf8'));
             if(!Array.isArray(t.targets))throw new Error(`${segment}: targets missing`);
-            console.log(segment,{source:t.source_work_count,targets:t.targets.length,unknown:t.unknown_review_count_target_count??(t.review_count_known===false?t.targets.length:0)});
+            if(!t.generated_at)throw new Error(`${segment}: generated_at missing; cannot freeze snapshot`);
+            console.log(segment,{schema:t.schema_version,source:t.source_work_count,targets:t.targets.length,unknown:t.unknown_review_count_target_count??0,generated_at:t.generated_at});
           }
           NODE
           echo 'ready=true' >> "$GITHUB_OUTPUT"
@@ -119,6 +126,7 @@ jobs:
             const pfile=`data/reviews/progress/${segment}.json`;
             const p=fs.existsSync(pfile)?JSON.parse(fs.readFileSync(pfile,'utf8')):null;
             if(p?.stopped_reason)throw new Error(`${segment}: stopped_reason=${p.stopped_reason}`);
+            if(p?.target_generated_at && p.target_generated_at!==t.generated_at)throw new Error(`${segment}: target snapshot changed after crawl started`);
             const next=Number(p?.next_chunk||0);
             if(next*size<t.targets.length){
               process.stdout.write(`${segment}|${next}|${t.targets.length}`);
@@ -162,7 +170,7 @@ jobs:
           if(attempted>=20 && errors/attempted>=0.20)throw new Error(`systemic review API failure: ${errors}/${attempted}`);
           if(errors)console.warn(`continuing past ${errors} per-work review error(s)`);
           if(Number(c.discrepancy_count||0))console.warn(`review-count snapshot discrepancies: ${c.discrepancy_count}`);
-          console.log({segment:p.segment,processed:p.processed_target_works,pending:p.pending_target_works,fetched_reviews:p.fetched_reviews,api_requests:p.api_requests,errors,discrepancies:c.discrepancy_count||0,stored_bytes:p.stored_bytes});
+          console.log({segment:p.segment,processed:p.processed_target_works,pending:p.pending_target_works,fetched_reviews:p.fetched_reviews,api_requests:p.api_requests,errors,discrepancies:c.discrepancy_count||0,stored_bytes:p.stored_bytes,target_generated_at:p.target_generated_at});
           NODE
 
             if [ "$crawler_rc" -ne 0 ]; then
@@ -189,6 +197,7 @@ jobs:
             const pfile=`data/reviews/progress/${segment}.json`;
             const p=fs.existsSync(pfile)?JSON.parse(fs.readFileSync(pfile,'utf8')):null;
             if(p?.stopped_reason){console.log(`STOP|${segment}|${p.stopped_reason}`);process.exit(0)}
+            if(p?.target_generated_at && p.target_generated_at!==t.generated_at){console.log(`STOP|${segment}|target snapshot changed`);process.exit(0)}
             const next=Number(p?.next_chunk||0);
             if(next*size<t.targets.length)pending++;
           }
@@ -197,7 +206,7 @@ jobs:
           )"
           echo "review continuation state=$state"
           case "$state" in
-            STOP\|*) echo 'Not chaining after an explicit safety stop.' ;;
+            STOP\|*) echo 'Not chaining after an explicit safety stop or snapshot change.' ;;
             PENDING\|*) gh workflow run review-r2-safe-continuous.yml --repo "$GITHUB_REPOSITORY" ;;
             DONE\|*) echo 'All review targets complete.' ;;
             *) echo "Unexpected continuation state: $state" >&2; exit 2 ;;
