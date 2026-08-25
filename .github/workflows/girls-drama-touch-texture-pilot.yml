@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: girls-drama-touch-texture-pilot
+  cancel-in-progress: true
+
 jobs:
   research:
     runs-on: ubuntu-latest
@@ -18,12 +22,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Clone private source
+      - name: Clone private source with LFS catalogs
         env:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
-          GIT_LFS_SKIP_SMUDGE: '1'
-        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+          cd work
+          git lfs pull --include='data/catalog/full/details.json,data/manga/catalog/full/details.json'
+          test "$(head -c 7 data/catalog/full/details.json)" != 'version' || { echo 'audio LFS pointer not hydrated' >&2; exit 1; }
+          test "$(head -c 7 data/manga/catalog/full/details.json)" != 'version' || { echo 'manga LFS pointer not hydrated' >&2; exit 1; }
       - name: Install source dependencies
         working-directory: work
         run: npm ci
@@ -66,9 +75,6 @@ jobs:
         run: node scripts/analyze-literary-texture-pilot.mjs
       - name: Persist research into private source
         working-directory: work
-        env:
-          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
-          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
         run: |
           set -euo pipefail
           git config user.name github-actions[bot]
@@ -77,7 +83,7 @@ jobs:
           git commit -m 'research: record drama-touch and literary texture pilot' || exit 0
           git pull --rebase origin main
           git push origin main
-      - name: Copy compact status here
+      - name: Copy status here
         if: always()
         run: |
           mkdir -p status
