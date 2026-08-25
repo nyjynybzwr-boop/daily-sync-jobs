@@ -5,6 +5,9 @@ on:
   push:
     paths:
       - '.github/workflows/girls-drama-touch-texture-pilot.yml'
+  pull_request:
+    paths:
+      - '.github/workflows/girls-drama-touch-texture-pilot.yml'
 
 permissions:
   contents: write
@@ -74,6 +77,7 @@ jobs:
         working-directory: work
         run: node scripts/analyze-literary-texture-pilot.mjs
       - name: Persist research into private source
+        if: github.event_name != 'pull_request'
         working-directory: work
         run: |
           set -euo pipefail
@@ -83,8 +87,18 @@ jobs:
           git commit -m 'research: record drama-touch and literary texture pilot' || exit 0
           git pull --rebase origin main
           git push origin main
-      - name: Copy status here
+      - name: Upload research artifacts
         if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drama-touch-texture-research
+          path: |
+            work/data/research/girls-drama-touch-probe.json
+            work/analysis/literary-texture-pilot.json
+          if-no-files-found: warn
+          retention-days: 2
+      - name: Copy status here
+        if: github.event_name != 'pull_request' && always()
         run: |
           mkdir -p status
           cp work/data/research/girls-drama-touch-probe.json status/girls-drama-touch-probe.json 2>/dev/null || true
