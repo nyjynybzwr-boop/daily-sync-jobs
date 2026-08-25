@@ -21,10 +21,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch production dashboard and Pages deployments
+      - name: Fetch production payloads and Pages deployments
         run: |
           set -euo pipefail
           curl -LfsS --max-time 60 "$PROD_BASE/data/dashboard.json" -o /tmp/dashboard.json
+          for rel in data/winpaths.json data/winpaths-yearly.json winpaths.js home-lazy-loader.js; do
+            safe="$(printf '%s' "$rel" | tr '/.' '__')"
+            code="$(curl -L -sS --max-time 60 -o "/tmp/${safe}" -w '%{http_code}' "$PROD_BASE/$rel" || true)"
+            printf '%s' "$code" > "/tmp/${safe}.status"
+          done
           curl -sS --max-time 30 \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             -H 'Content-Type: application/json' \
@@ -41,6 +46,21 @@ jobs:
           try { api=JSON.parse(fs.readFileSync('/tmp/deployments.json','utf8')); } catch {}
           const raw=fs.readFileSync('/tmp/dashboard.json','utf8');
           const words=['マン汁指摘','秘密','見えた','プレイ傾向','＜応募方法＞','＜応募〆切＞'];
+          const readProbe=(rel)=>{
+            const safe=rel.replace(/[\/.]/g,'_');
+            let status=null,bytes=0,contentType=null,json=null,error=null,text='';
+            try{status=Number(fs.readFileSync(`/tmp/${safe}.status`,'utf8'))||null;}catch{}
+            try{const b=fs.readFileSync(`/tmp/${safe}`);bytes=b.length;text=b.toString('utf8');}catch(e){error=String(e?.message||e);}
+            if(rel.endsWith('.json')&&text){try{json=JSON.parse(text);}catch(e){error=`invalid_json: ${e.message}`;}}
+            return {
+              status,bytes,error,
+              schema_version:json?.schema_version??null,
+              generated_at:json?.generated_at??null,
+              market_keys:json?.markets?Object.keys(json.markets):null,
+              contains_fetch_winpaths:rel.endsWith('.js')?text.includes("fetch('./data/winpaths.json')"):undefined,
+              contains_winpaths_import:rel==='home-lazy-loader.js'?text.includes("import('./winpaths.js"):undefined,
+            };
+          };
           const deployments=(Array.isArray(api.result)?api.result:[]).slice(0,10).map(d=>({
             id:d.id,
             environment:d.environment,
@@ -58,6 +78,12 @@ jobs:
             dashboard_generated_at:dashboard.generated_at||null,
             dashboard_schema_version:dashboard.schema_version||null,
             word_presence:Object.fromEntries(words.map(w=>[w,raw.includes(w)])),
+            winpaths:{
+              current:readProbe('data/winpaths.json'),
+              yearly:readProbe('data/winpaths-yearly.json'),
+              controller:readProbe('winpaths.js'),
+              lazy_loader:readProbe('home-lazy-loader.js'),
+            },
             cloudflare_api_success:Boolean(api.success),
             cloudflare_api_errors:api.errors||[],
             deployments,
@@ -72,5 +98,5 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add status/cloudflare-production-diagnosis.json
-          git commit -m 'status: Cloudflare production diagnosis'
+          git commit -m 'status: Cloudflare production diagnosis' || exit 0
           git push origin main
