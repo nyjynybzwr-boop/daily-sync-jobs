@@ -1,0 +1,42 @@
+name: Review HTML fallback probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      product_id:
+        description: 'RJ product id'
+        required: true
+        default: 'RJ01603829'
+      api_base:
+        description: 'DLsite base (girls/maniax/etc)'
+        required: true
+        default: 'girls'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Probe one product only
+        working-directory: work
+        env:
+          PROBE_LIVE: '1'
+          PRODUCT_ID: ${{ inputs.product_id }}
+          API_BASE: ${{ inputs.api_base }}
+          PROBE_DELAY_MS: '1500'
+        run: node scripts/probe-review-html-fallback.mjs
