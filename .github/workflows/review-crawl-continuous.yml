@@ -45,7 +45,18 @@ jobs:
           GIT_LFS_SKIP_SMUDGE: '1'
         run: |
           set -euo pipefail
-          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+          for attempt in 1 2 3 4 5; do
+            rm -rf work
+            if git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work; then
+              break
+            fi
+            if [ "$attempt" -ge 5 ]; then
+              echo "Private source clone failed after ${attempt} attempts." >&2
+              exit 1
+            fi
+            echo "Private source clone transient failure; retrying ${attempt}/5." >&2
+            sleep $((attempt * 10))
+          done
 
       - uses: actions/setup-node@v4
         with:
@@ -84,7 +95,7 @@ jobs:
         run: |
           set -euo pipefail
           retry() {
-            local attempt=1 max=3
+            local attempt=1 max=5
             until "$@"; do
               if [ "$attempt" -ge "$max" ]; then return 1; fi
               echo "Transient command failure; retrying $attempt/$max: $*" >&2
@@ -93,7 +104,7 @@ jobs:
             done
           }
 
-          for batch in $(seq 1 4); do
+          for batch in $(seq 1 12); do
             target="data/reviews/targets/${REVIEW_SEGMENT}.json"
             progress="data/reviews/progress/${REVIEW_SEGMENT}.json"
             manifest="data/reviews/manifests/${REVIEW_SEGMENT}.json"
@@ -171,7 +182,7 @@ jobs:
               exit 5
             fi
 
-            git pull --rebase origin main
+            retry git pull --rebase origin main
           done
 
       - name: Chain next run while any segment remains
@@ -181,7 +192,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git pull --rebase origin main
+          retry() {
+            local attempt=1 max=5
+            until "$@"; do
+              if [ "$attempt" -ge "$max" ]; then return 1; fi
+              echo "Transient command failure; retrying $attempt/$max: $*" >&2
+              sleep $((attempt * 5))
+              attempt=$((attempt + 1))
+            done
+          }
+          retry git pull --rebase origin main
           remaining="$(node --input-type=module <<'NODE'
           import fs from 'node:fs';
           const ss=['otome-audio','bl-audio','otome-manga','bl-manga','male-audio','male-manga','girls-drama'];
@@ -201,7 +221,7 @@ jobs:
           if [ "$remaining" -gt 0 ]; then
             echo 'Cooling down for 60 seconds before the next bounded run.'
             sleep 60
-            gh workflow run review-crawl-continuous.yml --repo "$GITHUB_REPOSITORY"
+            retry gh workflow run review-crawl-continuous.yml --repo "$GITHUB_REPOSITORY"
           else
             echo 'All configured review target segments complete.'
           fi
