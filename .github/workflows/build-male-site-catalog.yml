@@ -1,3 +1,4 @@
+# v2: sharded outputs keep every static asset below Cloudflare Pages' 25 MiB limit
 name: Build male site catalog from R2
 
 on:
@@ -91,42 +92,51 @@ jobs:
             done
           done
 
-      - name: Build browser-safe male audio catalog
+      - name: Build Pages-safe male audio catalog
         working-directory: work
         env:
           MALE_MEDIA: audio
           INPUT_DIR: .tmp/male-r2-download/audio
           OUT_DIR: web/data/catalog/male
-        run: node scripts/build-male-r2-web.mjs
+        run: node scripts/build-male-r2-web-sharded.mjs
 
-      - name: Build browser-safe male manga catalog
+      - name: Build Pages-safe male manga catalog
         working-directory: work
         env:
           MALE_MEDIA: manga
           INPUT_DIR: .tmp/male-r2-download/manga
           OUT_DIR: web/data/catalog/manga/male
-        run: node scripts/build-male-r2-web.mjs
+        run: node scripts/build-male-r2-web-sharded.mjs
 
-      - name: Validate generated site data
+      - name: Validate generated site data and Pages file limits
         working-directory: work
         run: |
           set -euo pipefail
           node - <<'NODE'
           const fs=require('fs');
+          const path=require('path');
           const expected={
             'web/data/catalog/male':61892,
             'web/data/catalog/manga/male':129383,
           };
+          const LIMIT=25*1024*1024;
           for(const [root,count] of Object.entries(expected)){
             const summary=JSON.parse(fs.readFileSync(`${root}/summary.json`,'utf8'));
-            const search=JSON.parse(fs.readFileSync(`${root}/search-index.json`,'utf8'));
+            const stub=JSON.parse(fs.readFileSync(`${root}/search-index.json`,'utf8'));
+            const manifest=JSON.parse(fs.readFileSync(`${root}/search-manifest.json`,'utf8'));
             if(summary.total_works!==count)throw new Error(`${root}: summary count ${summary.total_works} != ${count}`);
-            if(search.total_works!==count||search.works.length!==count)throw new Error(`${root}: search count mismatch`);
-            for(const file of ['summary.json','search-index.json']){
-              const bytes=fs.statSync(`${root}/${file}`).size;
-              if(bytes>=95*1024*1024)throw new Error(`${root}/${file} is ${(bytes/1024/1024).toFixed(2)}MB`);
+            if(stub.total_works!==count||!stub.sharded)throw new Error(`${root}: sharded search stub invalid`);
+            if(manifest.total_works!==count||!manifest.sharded)throw new Error(`${root}: manifest count mismatch`);
+            const workCount=(manifest.works_shards||[]).reduce((n,row)=>n+Number(row.count||0),0);
+            if(workCount!==count)throw new Error(`${root}: work shard total ${workCount} != ${count}`);
+            const files=fs.readdirSync(root).filter(name=>name.endsWith('.json'));
+            let largest={name:'',bytes:0};
+            for(const name of files){
+              const bytes=fs.statSync(path.join(root,name)).size;
+              if(bytes>=LIMIT)throw new Error(`${root}/${name} ${(bytes/1048576).toFixed(2)}MiB exceeds Pages 25MiB`);
+              if(bytes>largest.bytes)largest={name,bytes};
             }
-            console.log(root,{works:count,summaryMB:(fs.statSync(`${root}/summary.json`).size/1048576).toFixed(2),searchMB:(fs.statSync(`${root}/search-index.json`).size/1048576).toFixed(2)});
+            console.log(root,{works:count,files:files.length,largest:largest.name,largestMiB:(largest.bytes/1048576).toFixed(2),postingShards:manifest.posting_shards.length,workShards:manifest.works_shards.length,termShards:manifest.term_shards.length});
           }
           NODE
 
