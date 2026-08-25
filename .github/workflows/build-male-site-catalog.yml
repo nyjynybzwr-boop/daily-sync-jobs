@@ -1,0 +1,146 @@
+name: Build male site catalog from R2
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-male-site-catalog.yml'
+
+concurrency:
+  group: build-male-site-catalog
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      R2_BUCKET_NAME: melosignal-data
+
+    steps:
+      - name: Require credentials
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}"
+          test -n "${CLOUDFLARE_API_TOKEN:-}"
+
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install project dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Verify both R2 crawls are complete
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          for (const media of ['audio','manga']) {
+            const p=require(`./data/male/r2/${media}-progress.json`);
+            if (Number(p.pending||0)!==0) throw new Error(`${media}: pending=${p.pending}`);
+            if (p.stopped_reason) throw new Error(`${media}: stopped_reason=${p.stopped_reason}`);
+            if (Number(p.processed||0)!==Number(p.source_catalog_ids||0)) throw new Error(`${media}: processed/source mismatch`);
+            console.log(media,{processed:p.processed,next_chunk:p.next_chunk,errors:(p.errors||[]).length});
+          }
+          NODE
+
+      - name: Download completed R2 chunks
+        working-directory: work
+        run: |
+          set -euo pipefail
+          retry_get() {
+            local key="$1" file="$2" attempt=1
+            while true; do
+              if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$file" --remote >/dev/null 2>&1; then
+                return 0
+              fi
+              if [ "$attempt" -ge 3 ]; then
+                echo "R2 download failed after 3 attempts: $key" >&2
+                return 1
+              fi
+              sleep $((attempt * 3))
+              attempt=$((attempt + 1))
+            done
+          }
+          for media in audio manga; do
+            count="$(node -e "const p=require('./data/male/r2/${media}-progress.json');process.stdout.write(String(Number(p.next_chunk||0)))")"
+            mkdir -p ".tmp/male-r2-download/${media}"
+            echo "Downloading ${media}: ${count} chunks"
+            for ((i=0;i<count;i++)); do
+              padded="$(printf '%05d' "$i")"
+              file=".tmp/male-r2-download/${media}/chunk-${padded}.json.gz"
+              retry_get "male/${media}/raw/chunk-${padded}.json.gz" "$file"
+              if (( (i + 1) % 20 == 0 || i + 1 == count )); then echo "${media}: $((i+1))/${count}"; fi
+            done
+          done
+
+      - name: Build browser-safe male audio catalog
+        working-directory: work
+        env:
+          MALE_MEDIA: audio
+          INPUT_DIR: .tmp/male-r2-download/audio
+          OUT_DIR: web/data/catalog/male
+        run: node scripts/build-male-r2-web.mjs
+
+      - name: Build browser-safe male manga catalog
+        working-directory: work
+        env:
+          MALE_MEDIA: manga
+          INPUT_DIR: .tmp/male-r2-download/manga
+          OUT_DIR: web/data/catalog/manga/male
+        run: node scripts/build-male-r2-web.mjs
+
+      - name: Validate generated site data
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const expected={
+            'web/data/catalog/male':61892,
+            'web/data/catalog/manga/male':129383,
+          };
+          for(const [root,count] of Object.entries(expected)){
+            const summary=JSON.parse(fs.readFileSync(`${root}/summary.json`,'utf8'));
+            const search=JSON.parse(fs.readFileSync(`${root}/search-index.json`,'utf8'));
+            if(summary.total_works!==count)throw new Error(`${root}: summary count ${summary.total_works} != ${count}`);
+            if(search.total_works!==count||search.works.length!==count)throw new Error(`${root}: search count mismatch`);
+            for(const file of ['summary.json','search-index.json']){
+              const bytes=fs.statSync(`${root}/${file}`).size;
+              if(bytes>=95*1024*1024)throw new Error(`${root}/${file} is ${(bytes/1024/1024).toFixed(2)}MB`);
+            }
+            console.log(root,{works:count,summaryMB:(fs.statSync(`${root}/summary.json`).size/1048576).toFixed(2),searchMB:(fs.statSync(`${root}/search-index.json`).size/1048576).toFixed(2)});
+          }
+          NODE
+
+      - name: Commit generated male catalog data to private source
+        working-directory: work
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add web/data/catalog/male web/data/catalog/manga/male
+          if git diff --cached --quiet; then
+            echo 'No male catalog web-data changes.'
+            exit 0
+          fi
+          git commit -m '[skip actions] data: publish male full-catalog web indexes'
+          git pull --rebase origin main
+          git push origin HEAD:main
