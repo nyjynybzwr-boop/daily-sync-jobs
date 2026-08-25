@@ -1,3 +1,4 @@
+# verification trigger v2: male patch now runs before the home lazy-loader transform
 name: Verify male market site build
 
 on:
