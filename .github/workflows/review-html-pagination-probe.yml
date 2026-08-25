@@ -11,6 +11,9 @@ on:
         description: 'Review target segment'
         required: false
         default: 'otome-audio'
+  push:
+    paths:
+      - '.github/workflows/review-html-pagination-probe.yml'
 
 permissions:
   contents: read
@@ -36,8 +39,8 @@ jobs:
       - name: Probe one stalled work with at most two HTML requests
         working-directory: work
         env:
-          REVIEW_PROBE_ID: ${{ inputs.product_id }}
-          REVIEW_PROBE_SEGMENT: ${{ inputs.segment }}
+          REVIEW_PROBE_ID: ${{ inputs.product_id || 'RJ01603829' }}
+          REVIEW_PROBE_SEGMENT: ${{ inputs.segment || 'otome-audio' }}
           REVIEW_PROBE_OUT: data/research/review-html-pagination-probe.json
           REVIEW_PROBE_DELAY_MS: '1500'
         run: node scripts/probe-review-html-pagination.mjs
