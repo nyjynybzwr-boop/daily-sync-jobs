@@ -6,6 +6,10 @@ on:
     paths:
       - '.github/workflows/build-review-targets-once.yml'
 
+concurrency:
+  group: build-review-target-manifests
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -47,13 +51,32 @@ jobs:
           audio_chunks="$(node -e "const p=require('./data/male/r2/audio-progress.json'); if(p.pending!==0||p.stopped_reason) process.exit(2); process.stdout.write(String(p.next_chunk))")"
           manga_chunks="$(node -e "const p=require('./data/male/r2/manga-progress.json'); if(p.pending!==0||p.stopped_reason) process.exit(2); process.stdout.write(String(p.next_chunk))")"
           echo "male audio chunks=$audio_chunks manga chunks=$manga_chunks"
-          for media in audio manga; do
-            if [ "$media" = audio ]; then total="$audio_chunks"; else total="$manga_chunks"; fi
-            for i in $(seq 0 $((total-1))); do
-              pad="$(printf '%05d' "$i")"
-              npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/male/${media}/raw/chunk-${pad}.json.gz" --file ".tmp/review-targets/male/${media}/chunk-${pad}.json.gz" --remote >/dev/null
+
+          # These are Cloudflare R2 reads only, not DLsite requests. Parallelizing
+          # this stage does not change the deliberately serial DLsite crawl rate.
+          npx --yes wrangler@latest --version >/dev/null
+          download_one() {
+            local media="$1" i="$2" pad attempt=1
+            pad="$(printf '%05d' "$i")"
+            while true; do
+              if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/male/${media}/raw/chunk-${pad}.json.gz" --file ".tmp/review-targets/male/${media}/chunk-${pad}.json.gz" --remote >/dev/null 2>&1; then
+                return 0
+              fi
+              if [ "$attempt" -ge 3 ]; then
+                echo "R2 download failed: ${media}/chunk-${pad}" >&2
+                return 1
+              fi
+              sleep $((attempt * 3))
+              attempt=$((attempt + 1))
             done
-          done
+          }
+          export -f download_one
+          export R2_BUCKET_NAME
+          {
+            for i in $(seq 0 $((audio_chunks-1))); do echo "audio $i"; done
+            for i in $(seq 0 $((manga_chunks-1))); do echo "manga $i"; done
+          } | xargs -n2 -P8 bash -c 'download_one "$1" "$2"' _
+          echo 'All male R2 detail chunks downloaded.'
 
       - name: Build target manifests
         working-directory: work
