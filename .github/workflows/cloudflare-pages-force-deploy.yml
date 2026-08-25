@@ -1,3 +1,4 @@
+# trigger: deploy winpaths activation fix a99ad66a
 name: Force deploy latest MeloSignal to Cloudflare Pages
 
 on:
