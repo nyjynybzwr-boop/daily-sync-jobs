@@ -1,7 +1,7 @@
 {
-  "checked_at": "2026-08-19T12:51:38.368Z",
+  "checked_at": "2026-08-25T11:36:35.916Z",
   "production": "https://dlsite-trend-radar.pages.dev",
-  "dashboard_generated_at": "2026-08-19T08:23:54.002Z",
+  "dashboard_generated_at": "2026-08-25T10:58:48.731Z",
   "dashboard_schema_version": 5,
   "word_presence": {
     "マン汁指摘": true,
@@ -11,11 +11,55 @@
     "＜応募方法＞": true,
     "＜応募〆切＞": true
   },
+  "winpaths": {
+    "current": {
+      "status": 200,
+      "bytes": 4034586,
+      "error": null,
+      "schema_version": 7,
+      "generated_at": "2026-08-25T10:58:48.731Z",
+      "market_keys": [
+        "otome",
+        "bl"
+      ]
+    },
+    "yearly": {
+      "status": 200,
+      "bytes": 1566518,
+      "error": null,
+      "schema_version": 7,
+      "generated_at": "2026-08-25T10:58:48.731Z",
+      "market_keys": [
+        "otome",
+        "bl"
+      ]
+    },
+    "controller": {
+      "status": 200,
+      "bytes": 31286,
+      "error": null,
+      "schema_version": null,
+      "generated_at": null,
+      "market_keys": null,
+      "contains_fetch_winpaths": true
+    },
+    "lazy_loader": {
+      "status": 200,
+      "bytes": 5015,
+      "error": null,
+      "schema_version": null,
+      "generated_at": null,
+      "market_keys": null,
+      "contains_fetch_winpaths": false,
+      "contains_winpaths_import": true
+    }
+  },
   "cloudflare_api_success": false,
   "cloudflare_api_errors": [
     {
       "code": 10000,
-      "message": "Authentication error"
+      "message": "Authentication error",
+      "documentation_url": "https://developers.cloudflare.com/api/resources/pages"
     }
   ],
   "deployments": []
