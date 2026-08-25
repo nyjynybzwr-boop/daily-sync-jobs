@@ -1,0 +1,61 @@
+name: Diagnose current site build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/diagnose-current-site-build.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        working-directory: work
+        run: npm ci
+      - name: Build site
+        id: build
+        working-directory: work
+        shell: bash
+        run: |
+          set +e
+          npm run build:site > /tmp/build.log 2>&1
+          rc=$?
+          set -e
+          tail -n 120 /tmp/build.log
+          printf '%s' "$rc" > /tmp/build.rc
+          exit 0
+      - name: Persist diagnosis
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rc="$(cat /tmp/build.rc 2>/dev/null || echo 999)"
+          tail -n 80 /tmp/build.log 2>/dev/null > /tmp/tail.txt || true
+          node - "$rc" <<'NODE'
+          const fs=require('fs');
+          const rc=Number(process.argv[2]);
+          const tail=fs.existsSync('/tmp/tail.txt')?fs.readFileSync('/tmp/tail.txt','utf8'):'';
+          fs.mkdirSync('status',{recursive:true});
+          fs.writeFileSync('status/current-site-build-diagnosis.json',JSON.stringify({checked_at:new Date().toISOString(),exit_code:rc,ok:rc===0,tail},null,2)+'\n');
+          NODE
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add status/current-site-build-diagnosis.json
+          git commit -m 'status: current site build diagnosis' || exit 0
+          git pull --rebase origin main
+          git push origin main
