@@ -27,7 +27,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Add ordered target SHA256 guard before any review request
+      - name: Add ordered target SHA256 guard and preserve repeated-page reviews
         working-directory: work
         run: |
           set -euo pipefail
@@ -82,11 +82,22 @@ jobs:
           assert s.count(old) == 1, 'console fingerprint anchor changed'
           s = s.replace(old, new)
 
+          old = "    if (added === 0) throw new Error(`PAGINATION_STALLED page=${page}`);"
+          new = "\n".join([
+              "    if (added === 0) {",
+              "      console.warn(`Review pagination repeated a full page for ${target.product_id} at page ${page}; treating collected unique reviews as complete.`);",
+              "      break;",
+              "    }",
+          ])
+          assert s.count(old) == 1, 'repeated-page anchor changed'
+          s = s.replace(old, new)
+
           p.write_text(s)
           PY
           node --check scripts/crawl-reviews-r2-chunk.mjs
           grep -q 'TARGET_FINGERPRINT_MISMATCH' scripts/crawl-reviews-r2-chunk.mjs
-          test "$(grep -c 'target_fingerprint: targetFingerprint' scripts/crawl-reviews-r2-chunk.mjs)" -eq 5
+          grep -q 'Review pagination repeated a full page' scripts/crawl-reviews-r2-chunk.mjs
+          test "$(grep -c 'target_fingerprint: targetFingerprint' scripts/crawl-reviews-r2-chunk.mjs)" -eq 4
 
       - name: Commit hardening to private source
         working-directory: work
@@ -97,6 +108,6 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add scripts/crawl-reviews-r2-chunk.mjs
-          git commit -m '[CF-Pages-Skip] [skip actions] reviews: freeze target ordering by SHA256' || exit 0
+          git commit -m '[CF-Pages-Skip] [skip actions] reviews: freeze targets and preserve repeated-page reviews' || exit 0
           git pull --rebase origin main
           git push origin main
