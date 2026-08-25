@@ -39,7 +39,9 @@ jobs:
           test "$(head -c 7 data/manga/catalog/full/details.json)" != 'version' || { echo 'manga LFS pointer not hydrated' >&2; exit 1; }
       - name: Install source dependencies
         working-directory: work
-        run: npm ci
+        run: |
+          npm ci
+          npm install --no-save devalue
       - name: Probe girls-drama-touch listing and BJ detail
         working-directory: work
         run: |
