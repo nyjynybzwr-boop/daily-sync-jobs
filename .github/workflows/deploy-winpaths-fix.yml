@@ -1,0 +1,106 @@
+name: Deploy winpaths activation fix
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/deploy-winpaths-fix.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy-winpaths-fix
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      R2_BUCKET_NAME: melosignal-data
+      CF_PAGES_PROJECT: dlsite-trend-radar
+      PROD_BASE: https://dlsite-trend-radar.pages.dev
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        working-directory: work
+        run: npm ci
+      - name: Build production output
+        working-directory: work
+        shell: bash
+        run: |
+          set +e
+          npm run build:cloudflare-pages > /tmp/build.log 2>&1
+          rc=$?
+          set -e
+          tail -n 120 /tmp/build.log
+          echo "$rc" > /tmp/build.rc
+          if [ "$rc" != 0 ]; then exit "$rc"; fi
+      - name: Deploy current main
+        if: success()
+        working-directory: work
+        shell: bash
+        run: |
+          set +e
+          SHA="$(git rev-parse HEAD)"
+          npx --yes wrangler@latest pages deploy site --project-name "$CF_PAGES_PROJECT" --branch main --commit-hash "$SHA" --commit-message "Winpaths activation fix $SHA" > /tmp/deploy.log 2>&1
+          rc=$?
+          set -e
+          cat /tmp/deploy.log
+          echo "$rc" > /tmp/deploy.rc
+          if [ "$rc" != 0 ]; then exit "$rc"; fi
+      - name: Probe production until fixed controller is visible
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -LfsS --max-time 30 "$PROD_BASE/winpaths.js?fix=$(date +%s)" -o /tmp/live.js \
+              && grep -Fq 'canonical activation signal too' /tmp/live.js; then
+              ok=1
+              break
+            fi
+            sleep 5
+          done
+          echo "$ok" > /tmp/live.ok
+          test "$ok" = 1
+      - name: Persist deploy diagnosis
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_rc="$(cat /tmp/build.rc 2>/dev/null || echo 999)"
+          deploy_rc="$(cat /tmp/deploy.rc 2>/dev/null || echo 999)"
+          live_ok="$(cat /tmp/live.ok 2>/dev/null || echo 0)"
+          build_tail="$(tail -n 30 /tmp/build.log 2>/dev/null | python -c 'import json,sys; print(json.dumps(sys.stdin.read()))')"
+          deploy_tail="$(tail -n 30 /tmp/deploy.log 2>/dev/null | python -c 'import json,sys; print(json.dumps(sys.stdin.read()))')"
+          mkdir -p status
+          cat > status/winpaths-fix-deploy.json <<JSON
+          {
+            "checked_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "build_exit_code": $build_rc,
+            "deploy_exit_code": $deploy_rc,
+            "live_fix_present": $live_ok,
+            "build_tail": $build_tail,
+            "deploy_tail": $deploy_tail
+          }
+          JSON
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add status/winpaths-fix-deploy.json
+          git commit -m 'status: winpaths fix deploy' || exit 0
+          git pull --rebase origin main
+          git push origin main
