@@ -95,8 +95,14 @@ jobs:
             {segment:'bl-manga',market:'bl',media:'manga',api_base:'bl',file:'data/manga/bl/catalog/full/details.json'},
           ];
           const clean=s=>String(s??'').replace(/\s+/g,' ').trim();
-          const reviewCount=x=>Math.max(0,Number(x?.review_count ?? x?.reviews ?? 0)||0);
           const validId=id=>/^(?:RJ|BJ|VJ|AJ)\d+$/.test(String(id||'').toUpperCase());
+          const reviewCount=x=>{
+            if(x?.detail_error)return null;
+            const raw=x?.review_count ?? x?.reviews;
+            if(raw===null||raw===undefined||raw==='')return null;
+            const n=Number(raw);
+            return Number.isFinite(n)&&n>=0?n:null;
+          };
           const makeTarget=(item,spec)=>({
             product_id:String(item?.product_id||'').toUpperCase(),
             expected_review_count:reviewCount(item),
@@ -106,17 +112,26 @@ jobs:
             media:spec.media,
             api_base:spec.api_base,
           });
+          const buildSegment=(works,spec)=>{
+            const valid=works.filter(x=>validId(x?.product_id));
+            const counts=valid.map(x=>reviewCount(x));
+            const knownZero=counts.filter(x=>x===0).length;
+            const unknown=counts.filter(x=>x===null).length;
+            const targets=valid.filter(x=>{const n=reviewCount(x);return n===null||n>0}).map(x=>makeTarget(x,spec));
+            const seen=new Set();
+            const dedup=targets.filter(x=>!seen.has(x.product_id)&&seen.add(x.product_id));
+            const expectedReviews=dedup.reduce((s,x)=>s+(x.expected_review_count??0),0);
+            return {valid,dedup,knownZero,unknown,expectedReviews};
+          };
           const outputs=[];
+
           for(const spec of specs){
             const map=JSON.parse(await fs.readFile(spec.file,'utf8'));
             const works=Array.isArray(map)?map:Object.values(map);
-            const targets=works.filter(x=>validId(x?.product_id)&&reviewCount(x)>0).map(x=>makeTarget(x,spec));
-            const seen=new Set();
-            const dedup=targets.filter(x=>!seen.has(x.product_id)&&seen.add(x.product_id));
-            const expectedReviews=dedup.reduce((s,x)=>s+x.expected_review_count,0);
-            const out={schema_version:1,generated_at:new Date().toISOString(),segment:spec.segment,market:spec.market,media:spec.media,api_base:spec.api_base,source_work_count:works.length,target_work_count:dedup.length,expected_review_count_sum:expectedReviews,targets:dedup};
+            const b=buildSegment(works,spec);
+            const out={schema_version:2,generated_at:new Date().toISOString(),segment:spec.segment,market:spec.market,media:spec.media,api_base:spec.api_base,source_work_count:works.length,valid_id_work_count:b.valid.length,target_work_count:b.dedup.length,known_zero_skipped_count:b.knownZero,unknown_review_count_target_count:b.unknown,expected_review_count_sum_known:b.expectedReviews,targets:b.dedup};
             await fs.writeFile(`data/reviews/targets/${spec.segment}.json`,JSON.stringify(out,null,2)+'\n');
-            outputs.push({segment:spec.segment,source_works:works.length,target_works:dedup.length,expected_reviews:expectedReviews});
+            outputs.push({segment:spec.segment,source_works:works.length,target_works:b.dedup.length,known_zero_skipped:b.knownZero,unknown_targets:b.unknown,expected_reviews_known:b.expectedReviews});
           }
 
           for(const media of ['audio','manga']){
@@ -126,17 +141,14 @@ jobs:
             const works=[];
             for(const f of files){
               const payload=JSON.parse(gunzipSync(await fs.readFile(path.join(dir,f))).toString('utf8'));
-              for(const item of payload.works||[]) if(!item?.detail_error) works.push(item);
+              for(const item of payload.works||[]) works.push(item);
             }
-            const targets=works.filter(x=>validId(x?.product_id)&&reviewCount(x)>0).map(x=>makeTarget(x,spec));
-            const seen=new Set();
-            const dedup=targets.filter(x=>!seen.has(x.product_id)&&seen.add(x.product_id));
-            const expectedReviews=dedup.reduce((s,x)=>s+x.expected_review_count,0);
-            const out={schema_version:1,generated_at:new Date().toISOString(),segment:spec.segment,market:spec.market,media:spec.media,api_base:spec.api_base,source_work_count:works.length,target_work_count:dedup.length,expected_review_count_sum:expectedReviews,targets:dedup};
+            const b=buildSegment(works,spec);
+            const out={schema_version:2,generated_at:new Date().toISOString(),segment:spec.segment,market:spec.market,media:spec.media,api_base:spec.api_base,source_work_count:works.length,valid_id_work_count:b.valid.length,target_work_count:b.dedup.length,known_zero_skipped_count:b.knownZero,unknown_review_count_target_count:b.unknown,expected_review_count_sum_known:b.expectedReviews,targets:b.dedup};
             await fs.writeFile(`data/reviews/targets/${spec.segment}.json`,JSON.stringify(out,null,2)+'\n');
-            outputs.push({segment:spec.segment,source_works:works.length,target_works:dedup.length,expected_reviews:expectedReviews});
+            outputs.push({segment:spec.segment,source_works:works.length,target_works:b.dedup.length,known_zero_skipped:b.knownZero,unknown_targets:b.unknown,expected_reviews_known:b.expectedReviews});
           }
-          const summary={schema_version:1,generated_at:new Date().toISOString(),segments:outputs,total_source_works:outputs.reduce((s,x)=>s+x.source_works,0),total_target_works:outputs.reduce((s,x)=>s+x.target_works,0),expected_review_count_sum:outputs.reduce((s,x)=>s+x.expected_reviews,0)};
+          const summary={schema_version:2,generated_at:new Date().toISOString(),segments:outputs,total_source_works:outputs.reduce((s,x)=>s+x.source_works,0),total_target_works:outputs.reduce((s,x)=>s+x.target_works,0),known_zero_skipped_total:outputs.reduce((s,x)=>s+x.known_zero_skipped,0),unknown_review_count_target_total:outputs.reduce((s,x)=>s+x.unknown_targets,0),expected_review_count_sum_known:outputs.reduce((s,x)=>s+x.expected_reviews_known,0)};
           await fs.writeFile('data/reviews/targets/summary.json',JSON.stringify(summary,null,2)+'\n');
           console.log(JSON.stringify(summary,null,2));
           NODE
@@ -150,6 +162,6 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add data/reviews/targets
-          git commit -m '[CF-Pages-Skip] [skip actions] reviews: build all-market target manifests' || exit 0
+          git commit -m '[CF-Pages-Skip] [skip actions] reviews: build complete target manifests' || exit 0
           git pull --rebase origin main
           git push origin main
