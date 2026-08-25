@@ -1,0 +1,44 @@
+name: Check live winpaths activation fix
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/check-winpaths-fix-live.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe production controller
+        run: |
+          set -euo pipefail
+          mkdir -p status
+          url="https://dlsite-trend-radar.pages.dev/winpaths.js?fixcheck=$(date +%s)"
+          code="$(curl -L -sS --max-time 60 -o /tmp/winpaths.js -w '%{http_code}' "$url" || true)"
+          marker=false
+          if grep -Fq 'canonical activation signal too' /tmp/winpaths.js 2>/dev/null; then marker=true; fi
+          bytes="$(wc -c </tmp/winpaths.js 2>/dev/null || echo 0)"
+          cat > status/winpaths-live-fix.json <<JSON
+          {
+            "checked_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "http_status": $code,
+            "bytes": $bytes,
+            "activation_fix_present": $marker
+          }
+          JSON
+          cat status/winpaths-live-fix.json
+      - name: Persist
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add status/winpaths-live-fix.json
+          git commit -m 'status: check live winpaths fix' || exit 0
+          git pull --rebase origin main
+          git push origin main
