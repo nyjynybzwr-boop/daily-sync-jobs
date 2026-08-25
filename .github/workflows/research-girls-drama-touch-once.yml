@@ -1,0 +1,107 @@
+name: Research girls-drama-touch once
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/research-girls-drama-touch-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout private source without LFS smudge
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies and required LFS data
+        working-directory: work
+        run: |
+          set -euo pipefail
+          npm ci
+          git lfs pull --include='data/catalog/full/details.json,data/manga/catalog/full/details.json' --exclude=''
+          test "$(wc -c < data/catalog/full/details.json)" -gt 1000000
+          test "$(wc -c < data/manga/catalog/full/details.json)" -gt 1000000
+
+      - name: Probe girls-drama-touch listing and BJ detail
+        working-directory: work
+        run: |
+          set -euo pipefail
+          mkdir -p data/research
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
+          import { fetchDlsiteProductPlain } from './scripts/lib/dlsite-fetch-detail.mjs';
+          const headers={
+            'User-Agent':'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+            'Accept-Language':'ja-JP,ja;q=0.9',
+            Accept:'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          };
+          const candidates=[
+            'https://www.dlsite.com/girls-drama-touch/works/type/=/work_type_category/audio/page/1',
+            'https://www.dlsite.com/girls-drama-touch/works/type/=/work_type_category/drama/page/1',
+            'https://www.dlsite.com/girls-drama-touch/works/page/1',
+            'https://www.dlsite.com/girls-drama-touch/fsr/=/language/jp/sex_category%5B0%5D/female/work_category%5B0%5D/drama/order%5B0%5D/release_d/options_and_or/and/options%5B0%5D/JPN/per_page/30/page/1/is_tl/1'
+          ];
+          const strip=s=>String(s||'').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/\s+/g,' ');
+          const out={checked_at:new Date().toISOString(),listings:[],detail:null};
+          for(const url of candidates){
+            const row={url,status:null,final_url:null,bytes:0,source_total_count:null,main_grid:false,product_ids:[],prefix_counts:{},error:null};
+            try{
+              const res=await fetch(url,{headers,redirect:'follow'});
+              row.status=res.status; row.final_url=res.url;
+              const html=await res.text(); row.bytes=Buffer.byteLength(html);
+              row.main_grid=/class=(['"])[^'"]*\bn_work_list\b[^'"]*\btype_grid\b[^'"]*\btype_horizontal\b[^'"]*\1/i.test(html);
+              const text=strip(html);
+              const patterns=[
+                /([\d,]+)\s*件中\s*[\d,]+\s*[-−ー~〜]\s*[\d,]+\s*件目/,
+                /全\s*([\d,]+)\s*件/,
+                /([\d,]+)\s*作品/
+              ];
+              for(const p of patterns){const m=text.match(p); if(m){row.source_total_count=Number(m[1].replace(/,/g,''));break;}}
+              row.product_ids=[...new Set([...html.matchAll(/product_id\/(BJ\d+|RJ\d+|VJ\d+|AJ\d+)/gi)].map(x=>x[1].toUpperCase()))].slice(0,100);
+              for(const id of row.product_ids){const p=id.slice(0,2);row.prefix_counts[p]=(row.prefix_counts[p]||0)+1;}
+            }catch(e){row.error=String(e?.message||e)}
+            out.listings.push(row);
+          }
+          try{
+            const seed={product_id:'BJ02431592',url:'https://www.dlsite.com/girls-drama-touch/work/=/product_id/BJ02431592.html',title:'嘘つきコインランドリー'};
+            const d=await fetchDlsiteProductPlain(seed,{timeoutMs:30000});
+            out.detail={ok:true,product_id:d.product_id,title:d.title,circle:d.circle,work_type_value:d.work_type_value,work_type_name:d.work_type_name,release_date:d.release_date,sales_count:d.sales_count,price:d.price,rating:d.rating,review_count:d.review_count,voice_actors:d.voice_actors,tags:d.tags,tracks_count:Array.isArray(d.tracks)?d.tracks.length:null,description_chars:String(d.description||'').length,description_long_chars:String(d.description_long||'').length,introductions_count:Array.isArray(d.introductions)?d.introductions.length:null,content_sections_count:Array.isArray(d.content_sections)?d.content_sections.length:null,detail_parser_version:d.detail_parser_version,detail_error:d.detail_error||null};
+          }catch(e){out.detail={ok:false,error:String(e?.message||e)}}
+          await fs.writeFile('data/research/girls-drama-touch-probe.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out,null,2));
+          NODE
+
+      - name: Run plot-independent literary texture pilot
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node scripts/poc-literary-texture.mjs
+          test -s analysis/literary-texture-pilot.json
+
+      - name: Persist research results to private repo
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/research/girls-drama-touch-probe.json analysis/literary-texture-pilot.json
+          git commit -m '[CF-Pages-Skip] [skip actions] research: girls-drama-touch and literary texture results' || exit 0
+          git pull --rebase origin main
+          git push origin main
