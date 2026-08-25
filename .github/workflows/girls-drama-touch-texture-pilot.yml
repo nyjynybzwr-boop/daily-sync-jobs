@@ -76,39 +76,19 @@ jobs:
           await fs.writeFile('data/research/girls-drama-touch-probe.json',JSON.stringify(out,null,2)+'\n');
           console.log(JSON.stringify(out,null,2));
           NODE
-      - name: Run plot-independent texture pilot
-        working-directory: work
-        run: node scripts/analyze-literary-texture-pilot.mjs
-      - name: Persist research into private source
-        if: github.event_name != 'pull_request'
+      - name: Run plot-independent texture pilots
         working-directory: work
         run: |
-          set -euo pipefail
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add data/research/girls-drama-touch-probe.json analysis/literary-texture-pilot.json
-          git commit -m 'research: record drama-touch and literary texture pilot' || exit 0
-          git pull --rebase origin main
-          git push origin main
+          node scripts/analyze-literary-texture-pilot.mjs
+          node scripts/analyze-literary-texture-pilot-v2.mjs
       - name: Upload research artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: drama-touch-texture-research
+          name: drama-touch-texture-research-v2
           path: |
             work/data/research/girls-drama-touch-probe.json
             work/analysis/literary-texture-pilot.json
+            work/analysis/literary-texture-pilot-v2.json
           if-no-files-found: warn
           retention-days: 2
-      - name: Copy status here
-        if: github.event_name != 'pull_request' && always()
-        run: |
-          mkdir -p status
-          cp work/data/research/girls-drama-touch-probe.json status/girls-drama-touch-probe.json 2>/dev/null || true
-          cp work/analysis/literary-texture-pilot.json status/literary-texture-pilot.json 2>/dev/null || true
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add status/girls-drama-touch-probe.json status/literary-texture-pilot.json || true
-          git commit -m 'status: drama-touch texture research' || exit 0
-          git pull --rebase origin main
-          git push origin main
