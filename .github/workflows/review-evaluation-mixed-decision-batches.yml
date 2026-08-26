@@ -92,6 +92,16 @@ jobs:
             node scripts/build-review-evaluation-provisional-mechanism-promotion-packet.mjs
           fi
 
+      - name: Build full provisional axis audit packet
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: |
+          set -euo pipefail
+          if test -s "$PILOT_DIR/mixed-evidence-decisions-by-evidence.json"; then
+            node scripts/build-review-evaluation-provisional-axis-audit-packet.mjs
+          fi
+
       - name: Commit coverage and reviewed decisions
         working-directory: work
         env:
@@ -110,7 +120,10 @@ jobs:
             mixed-evidence-canonical-summary.json \
             mixed-evidence-canonical-summary.md \
             provisional-mechanism-promotion-packet.json \
-            provisional-mechanism-promotion-packet.md; do
+            provisional-mechanism-promotion-packet.md \
+            provisional-axis-audit-packet.json \
+            provisional-axis-audit-packet.md \
+            provisional-axis-audit-decisions.template.json; do
             if test -f "$PILOT_DIR/$f"; then git add "$PILOT_DIR/$f"; fi
           done
           git commit -m "[CF-Pages-Skip] [skip actions] reviews: canonical mixed evidence decisions" || exit 0
