@@ -1,0 +1,72 @@
+name: Validate review evaluation rollout gate
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/validate-review-evaluation-rollout-gate.yml'
+      - '.review-evaluation-rollout-gate-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-rollout-gate
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate human calibration decision
+        working-directory: work
+        run: node scripts/validate-review-evaluation-calibration-decision.mjs
+
+      - name: Check full-corpus rollout readiness
+        working-directory: work
+        run: node scripts/check-review-evaluation-full-corpus-rollout-readiness.mjs
+
+      - name: Assert final gate
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const cal=JSON.parse(fs.readFileSync('data/research/review-evaluation-calibration/shadow-calibration-decision.validation.json','utf8'));
+          const gate=JSON.parse(fs.readFileSync('data/research/review-evaluation-spec/review-evaluation-full-corpus-rollout-readiness.json','utf8'));
+          if(cal.status!=='validated_human_shadow_calibration_decision') throw new Error(`unexpected calibration validation: ${cal.status}`);
+          if(cal.full_corpus_rollout_approved!==true) throw new Error('full corpus rollout was not approved');
+          if(cal.selected_confidence_slice!=='medium_or_high') throw new Error(`unexpected confidence slice: ${cal.selected_confidence_slice}`);
+          if(gate.status!=='READY_FOR_FULL_CORPUS_BATCH_ROLLOUT'||gate.ready!==true) throw new Error(`final gate not ready: ${gate.status}`);
+          if(gate.selected_confidence_slice!=='medium_or_high') throw new Error(`gate slice mismatch: ${gate.selected_confidence_slice}`);
+          if((gate.blockers||[]).length!==0) throw new Error(`gate blockers: ${JSON.stringify(gate.blockers)}`);
+          console.log(JSON.stringify({calibration:cal.status,approved:cal.full_corpus_rollout_approved,slice:cal.selected_confidence_slice,rollout:gate.status,passed_gates:gate.passed_gates,blockers:gate.blockers},null,2));
+          NODE
+
+      - name: Commit validated gate outputs
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            data/research/review-evaluation-calibration/shadow-calibration-decision.validation.json \
+            data/research/review-evaluation-spec/review-evaluation-full-corpus-rollout-readiness.json
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: validate full-corpus rollout gate" || exit 0
+          git pull --rebase origin main
+          git push origin main
