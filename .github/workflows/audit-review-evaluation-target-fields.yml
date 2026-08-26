@@ -1,0 +1,84 @@
+name: Audit review evaluation target fields
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/audit-review-evaluation-target-fields.yml'
+      - '.review-evaluation-target-audit-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-target-field-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PILOT_DIR: data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1
+      TAXONOMY_FILE: data/research/review-evaluation-spec/shared-mechanism-taxonomy-v1.json
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Audit evaluation target fields
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+          REVIEW_MECHANISM_TAXONOMY_JSON: ${{ env.TAXONOMY_FILE }}
+        run: node scripts/audit-review-evaluation-target-fields.mjs
+
+      - name: Validate target audit outputs
+        working-directory: work
+        run: |
+          set -euo pipefail
+          test -s "$PILOT_DIR/evaluation-target-field-audit.json"
+          test -s "$PILOT_DIR/evaluation-target-field-audit.md"
+          node - "$PILOT_DIR/evaluation-target-field-audit.json" <<'NODE'
+          const fs=require('fs');
+          const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(d.status!=='target_field_audit_not_target_taxonomy') throw new Error(`unexpected status ${d.status}`);
+          if(d.source_counts?.evidence_rows!==7223) throw new Error(`expected 7223 evidence rows, got ${d.source_counts?.evidence_rows}`);
+          if(!d.target_field_coverage||!d.facet_audit||!d.play_target_audit||!d.mechanism_target_join_audit) throw new Error('audit sections missing');
+          if(!Array.isArray(d.provisional_target_design_implications)||d.provisional_target_design_implications.length<5) throw new Error('design implications missing');
+          console.log({evidence:d.source_counts.evidence_rows,semantic_usable:d.target_field_coverage.semantic_target_usable,play_evidence:d.play_target_audit.unique_evidence_with_play_anchor,mechanism_assigned:d.mechanism_target_join_audit.evidence_with_canonical_mechanism_assignment,target_unresolved:d.mechanism_target_join_audit.mechanism_assigned_but_target_unresolved});
+          NODE
+
+      - name: Commit target audit outputs
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$PILOT_DIR/evaluation-target-field-audit.json" "$PILOT_DIR/evaluation-target-field-audit.md"
+          if git diff --cached --quiet; then
+            echo 'no target audit changes to commit'
+            exit 0
+          fi
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: evaluation target field audit"
+          for attempt in 1 2 3 4 5 6; do
+            echo "push attempt $attempt"
+            git fetch origin main
+            git rebase origin/main
+            if git push origin main; then
+              exit 0
+            fi
+            sleep $((attempt * 2))
+          done
+          echo 'failed to push target audit after retries' >&2
+          exit 1
