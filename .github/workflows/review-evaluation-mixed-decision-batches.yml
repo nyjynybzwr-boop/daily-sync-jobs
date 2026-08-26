@@ -50,7 +50,19 @@ jobs:
           REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
         run: node scripts/merge-review-evaluation-mixed-split-decision-batches.mjs
 
-      - name: Commit coverage and partial decisions
+      - name: Audit duplicate evidence decisions
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: |
+          set -euo pipefail
+          if test -s "$PILOT_DIR/mixed-evidence-split-decisions.json"; then
+            node scripts/audit-review-evaluation-duplicate-evidence-decisions.mjs
+          else
+            echo 'final mixed decisions not complete yet; skipping duplicate audit'
+          fi
+
+      - name: Commit coverage and reviewed decisions
         working-directory: work
         env:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
@@ -61,6 +73,9 @@ jobs:
           git add "$PILOT_DIR/mixed-evidence-split-batch-coverage.json" \
                   "$PILOT_DIR/mixed-evidence-split-decisions.partial.json"
           if test -f "$PILOT_DIR/mixed-evidence-split-decisions.json"; then git add "$PILOT_DIR/mixed-evidence-split-decisions.json"; fi
+          if test -f "$PILOT_DIR/mixed-evidence-duplicate-audit.json"; then git add "$PILOT_DIR/mixed-evidence-duplicate-audit.json"; fi
+          if test -f "$PILOT_DIR/mixed-evidence-duplicate-audit.md"; then git add "$PILOT_DIR/mixed-evidence-duplicate-audit.md"; fi
+          if test -f "$PILOT_DIR/mixed-evidence-decisions-by-evidence.json"; then git add "$PILOT_DIR/mixed-evidence-decisions-by-evidence.json"; fi
           git commit -m "[CF-Pages-Skip] [skip actions] reviews: mixed decision batch coverage" || exit 0
           git pull --rebase origin main
           git push origin main
