@@ -1,0 +1,61 @@
+name: Audit review play evaluation anchors
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/audit-review-play-evaluation-anchors.yml'
+      - '.review-play-anchor-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-play-evaluation-anchor-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PILOT_DIR: data/research/review-evaluation-pilot/otome-audio-yearly-top30-2025
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build concrete play evaluation target audit
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: node scripts/analyze-review-play-evaluation-anchors.mjs
+
+      - name: Validate and commit
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          out="$PILOT_DIR/play-evaluation-anchors.json"
+          test -s "$out"
+          node - "$out" <<'NODE'
+          const fs=require('fs'); const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(!d.works?.length) throw new Error('no works in play audit');
+          if(!d.global?.length) throw new Error('no play anchors found');
+          console.log({works:d.works.length,top:d.global.slice(0,10).map(x=>[x.label,x.unique_review_count])});
+          NODE
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$out"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: concrete play evaluation anchor audit" || exit 0
+          git pull --rebase origin main
+          git push origin main
