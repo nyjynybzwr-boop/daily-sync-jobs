@@ -21,6 +21,7 @@ jobs:
     env:
       PILOT_DIR: data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1
       TAXONOMY_FILE: data/research/review-evaluation-spec/shared-mechanism-taxonomy-v1.json
+      TARGET_REGISTRY: data/research/review-evaluation-spec/evaluation-target-taxonomy-candidates-v1.json
     steps:
       - name: Checkout private source
         env:
@@ -61,7 +62,33 @@ jobs:
           console.log({general:p.summary.general_target_cluster_candidates,quality:p.summary.quality_status_counts,flags:p.summary.target_review_flag_counts,play_seeds:p.summary.play_target_seed_count,strict_play_rows:p.summary.strict_play_target_rows});
           NODE
 
-      - name: Commit target mapping packet
+      - name: Build target decision template
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+          REVIEW_TARGET_CANDIDATE_REGISTRY_JSON: ${{ env.TARGET_REGISTRY }}
+        run: node scripts/build-review-evaluation-target-decision-template.mjs
+
+      - name: Validate target decision template
+        working-directory: work
+        run: |
+          set -euo pipefail
+          test -s "$PILOT_DIR/target-mapping-decisions.template.json"
+          node - "$PILOT_DIR/target-mapping-packet.json" "$PILOT_DIR/target-mapping-decisions.template.json" "$TARGET_REGISTRY" <<'NODE'
+          const fs=require('fs');
+          const packet=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          const template=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+          const registry=JSON.parse(fs.readFileSync(process.argv[4],'utf8'));
+          if(template.status!=='human_review_template_not_decisions') throw new Error(`unexpected template status ${template.status}`);
+          if(template.general_decisions?.length!==packet.general_target_candidates?.length) throw new Error('template/packet general count mismatch');
+          if(template.allowed_target_family_keys?.length!==registry.families?.length) throw new Error('family registry mismatch');
+          const registryTargetCount=(registry.families||[]).reduce((n,f)=>n+(f.candidate_targets||[]).length,0);
+          if(template.allowed_target_keys?.length!==registryTargetCount) throw new Error('target key registry mismatch');
+          if(!template.play_target_policy?.auto_candidate_statuses?.includes('explicit_play_target')) throw new Error('strict play policy missing');
+          console.log({general:template.general_decisions.length,families:template.allowed_target_family_keys.length,target_keys:template.allowed_target_keys.length});
+          NODE
+
+      - name: Commit target mapping outputs
         working-directory: work
         env:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
@@ -69,12 +96,12 @@ jobs:
           set -euo pipefail
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add "$PILOT_DIR/target-mapping-packet.json" "$PILOT_DIR/target-mapping-packet.md"
+          git add "$PILOT_DIR/target-mapping-packet.json" "$PILOT_DIR/target-mapping-packet.md" "$PILOT_DIR/target-mapping-decisions.template.json"
           if git diff --cached --quiet; then
-            echo 'no target mapping packet changes to commit'
+            echo 'no target mapping output changes to commit'
             exit 0
           fi
-          git commit -m "[CF-Pages-Skip] [skip actions] reviews: target mapping packet"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: target mapping packet and decision template"
           for attempt in 1 2 3 4 5 6; do
             echo "push attempt $attempt"
             git fetch origin main
@@ -84,5 +111,5 @@ jobs:
             fi
             sleep $((attempt * 2))
           done
-          echo 'failed to push target mapping packet after retries' >&2
+          echo 'failed to push target mapping outputs after retries' >&2
           exit 1
