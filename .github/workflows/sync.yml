@@ -19,6 +19,7 @@ on:
           - j
           - k
           - l
+          - m
         default: a
   schedule:
     - cron: '0 14 * * *'
@@ -30,6 +31,7 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   run:
@@ -174,6 +176,13 @@ jobs:
         working-directory: work
         run: node scripts/inspect-comic-nuxt.mjs >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Job L failed.'; exit 1)
 
+      - name: Run job M (otome manga catalog)
+        if: steps.target.outputs.target == 'm'
+        working-directory: work
+        run: |
+          source scripts/ci/dlsite-jp-relay-env.sh
+          bash scripts/ci/run-h.sh >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Job M failed.'; exit 1)
+
       - name: Push results (A)
         if: steps.target.outputs.target == 'a'
         working-directory: work
@@ -213,3 +222,8 @@ jobs:
         if: steps.target.outputs.target == 'l'
         working-directory: work
         run: bash scripts/ci/push.sh "analysis/comic-nuxt-inspect.json" >/tmp/step.log 2>&1 || (echo 'Push L failed.'; exit 1)
+
+      - name: Push results (M)
+        if: steps.target.outputs.target == 'm'
+        working-directory: work
+        run: bash scripts/ci/push.sh "data/manga/catalog" >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Push M failed.'; exit 1)
