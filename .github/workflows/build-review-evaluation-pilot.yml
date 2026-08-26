@@ -1,0 +1,121 @@
+name: Build review evaluation evidence pilot
+
+on:
+  workflow_dispatch:
+    inputs:
+      years:
+        description: 'Yearly ranking years, comma-separated'
+        required: false
+        default: '2025'
+      top_n:
+        description: 'Top N per yearly ranking'
+        required: false
+        default: '30'
+      max_evidence_per_work:
+        description: 'Max evidence excerpts per work'
+        required: false
+        default: '120'
+  push:
+    paths:
+      - '.github/workflows/build-review-evaluation-pilot.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-pilot
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      R2_BUCKET_NAME: melosignal-data
+      REVIEW_SEGMENT: otome-audio
+      REVIEW_EVAL_YEARS: ${{ inputs.years || '2025' }}
+      REVIEW_EVAL_TOP_N: ${{ inputs.top_n || '30' }}
+      REVIEW_EVAL_MAX_EVIDENCE_PER_WORK: ${{ inputs.max_evidence_per_work || '120' }}
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download frozen otome-audio review chunks from R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          dir=".tmp/reviews-evaluation/${REVIEW_SEGMENT}"
+          mkdir -p "$dir"
+          node - <<'NODE' > .tmp/review-eval-chunk-keys.txt
+          const fs=require('fs');
+          const segment=process.env.REVIEW_SEGMENT;
+          const m=JSON.parse(fs.readFileSync(`data/reviews/manifests/${segment}.json`,'utf8'));
+          if(Number(m.processed_target_works||0)<Number(m.source_target_works||0)){
+            throw new Error(`${segment}: review crawl incomplete ${m.processed_target_works}/${m.source_target_works}`);
+          }
+          const chunks=(m.chunks||[]).filter(c=>c.complete&&!c.stopped_reason).sort((a,b)=>Number(a.index)-Number(b.index));
+          if(!chunks.length) throw new Error(`${segment}: no complete chunks`);
+          for(const c of chunks) console.log(c.key);
+          NODE
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            out="$dir/$(basename "$key")"
+            echo "download $key"
+            ok=0
+            for attempt in 1 2 3; do
+              if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null; then ok=1; break; fi
+              sleep $((attempt * 5))
+            done
+            [ "$ok" -eq 1 ] || { echo "failed to download $key" >&2; exit 1; }
+          done < .tmp/review-eval-chunk-keys.txt
+
+      - name: Build bottom-up evaluation evidence pilot
+        working-directory: work
+        env:
+          REVIEW_CHUNK_DIR: .tmp/reviews-evaluation/otome-audio
+          REVIEW_EVAL_OUT: data/research/review-evaluation-pilot
+        run: node scripts/build-review-evaluation-evidence-pilot.mjs
+
+      - name: Verify privacy boundary and non-empty evidence
+        working-directory: work
+        run: |
+          set -euo pipefail
+          pilot="data/research/review-evaluation-pilot/otome-audio-yearly-top${REVIEW_EVAL_TOP_N}-${REVIEW_EVAL_YEARS//,/-}"
+          test -f "$pilot/manifest.json"
+          node - "$pilot/manifest.json" <<'NODE'
+          const fs=require('fs');
+          const p=process.argv[2];
+          const m=JSON.parse(fs.readFileSync(p,'utf8'));
+          if(!m.selected_work_count||!m.source_review_count||!m.exported_evidence_count) throw new Error('pilot output empty');
+          if(m.works_with_reviews!==m.selected_work_count) console.warn(`warning: works_with_reviews ${m.works_with_reviews}/${m.selected_work_count}`);
+          console.log({works:m.selected_work_count,reviews:m.source_review_count,candidates:m.evidence_candidate_count,exported:m.exported_evidence_count});
+          NODE
+          if grep -R -E -n 'https?://|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$pilot" --include='*.md'; then
+            echo 'privacy verifier: URL/email-like text leaked' >&2; exit 1
+          fi
+
+      - name: Commit pilot evidence to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          pilot="data/research/review-evaluation-pilot/otome-audio-yearly-top${REVIEW_EVAL_TOP_N}-${REVIEW_EVAL_YEARS//,/-}"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$pilot"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: yearly top evaluation evidence pilot" || exit 0
+          git pull --rebase origin main
+          git push origin main
