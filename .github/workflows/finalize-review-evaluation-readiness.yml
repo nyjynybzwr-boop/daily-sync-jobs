@@ -34,12 +34,14 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Precheck 2425 human decisions
-        id: precheck
+      - name: Finalize only when all 2425 human decisions exist
         working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
         run: |
           set -euo pipefail
-          node - <<'NODE' >> "$GITHUB_OUTPUT"
+
+          completed="$(node - <<'NODE'
           const fs=require('fs'), path=require('path');
           const dir=process.env.HOLDOUT_DIR;
           let completed=0, files=0;
@@ -51,109 +53,45 @@ jobs:
             const d=JSON.parse(fs.readFileSync(f,'utf8'));
             completed+=(d.decisions||[]).filter(x=>x&&x.classification).length;
           }
-          console.error({decision_files:files,completed_rows:completed,expected:2425});
-          console.log(`completed_rows=${completed}`);
-          console.log(`complete=${completed===2425?'true':'false'}`);
+          console.error(JSON.stringify({decision_files:files,completed_rows:completed,expected:2425}));
+          process.stdout.write(String(completed));
           NODE
+          )"
 
-      - name: Report incomplete holdout without mutating outputs
-        if: steps.precheck.outputs.complete != 'true'
-        run: echo "rest75 human review incomplete: ${{ steps.precheck.outputs.completed_rows }}/2425; finalization intentionally skipped"
+          if [ "$completed" != "2425" ]; then
+            echo "rest75 human review incomplete: ${completed}/2425; finalization intentionally skipped"
+            exit 0
+          fi
 
-      - name: Finalize and validate rest75 decisions
-        if: steps.precheck.outputs.complete == 'true'
-        working-directory: work
-        run: node scripts/validate-review-evaluation-rest75-pair-holdout-decisions.mjs
+          node scripts/validate-review-evaluation-rest75-pair-holdout-decisions.mjs
+          node scripts/build-review-evaluation-rest75-robustness-report.mjs
+          node scripts/build-review-evaluation-rest75-new-candidate-review-packet.mjs
 
-      - name: Build rest75 robustness report
-        if: steps.precheck.outputs.complete == 'true'
-        working-directory: work
-        run: node scripts/build-review-evaluation-rest75-robustness-report.mjs
+          if [ -s "$HOLDOUT_DIR/rest75-new-candidate-decisions.json" ]; then
+            node scripts/validate-review-evaluation-rest75-new-candidate-decisions.mjs
+          else
+            echo "no completed rest75 new-candidate adjudication yet; readiness may intentionally remain NOT_READY"
+          fi
 
-      - name: Build official rest75 new-candidate review packet
-        if: steps.precheck.outputs.complete == 'true'
-        working-directory: work
-        run: node scripts/build-review-evaluation-rest75-new-candidate-review-packet.mjs
+          node scripts/build-review-evaluation-pair-confidence-registry.mjs
+          node scripts/build-review-evaluation-production-pair-qualification.mjs
+          node scripts/build-review-evaluation-production-pair-view-v2.mjs
+          node scripts/validate-review-evaluation-production-pair-view-v2.mjs
+          node scripts/build-effective-review-evaluation-target-vocabulary.mjs
+          node scripts/build-review-evaluation-analysis-version-manifest.mjs
 
-      - name: Detect completed new-candidate adjudication
-        if: steps.precheck.outputs.complete == 'true'
-        id: candidate_review
-        working-directory: work
-        run: |
-          node - <<'NODE' >> "$GITHUB_OUTPUT"
-          const fs=require('fs'), path=require('path');
-          const f=path.join(process.env.HOLDOUT_DIR,'rest75-new-candidate-decisions.json');
-          let exists=false;
-          if(fs.existsSync(f)){
-            try{
-              const d=JSON.parse(fs.readFileSync(f,'utf8'));
-              exists=Array.isArray(d.decisions)&&d.decisions.length>=0;
-            }catch{}
-          }
-          console.error({completed_candidate_decisions:exists});
-          console.log(`exists=${exists?'true':'false'}`);
-          NODE
-
-      - name: Validate existing human new-candidate decisions
-        if: steps.precheck.outputs.complete == 'true' && steps.candidate_review.outputs.exists == 'true'
-        working-directory: work
-        run: node scripts/validate-review-evaluation-rest75-new-candidate-decisions.mjs
-
-      - name: Build pair confidence registry
-        if: steps.precheck.outputs.complete == 'true'
-        working-directory: work
-        run: node scripts/build-review-evaluation-pair-confidence-registry.mjs
-
-      - name: Build confidence-qualified production pair gate
-        if: steps.precheck.outputs.complete == 'true'
-        working-directory: work
-        run: node scripts/build-review-evaluation-production-pair-qualification.mjs
-
-      - name: Build production pair view v2
-        if: steps.precheck.outputs.complete == 'true'
-        working-directory: work
-        run: node scripts/build-review-evaluation-production-pair-view-v2.mjs
-
-      - name: Validate production pair view v2
-        if: steps.precheck.outputs.complete == 'true'
-        working-directory: work
-        run: node scripts/validate-review-evaluation-production-pair-view-v2.mjs
-
-      - name: Refresh effective target vocabulary
-        if: steps.precheck.outputs.complete == 'true'
-        working-directory: work
-        run: node scripts/build-effective-review-evaluation-target-vocabulary.mjs
-
-      - name: Refresh analysis version manifest
-        if: steps.precheck.outputs.complete == 'true'
-        working-directory: work
-        run: node scripts/build-review-evaluation-analysis-version-manifest.mjs
-
-      - name: Evaluate production readiness and keep report on BLOCK
-        if: steps.precheck.outputs.complete == 'true'
-        id: readiness
-        working-directory: work
-        run: |
           set +e
           node scripts/check-review-evaluation-production-readiness.mjs
-          rc=$?
+          readiness_rc=$?
           set -e
-          node - <<'NODE' >> "$GITHUB_OUTPUT"
+          node - <<'NODE'
           const fs=require('fs');
           const f='data/research/review-evaluation-spec/review-evaluation-production-readiness.json';
           const d=JSON.parse(fs.readFileSync(f,'utf8'));
-          console.error({status:d.status,blockers:d.blockers||d.failed_checks||[]});
-          console.log(`status=${d.status}`);
+          console.log(JSON.stringify({readiness:d.status,blockers:d.blockers||[]},null,2));
           NODE
-          echo "readiness checker exit code: $rc"
+          echo "readiness checker exit code: $readiness_rc"
 
-      - name: Commit finalization/readiness outputs
-        if: steps.precheck.outputs.complete == 'true'
-        working-directory: work
-        env:
-          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
-        run: |
-          set -euo pipefail
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add "$HOLDOUT_DIR" "$SPEC_DIR"
@@ -165,7 +103,3 @@ jobs:
             sleep $((attempt * 3))
           done
           exit 1
-
-      - name: Final status
-        if: steps.precheck.outputs.complete == 'true'
-        run: echo "review evaluation readiness = ${{ steps.readiness.outputs.status }}"
