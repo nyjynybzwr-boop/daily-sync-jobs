@@ -1,0 +1,75 @@
+name: Review evaluation provisional holdout validation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/review-evaluation-holdout-validation.yml'
+      - '.review-evaluation-holdout-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-provisional-holdout
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OUT_DIR: data/research/review-evaluation-holdout/otome-audio-rest75-provisional-v1
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build broad holdout candidate packet
+        working-directory: work
+        run: node scripts/build-review-evaluation-holdout-candidate-packet.mjs
+
+      - name: Validate holdout packet
+        working-directory: work
+        run: |
+          set -euo pipefail
+          for f in \
+            holdout-candidate-packet.json \
+            holdout-candidate-packet.md \
+            holdout-decisions.template.json; do
+            test -s "$OUT_DIR/$f" || { echo "missing $f" >&2; exit 1; }
+          done
+          node - "$OUT_DIR/holdout-candidate-packet.json" "$OUT_DIR/holdout-decisions.template.json" <<'NODE'
+          const fs=require('fs');
+          const packet=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          const template=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+          if(packet.holdout_review_count!==239) throw new Error(`expected 239 held-out reviews, got ${packet.holdout_review_count}`);
+          if(!packet.rows?.length) throw new Error('no holdout candidates');
+          if(template.decisions?.length!==packet.rows.length) throw new Error('decision template length mismatch');
+          for(const key of ['atmosphere_immersion_mood','scenario_worldbuilding_quality','audio_mix_technical_quality']) {
+            const s=packet.axis_summary?.[key];
+            if(!s || s.candidate_rows<1 || s.unique_products<1) throw new Error(`missing holdout candidates for ${key}`);
+          }
+          console.log({heldout:packet.holdout_review_count,candidates:packet.rows.length,axes:packet.axis_summary});
+          NODE
+
+      - name: Commit holdout candidate packet
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$OUT_DIR"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: provisional mechanism holdout candidates" || exit 0
+          git pull --rebase origin main
+          git push origin main
