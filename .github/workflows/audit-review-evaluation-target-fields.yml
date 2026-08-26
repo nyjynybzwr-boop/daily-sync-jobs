@@ -21,6 +21,7 @@ jobs:
     env:
       PILOT_DIR: data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1
       TAXONOMY_FILE: data/research/review-evaluation-spec/shared-mechanism-taxonomy-v1.json
+      TARGET_REGISTRY: data/research/review-evaluation-spec/evaluation-target-taxonomy-candidates-v1.json
     steps:
       - name: Checkout private source
         env:
@@ -59,10 +60,18 @@ jobs:
         env:
           REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
           REVIEW_MECHANISM_TAXONOMY_JSON: ${{ env.TAXONOMY_FILE }}
+          REVIEW_TARGET_CANDIDATE_REGISTRY_JSON: ${{ env.TARGET_REGISTRY }}
         run: |
           set -euo pipefail
           node scripts/build-review-evaluation-target-mapping-packet.mjs
           node scripts/sync-review-evaluation-target-packet-canonical-evidence.mjs
+
+      - name: Build target decision template
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+          REVIEW_TARGET_CANDIDATE_REGISTRY_JSON: ${{ env.TARGET_REGISTRY }}
+        run: node scripts/build-review-evaluation-target-decision-template.mjs
 
       - name: Validate target audit outputs
         working-directory: work
@@ -76,19 +85,24 @@ jobs:
             canonical-review-evaluation-evidence-decisions.jsonl \
             canonical-review-evaluation-evidence-decisions-summary.json \
             target-mapping-packet.json \
-            target-mapping-packet.md; do
+            target-mapping-packet.md \
+            target-mapping-decisions.template.json; do
             test -s "$PILOT_DIR/$f" || { echo "missing $f" >&2; exit 1; }
           done
           node - \
             "$PILOT_DIR/evaluation-target-field-audit.json" \
             "$PILOT_DIR/play-target-anchor-audit.json" \
             "$PILOT_DIR/canonical-review-evaluation-evidence-decisions-summary.json" \
-            "$PILOT_DIR/target-mapping-packet.json" <<'NODE'
+            "$PILOT_DIR/target-mapping-packet.json" \
+            "$PILOT_DIR/target-mapping-decisions.template.json" \
+            "$TARGET_REGISTRY" <<'NODE'
           const fs=require('fs');
           const field=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
           const play=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
           const canonical=JSON.parse(fs.readFileSync(process.argv[4],'utf8'));
           const packet=JSON.parse(fs.readFileSync(process.argv[5],'utf8'));
+          const template=JSON.parse(fs.readFileSync(process.argv[6],'utf8'));
+          const registry=JSON.parse(fs.readFileSync(process.argv[7],'utf8'));
           if(field.status!=='target_field_audit_not_target_taxonomy') throw new Error(`unexpected field status ${field.status}`);
           if(field.source_counts?.evidence_rows!==7223) throw new Error(`expected 7223 evidence rows, got ${field.source_counts?.evidence_rows}`);
           if(!field.target_field_coverage||!field.facet_audit||!field.play_target_audit||!field.mechanism_target_join_audit) throw new Error('field audit sections missing');
@@ -106,8 +120,15 @@ jobs:
           if(packet.schema_version<2) throw new Error(`target packet was not synced to canonical evidence view: schema ${packet.schema_version}`);
           if(packet.canonical_evidence_view?.with_canonical_mechanism!==891) throw new Error(`target packet canonical mechanism count mismatch ${packet.canonical_evidence_view?.with_canonical_mechanism}`);
           if(packet.canonical_evidence_view?.former_provisional_evidence_canonicalized!==69) throw new Error('target packet did not retain canonicalized former provisional evidence');
-          if((packet.summary?.general_target_cluster_candidates??0)<1) throw new Error('target mapping packet has no semantic target candidates');
-          console.log({evidence:field.source_counts.evidence_rows,semantic_usable:field.target_field_coverage.semantic_target_usable,canonical_mechanism_evidence:canonical.output_counts.with_mechanism,former_provisional:canonical.canonicalized_former_provisional,play_strict:play.overall.strict_target_candidate_rows,play_ambiguous:play.overall.ambiguous_non_target_candidate_rows,target_clusters:packet.summary.general_target_cluster_candidates,target_flags:packet.summary.target_review_flag_counts});
+          if(packet.summary?.general_target_cluster_candidates!==74) throw new Error(`expected 74 target clusters, got ${packet.summary?.general_target_cluster_candidates}`);
+          if(packet.summary?.play_target_seed_count!==16||packet.summary?.strict_play_target_rows!==629) throw new Error('play target inventory mismatch');
+          if(packet.summary?.candidate_registry_family_count!==10) throw new Error(`expected 10 target families, got ${packet.summary?.candidate_registry_family_count}`);
+          if((packet.summary?.candidate_registry_target_count??0)<50) throw new Error(`candidate registry unexpectedly small: ${packet.summary?.candidate_registry_target_count}`);
+          if(template.status!=='human_review_template_not_decisions') throw new Error(`unexpected template status ${template.status}`);
+          if(template.general_decisions?.length!==74) throw new Error(`expected 74 target decision rows, got ${template.general_decisions?.length}`);
+          if(template.allowed_target_family_keys?.length!==registry.families?.length) throw new Error('target family registry mismatch');
+          if(!Array.isArray(packet.target_design_contract)||packet.target_design_contract.length<8) throw new Error('target design contract missing');
+          console.log({evidence:field.source_counts.evidence_rows,canonical_mechanism_evidence:canonical.output_counts.with_mechanism,play_strict:play.overall.strict_target_candidate_rows,target_clusters:packet.summary.general_target_cluster_candidates,target_flags:packet.summary.target_review_flag_counts,target_families:template.allowed_target_family_keys.length,target_keys:template.allowed_target_keys.length});
           NODE
 
       - name: Commit target audit outputs
@@ -126,7 +147,8 @@ jobs:
             "$PILOT_DIR/canonical-review-evaluation-evidence-decisions.jsonl" \
             "$PILOT_DIR/canonical-review-evaluation-evidence-decisions-summary.json" \
             "$PILOT_DIR/target-mapping-packet.json" \
-            "$PILOT_DIR/target-mapping-packet.md"
+            "$PILOT_DIR/target-mapping-packet.md" \
+            "$PILOT_DIR/target-mapping-decisions.template.json"
           if git diff --cached --quiet; then
             echo 'no target audit changes to commit'
             exit 0
