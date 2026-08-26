@@ -2,6 +2,9 @@ name: Finalize review target evidence
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/finalize-review-target-evidence.yml'
 
 permissions:
   contents: read
