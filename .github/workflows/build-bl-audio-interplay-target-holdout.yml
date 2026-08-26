@@ -1,0 +1,122 @@
+name: Build BL audio interplay target holdout
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-bl-audio-interplay-target-holdout.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-bl-audio-interplay-target-holdout
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      R2_BUCKET_NAME: melosignal-data
+      REVIEW_MANIFEST: data/reviews/manifests/bl-audio.json
+      RAW_DIR: .tmp/bl-audio-target-holdout/raw
+      PILOT_MANIFEST: data/research/review-evaluation-pilot/bl-audio-review-evaluation-semantic-pilot-v1/manifest.json
+      OUT_DIR: data/research/review-evaluation-holdout/bl-audio-rest-targets-v1
+
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: List completed BL review chunks
+        working-directory: work
+        run: |
+          set -euo pipefail
+          mkdir -p "$RAW_DIR"
+          node - "$REVIEW_MANIFEST" .tmp/bl-audio-target-holdout/chunk-keys.txt <<'NODE'
+          const fs=require('fs');
+          const manifest=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(manifest.segment!=='bl-audio') throw new Error(`segment ${manifest.segment}`);
+          if(Number(manifest.processed_target_works)!==Number(manifest.source_target_works)) throw new Error('BL review crawl not complete');
+          if(Number(manifest.fetched_reviews)!==12134) throw new Error(`expected 12134 reviews, got ${manifest.fetched_reviews}`);
+          const keys=(manifest.chunks||[]).filter(c=>c.complete&&!c.stopped_reason).map(c=>c.key);
+          if(!keys.length) throw new Error('no completed chunks');
+          fs.mkdirSync('.tmp/bl-audio-target-holdout',{recursive:true});
+          fs.writeFileSync(process.argv[3],keys.join('\n')+'\n');
+          console.log({chunks:keys.length,reviews:manifest.fetched_reviews,works:manifest.source_target_works});
+          NODE
+
+      - name: Download full BL review chunks from R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo 'CLOUDFLARE_ACCOUNT_ID missing' >&2; exit 1; }
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo 'CLOUDFLARE_API_TOKEN missing' >&2; exit 1; }
+          export R2_BUCKET_NAME RAW_DIR
+          cat .tmp/bl-audio-target-holdout/chunk-keys.txt | xargs -P8 -I{} bash -c '
+            set -euo pipefail
+            key="$1"; out="$RAW_DIR/$(basename "$key")"; ok=0
+            for attempt in 1 2 3; do
+              if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null; then ok=1; break; fi
+              sleep $((attempt * 4))
+            done
+            [ "$ok" -eq 1 ] || { echo "failed $key" >&2; exit 1; }
+          ' _ {}
+          expected=$(wc -l < .tmp/bl-audio-target-holdout/chunk-keys.txt | tr -d ' ')
+          actual=$(find "$RAW_DIR" -name 'chunk-*.json.gz' | wc -l | tr -d ' ')
+          [ "$actual" = "$expected" ] || { echo "downloaded $actual/$expected chunks" >&2; exit 1; }
+
+      - name: Build BL interplay holdout packet
+        working-directory: work
+        env:
+          BL_REVIEW_RAW_DIR: ${{ env.RAW_DIR }}
+          BL_PILOT_MANIFEST: ${{ env.PILOT_MANIFEST }}
+          BL_TARGET_HOLDOUT_OUT_DIR: ${{ env.OUT_DIR }}
+        run: node scripts/build-bl-audio-interplay-target-holdout-packet.mjs
+
+      - name: Verify BL interplay holdout packet
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const base='data/research/review-evaluation-holdout/bl-audio-rest-targets-v1';
+          const p=JSON.parse(fs.readFileSync(`${base}/bl-interplay-target-holdout-packet.json`,'utf8'));
+          const t=JSON.parse(fs.readFileSync(`${base}/bl-interplay-target-holdout-decisions.template.json`,'utf8'));
+          if(!p.anti_leakage?.all_48_discovery_pilot_product_ids_excluded) throw new Error('discovery pilot exclusion not asserted');
+          if(p.excluded_discovery_pilot_products!==48) throw new Error(`expected 48 excluded products, got ${p.excluded_discovery_pilot_products}`);
+          if(!p.source_counts?.reviews_scanned) throw new Error('no held-out BL reviews scanned');
+          if(t.decisions.length!==p.rows.length) throw new Error(`template mismatch ${t.decisions.length}/${p.rows.length}`);
+          console.log({source_counts:p.source_counts,rows:p.rows.length});
+          NODE
+
+      - name: Commit BL interplay holdout packet
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$OUT_DIR/bl-interplay-target-holdout-packet.json" "$OUT_DIR/bl-interplay-target-holdout-decisions.template.json"
+          if git diff --cached --quiet; then echo 'no BL interplay holdout changes'; exit 0; fi
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: BL interplay target holdout candidates"
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin main; then exit 0; fi
+            sleep $((attempt * 2))
+          done
+          exit 1
