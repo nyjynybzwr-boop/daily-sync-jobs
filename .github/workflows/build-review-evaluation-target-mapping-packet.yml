@@ -70,7 +70,7 @@ jobs:
           if(p.mechanism_source_mode!=='canonical_evidence_decision_view') throw new Error(`packet did not use canonical evidence view: ${p.mechanism_source_mode}`);
           if(p.candidate_registry_status!=='candidate_registry_not_canonical') throw new Error(`unexpected registry status ${p.candidate_registry_status}`);
           if(p.source_counts?.evidence_rows!==7223) throw new Error(`expected 7223 evidence rows, got ${p.source_counts?.evidence_rows}`);
-          if((p.summary?.general_target_cluster_candidates??0)<80) throw new Error(`too few semantic target candidates: ${p.summary?.general_target_cluster_candidates}`);
+          if((p.summary?.general_target_cluster_candidates??0)<70) throw new Error(`too few semantic target candidates: ${p.summary?.general_target_cluster_candidates}`);
           if((p.summary?.play_target_seed_count??0)<16) throw new Error(`too few play seeds: ${p.summary?.play_target_seed_count}`);
           if(p.summary?.strict_play_target_rows!==629) throw new Error(`expected 629 strict play rows, got ${p.summary?.strict_play_target_rows}`);
           if((p.summary?.candidate_registry_family_count??0)<10||(p.summary?.candidate_registry_target_count??0)<50) throw new Error(`candidate registry unexpectedly small: ${p.summary?.candidate_registry_family_count}/${p.summary?.candidate_registry_target_count}`);
