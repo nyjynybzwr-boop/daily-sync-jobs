@@ -1,0 +1,86 @@
+name: Cluster review evaluation evidence pilot
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/cluster-review-evaluation-pilot.yml'
+      - '.review-evaluation-cluster-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-semantic-cluster
+  cancel-in-progress: false
+
+jobs:
+  cluster:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      PILOT_DIR: data/research/review-evaluation-pilot/otome-audio-yearly-top30-2025
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install semantic clustering dependencies
+        run: python -m pip install --quiet sentence-transformers scikit-learn
+
+      - name: Confirm structured evidence exists
+        working-directory: work
+        run: |
+          test -s "$PILOT_DIR/evidence.jsonl"
+          test -s "$PILOT_DIR/evidence-index.json"
+
+      - name: Embed and cluster evidence
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+          REVIEW_EVAL_EMBED_MODEL: intfloat/multilingual-e5-small
+          REVIEW_EVAL_MIN_CLUSTER_SIZE: '8'
+          REVIEW_EVAL_MIN_SAMPLES: '3'
+          REVIEW_EVAL_REPRESENTATIVES: '10'
+          REVIEW_EVAL_MIN_TEXT_LEN: '12'
+        run: python scripts/cluster-review-evaluation-evidence.py
+
+      - name: Validate discovery output
+        working-directory: work
+        run: |
+          set -euo pipefail
+          test -s "$PILOT_DIR/semantic-clusters.json"
+          test -s "$PILOT_DIR/semantic-clusters.md"
+          test -s "$PILOT_DIR/semantic-assignments.jsonl"
+          python - <<'PY'
+          import json, os
+          p=os.environ['PILOT_DIR']
+          d=json.load(open(f'{p}/semantic-clusters.json',encoding='utf-8'))
+          if d['cluster_count'] < 2:
+              raise SystemExit(f"too few clusters: {d['cluster_count']}")
+          if d['clustered_rows'] <= 0:
+              raise SystemExit('no clustered evidence')
+          print({k:d[k] for k in ['input_rows','eligible_rows','clustered_rows','noise_rows','cluster_count']})
+          PY
+
+      - name: Commit semantic discovery results to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$PILOT_DIR/semantic-clusters.json" "$PILOT_DIR/semantic-clusters.md" "$PILOT_DIR/semantic-assignments.jsonl"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: semantic evaluation clusters pilot" || exit 0
+          git pull --rebase origin main
+          git push origin main
