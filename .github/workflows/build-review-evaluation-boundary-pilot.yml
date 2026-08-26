@@ -1,0 +1,81 @@
+name: Build review evaluation boundary pilot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-boundary-pilot
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      R2_BUCKET_NAME: melosignal-data
+      REVIEW_SEGMENT: otome-audio
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download frozen otome-audio review chunks from R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          dir=".tmp/reviews-evaluation/${REVIEW_SEGMENT}"
+          mkdir -p "$dir"
+          node - <<'NODE' > .tmp/review-boundary-chunk-keys.txt
+          const fs=require('fs');
+          const segment=process.env.REVIEW_SEGMENT;
+          const m=JSON.parse(fs.readFileSync(`data/reviews/manifests/${segment}.json`,'utf8'));
+          if(Number(m.processed_target_works||0)<Number(m.source_target_works||0)) throw new Error(`${segment}: crawl incomplete`);
+          for(const c of (m.chunks||[]).filter(c=>c.complete&&!c.stopped_reason).sort((a,b)=>Number(a.index)-Number(b.index))) console.log(c.key);
+          NODE
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            out="$dir/$(basename "$key")"
+            npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null
+          done < .tmp/review-boundary-chunk-keys.txt
+
+      - name: Build rest75 low-rating Gold boundary pool
+        working-directory: work
+        env:
+          REVIEW_CHUNK_DIR: .tmp/reviews-evaluation/otome-audio
+          REVIEW_BOUNDARY_YEARS: '2023,2024,2025,2026'
+          REVIEW_BOUNDARY_MAX_PER_YEAR: '60'
+          REVIEW_BOUNDARY_MAX_PER_WORK: '3'
+        run: node scripts/build-review-evaluation-boundary-pilot.mjs
+
+      - name: Verify and commit
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          root=data/research/review-evaluation-boundary-pilot
+          test -n "$(find "$root" -type f -name '*.json' -print -quit)"
+          test -n "$(find "$root" -type f -name '*.md' -print -quit)"
+          if grep -R -E -n 'https?://|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$root"; then
+            echo 'privacy verifier failed' >&2; exit 1
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$root"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: rest75 low-rating boundary pilot" || exit 0
+          git pull --rebase origin main
+          git push origin main
