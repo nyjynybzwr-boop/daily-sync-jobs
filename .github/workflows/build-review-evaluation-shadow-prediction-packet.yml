@@ -1,0 +1,77 @@
+name: Build review evaluation shadow prediction packet
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-review-evaluation-shadow-prediction-packet.yml'
+      - '.review-evaluation-shadow-prediction-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-shadow-prediction-packet
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SHADOW_DIR: data/research/review-evaluation-calibration/otome-audio-otome-audio-review-evaluation-shadow-v1
+      PRED_DIR: data/research/review-evaluation-calibration/otome-audio-otome-audio-review-evaluation-shadow-v1/predictions
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build blank prediction packet only
+        working-directory: work
+        env:
+          REVIEW_SHADOW_DIR: ${{ env.SHADOW_DIR }}
+          REVIEW_SHADOW_PREDICTION_DIR: ${{ env.PRED_DIR }}
+        run: node scripts/build-review-evaluation-shadow-prediction-packet.mjs
+
+      - name: Verify anti-leakage packet
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const idx=JSON.parse(fs.readFileSync(process.env.PRED_DIR+'/index.json','utf8'));
+          if(idx.status!=='blank_shadow_prediction_packet_blocked_until_readiness') throw new Error(`status ${idx.status}`);
+          if(idx.required_readiness_status!=='READY_FOR_BROADER_INFERENCE_WIRING') throw new Error('readiness requirement missing');
+          if(!idx.anti_leakage?.human_gold_not_read) throw new Error('anti-leakage marker missing');
+          if(idx.counts.rows!==446||idx.counts.products!==23||idx.batches.length!==4) throw new Error(`unexpected counts ${JSON.stringify(idx.counts)}`);
+          console.log({counts:idx.counts,batches:idx.batches});
+          NODE
+          if grep -R -n 'human-gold' "$PRED_DIR"; then
+            echo 'prediction packet must not reference human-gold files' >&2; exit 1
+          fi
+
+      - name: Commit blank prediction packet
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$PRED_DIR"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: blank shadow inference prediction packet" || exit 0
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin HEAD:main; then exit 0; fi
+            sleep $((attempt * 3))
+          done
+          exit 1
