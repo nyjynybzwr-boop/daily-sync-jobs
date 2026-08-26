@@ -47,6 +47,7 @@ jobs:
           set -euo pipefail
           test -s "$PILOT_DIR/manifest.json"
           test -s "$PILOT_DIR/evidence.jsonl"
+          test -s "data/research/review-evaluation-spec/shared-mechanism-taxonomy-v1.json"
           node - "$PILOT_DIR/manifest.json" <<'NODE'
           const fs=require('fs'); const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
           if(d.selected_work_count!==48) throw new Error(`expected 48 works, got ${d.selected_work_count}`);
@@ -109,6 +110,12 @@ jobs:
           REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
         run: node scripts/build-review-evaluation-mechanism-mapping-packet.mjs
 
+      - name: Sync mapping packet to canonical taxonomy
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: node scripts/sync-review-evaluation-mapping-packet-taxonomy.mjs
+
       - name: Build mechanism decision template
         working-directory: work
         env:
@@ -155,7 +162,12 @@ jobs:
           if play_clusters < 5: raise SystemExit(f'too few play reason clusters: {play_clusters}')
           if pq.get('cluster_count') != play_clusters: raise SystemExit(f"play quality mismatch {pq.get('cluster_count')} != {play_clusters}")
           if play.get('assignment_rows') != assignment_lines: raise SystemExit(f"play assignment mismatch {play.get('assignment_rows')} != {assignment_lines}")
-          if len(mapping.get('mechanism_candidates',[])) < 8: raise SystemExit('mechanism mapping vocabulary unexpectedly small')
+          mechanism_keys=[x.get('key') for x in mapping.get('mechanism_candidates',[])]
+          if len(mechanism_keys) != 15: raise SystemExit(f'expected canonical 15 mechanisms, got {len(mechanism_keys)}')
+          if len(set(mechanism_keys)) != 15: raise SystemExit('duplicate canonical mechanism keys')
+          if mapping.get('taxonomy_version') != 'v1': raise SystemExit(f"unexpected taxonomy version {mapping.get('taxonomy_version')}")
+          required={'atmosphere_immersion_mood','scenario_worldbuilding_quality','audio_mix_technical_quality'}
+          if not required.issubset(set(mechanism_keys)): raise SystemExit('promoted mechanism missing from mapping packet')
           if not mapping.get('general_candidates'): raise SystemExit('mapping packet has no general candidates')
           if not mapping.get('play_candidates'): raise SystemExit('mapping packet has no play candidates')
           if len(template.get('general_decisions',[])) != len(mapping.get('general_candidates',[])): raise SystemExit('general decision template mismatch')
@@ -167,7 +179,7 @@ jobs:
             'play_reason_clusters': play_clusters,
             'play_assignment_rows': assignment_lines,
             'play_quality': pq.get('status_counts'),
-            'mapping_packet': {'mechanisms':len(mapping.get('mechanism_candidates',[])),'general':len(mapping.get('general_candidates',[])),'play':len(mapping.get('play_candidates',[]))},
+            'mapping_packet': {'taxonomy_version':mapping.get('taxonomy_version'),'mechanisms':len(mechanism_keys),'general':len(mapping.get('general_candidates',[])),'play':len(mapping.get('play_candidates',[]))},
           })
           PY
 
