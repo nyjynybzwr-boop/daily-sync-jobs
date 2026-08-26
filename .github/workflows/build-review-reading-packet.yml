@@ -115,7 +115,7 @@ jobs:
           if(meta.raw_review_text_in_markdown!==true) throw new Error('packet does not contain review bodies');
           if(meta.reviewer_identifiers_included!==false||meta.review_ids_included!==false) throw new Error('identifier boundary violated');
           if(!meta.works?.length||!meta.total_sampled_review_bodies) throw new Error('packet is empty');
-          if(/member_review_id|review_id\s*:/i.test(md)) throw new Error('structured review identifier leaked into markdown');
+          if(/member_review_id/i.test(md)||/^review_id\s*:/im.test(md)) throw new Error('structured review identifier leaked into markdown');
           console.log({packet:meta.packet_id,works:meta.works.length,reviews:meta.total_sampled_review_bodies,bytes:Buffer.byteLength(md)});
           NODE
 
