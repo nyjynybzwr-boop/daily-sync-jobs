@@ -147,6 +147,25 @@ jobs:
             echo 'no final promotion decisions; taxonomy not changed'
           fi
 
+      - name: Verify shared mapping vocabulary integration
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+          REVIEW_MECHANISM_TAXONOMY_JSON: ${{ env.TAXONOMY_FILE }}
+        run: |
+          set -euo pipefail
+          node scripts/build-review-evaluation-mechanism-mapping-packet.mjs
+          node - "$PILOT_DIR/mechanism-mapping-packet.json" <<'NODE'
+          const fs=require('fs');
+          const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(d.mechanism_candidates?.length!==15) throw new Error(`mapping builder did not load 15 mechanisms: ${d.mechanism_candidates?.length}`);
+          if(d.vocabulary_source!=='otome-audio-review-evaluation-mechanisms-v1') throw new Error(`unexpected vocabulary source: ${d.vocabulary_source}`);
+          for(const k of ['atmosphere_immersion_mood','scenario_worldbuilding_quality','audio_mix_technical_quality']) {
+            if(!d.mechanism_candidates.some(x=>x.key===k)) throw new Error(`mapping vocabulary missing ${k}`);
+          }
+          console.log({mapping_schema:d.schema_version,vocabulary:d.vocabulary_source,mechanisms:d.mechanism_candidates.length});
+          NODE
+
       - name: Commit holdout packet and review state
         working-directory: work
         env:
