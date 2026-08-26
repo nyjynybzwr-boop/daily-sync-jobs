@@ -1,3 +1,4 @@
+# trigger: all five human target-evidence decision batches are present
 name: Build review target evidence split packet
 
 on:
