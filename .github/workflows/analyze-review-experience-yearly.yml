@@ -1,0 +1,88 @@
+name: Analyze review experience yearly
+
+on:
+  workflow_dispatch:
+    inputs:
+      segment:
+        description: 'Review segment'
+        required: true
+        type: choice
+        options:
+          - otome-audio
+        default: otome-audio
+  push:
+    paths:
+      - '.github/workflows/analyze-review-experience-yearly.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      R2_BUCKET_NAME: melosignal-data
+      REVIEW_SEGMENT: ${{ inputs.segment || 'otome-audio' }}
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download derived experience analysis from R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp/reviews-experience
+          key="reviews-derived/experience/${REVIEW_SEGMENT}/latest.json.gz"
+          out=".tmp/reviews-experience/${REVIEW_SEGMENT}-experience.json.gz"
+          npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null
+          test -s "$out"
+
+      - name: Build yearly experience trends
+        working-directory: work
+        env:
+          REVIEW_EXPERIENCE_GZ: .tmp/reviews-experience/${{ inputs.segment || 'otome-audio' }}-experience.json.gz
+          REVIEW_EXPERIENCE_YEARLY_OUT: data/research/review-experience-yearly/${{ inputs.segment || 'otome-audio' }}.json
+        run: node scripts/analyze-review-experience-yearly.mjs
+
+      - name: Verify yearly output
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const s=process.env.REVIEW_SEGMENT;
+          const p=`data/research/review-experience-yearly/${s}.json`;
+          const j=JSON.parse(fs.readFileSync(p,'utf8'));
+          if(!Array.isArray(j.yearly)||!j.yearly.length)throw new Error('yearly rows missing');
+          if(!j.focus_archetype_trends?.length)throw new Error('archetype trends missing');
+          const y26=j.yearly.find(x=>x.year===2026);
+          if(!y26||!y26.reviewed_works)throw new Error('2026 reviewed works missing');
+          console.log({years:j.yearly.map(x=>x.year),joined:j.source.joined_experience_works,focus:j.focus_archetype_trends.length});
+          NODE
+
+      - name: Commit yearly summary to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          file="data/research/review-experience-yearly/${REVIEW_SEGMENT}.json"
+          git add "$file"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: ${REVIEW_SEGMENT} yearly experience trends" || exit 0
+          git pull --rebase origin main
+          git push origin main
