@@ -89,21 +89,30 @@ jobs:
           REVIEW_EVAL_OUT: data/research/review-evaluation-pilot
         run: node scripts/build-review-evaluation-evidence-pilot.mjs
 
+      - name: Compile structured JSONL for semantic clustering
+        working-directory: work
+        run: |
+          pilot="data/research/review-evaluation-pilot/otome-audio-yearly-top${REVIEW_EVAL_TOP_N}-${REVIEW_EVAL_YEARS//,/-}"
+          REVIEW_EVAL_PILOT_DIR="$pilot" node scripts/compile-review-evaluation-pilot-jsonl.mjs
+
       - name: Verify privacy boundary and non-empty evidence
         working-directory: work
         run: |
           set -euo pipefail
           pilot="data/research/review-evaluation-pilot/otome-audio-yearly-top${REVIEW_EVAL_TOP_N}-${REVIEW_EVAL_YEARS//,/-}"
           test -f "$pilot/manifest.json"
-          node - "$pilot/manifest.json" <<'NODE'
+          test -s "$pilot/evidence.jsonl"
+          test -s "$pilot/evidence-index.json"
+          node - "$pilot/manifest.json" "$pilot/evidence-index.json" <<'NODE'
           const fs=require('fs');
-          const p=process.argv[2];
-          const m=JSON.parse(fs.readFileSync(p,'utf8'));
+          const m=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          const idx=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
           if(!m.selected_work_count||!m.source_review_count||!m.exported_evidence_count) throw new Error('pilot output empty');
+          if(idx.row_count!==m.exported_evidence_count) throw new Error(`JSONL row mismatch ${idx.row_count} != ${m.exported_evidence_count}`);
           if(m.works_with_reviews!==m.selected_work_count) console.warn(`warning: works_with_reviews ${m.works_with_reviews}/${m.selected_work_count}`);
-          console.log({works:m.selected_work_count,reviews:m.source_review_count,candidates:m.evidence_candidate_count,exported:m.exported_evidence_count});
+          console.log({works:m.selected_work_count,reviews:m.source_review_count,candidates:m.evidence_candidate_count,exported:m.exported_evidence_count,languages:idx.language_counts});
           NODE
-          if grep -R -E -n 'https?://|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$pilot" --include='*.md'; then
+          if grep -R -E -n 'https?://|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$pilot" --include='*.md' --include='*.jsonl'; then
             echo 'privacy verifier: URL/email-like text leaked' >&2; exit 1
           fi
 
