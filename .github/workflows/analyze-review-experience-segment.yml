@@ -1,0 +1,139 @@
+name: Analyze review experience segment
+
+on:
+  workflow_dispatch:
+    inputs:
+      segment:
+        description: 'Review segment'
+        required: true
+        type: choice
+        options:
+          - otome-audio
+          - bl-audio
+          - otome-manga
+          - bl-manga
+          - male-audio
+          - male-manga
+          - girls-drama
+        default: otome-audio
+  push:
+    paths:
+      - '.github/workflows/analyze-review-experience-segment.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      R2_BUCKET_NAME: melosignal-data
+      REVIEW_SEGMENT: ${{ inputs.segment || 'otome-audio' }}
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci >/dev/null
+
+      - name: Download frozen review chunks from R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          dir=".tmp/reviews-experience/${REVIEW_SEGMENT}"
+          mkdir -p "$dir"
+          node - <<'NODE' > .tmp/review-experience-chunk-keys.txt
+          const fs=require('fs');
+          const segment=process.env.REVIEW_SEGMENT;
+          const m=JSON.parse(fs.readFileSync(`data/reviews/manifests/${segment}.json`,'utf8'));
+          if(Number(m.processed_target_works||0)<Number(m.source_target_works||0)){
+            throw new Error(`${segment}: review crawl incomplete ${m.processed_target_works}/${m.source_target_works}`);
+          }
+          const chunks=(m.chunks||[]).filter(c=>c.complete&&!c.stopped_reason).sort((a,b)=>Number(a.index)-Number(b.index));
+          if(!chunks.length)throw new Error(`${segment}: no complete chunks`);
+          for(const c of chunks)console.log(c.key);
+          NODE
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            out="$dir/$(basename "$key")"
+            echo "download $key"
+            ok=0
+            for attempt in 1 2 3; do
+              if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null; then ok=1; break; fi
+              sleep $((attempt * 5))
+            done
+            [ "$ok" -eq 1 ] || { echo "failed to download $key" >&2; exit 1; }
+          done < .tmp/review-experience-chunk-keys.txt
+
+      - name: Analyze review experiences and archetypes
+        working-directory: work
+        env:
+          REVIEW_CHUNK_DIR: .tmp/reviews-experience/${{ inputs.segment || 'otome-audio' }}
+          REVIEW_EXPERIENCE_FULL_GZ: .tmp/reviews-experience/${{ inputs.segment || 'otome-audio' }}-experience.json.gz
+          REVIEW_EXPERIENCE_SUMMARY: data/research/review-experience-summary/${{ inputs.segment || 'otome-audio' }}.json
+        run: node scripts/analyze-review-experience-segment.mjs
+
+      - name: Verify derived outputs contain no raw review body
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const zlib=require('zlib');
+          const segment=process.env.REVIEW_SEGMENT;
+          const summary=JSON.parse(fs.readFileSync(`data/research/review-experience-summary/${segment}.json`,'utf8'));
+          const full=JSON.parse(zlib.gunzipSync(fs.readFileSync(`.tmp/reviews-experience/${segment}-experience.json.gz`)).toString('utf8'));
+          const forbidden=new Set(['review_text','member_review_id','review_body','reviews','text']);
+          function scan(v,p='root'){
+            if(Array.isArray(v)){v.forEach((x,i)=>scan(x,`${p}[${i}]`));return;}
+            if(!v||typeof v!=='object')return;
+            for(const [k,x] of Object.entries(v)){
+              if(forbidden.has(k))throw new Error(`raw review field leaked: ${p}.${k}`);
+              scan(x,`${p}.${k}`);
+            }
+          }
+          scan(summary); scan(full);
+          if(!summary.source?.complete)throw new Error('analysis source is not complete');
+          if(!summary.source?.reviews_analyzed||!Array.isArray(full.works))throw new Error('derived analysis empty');
+          console.log({segment,reviews:summary.source.reviews_analyzed,works:summary.source.works_with_reviews,archetypes:summary.archetype_counts?.length||0});
+          NODE
+
+      - name: Upload full derived experience analysis to R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          file=".tmp/reviews-experience/${REVIEW_SEGMENT}-experience.json.gz"
+          key="reviews-derived/experience/${REVIEW_SEGMENT}/latest.json.gz"
+          npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/${key}" --file "$file" --remote >/dev/null
+          echo "uploaded ${key}"
+
+      - name: Commit compact summary to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          file="data/research/review-experience-summary/${REVIEW_SEGMENT}.json"
+          git add "$file"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: ${REVIEW_SEGMENT} experience summary" || exit 0
+          git pull --rebase origin main
+          git push origin main
