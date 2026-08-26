@@ -58,27 +58,72 @@ jobs:
           console.log({summary:s,batches:i.batches});
           NODE
 
-      - name: Commit packet and review batches
+      - name: Finalize reviewed target evidence when all five decision batches exist
+        working-directory: work
+        run: |
+          set -euo pipefail
+          base='data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-evidence-review-batches'
+          for n in 001 002 003 004 005; do
+            if [ ! -f "$base/target-evidence-decisions-batch-$n.json" ]; then
+              echo "reviewed target evidence batches incomplete; packet generation only"
+              exit 0
+            fi
+          done
+          node scripts/finalize-review-evaluation-target-evidence-decisions.mjs
+          node scripts/build-canonical-review-evaluation-target-evidence-view.mjs
+          node scripts/build-review-evaluation-work-target-mechanism-view.mjs
+
+      - name: Verify final target views when present
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const base='data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1';
+          const p=`${base}/target-evidence-decisions-summary.json`;
+          if(!fs.existsSync(p)){ console.log('final target decisions not present yet; skip final verification'); process.exit(0); }
+          const d=JSON.parse(fs.readFileSync(p,'utf8'));
+          const t=JSON.parse(fs.readFileSync(`${base}/canonical-review-evaluation-target-evidence-summary.json`,'utf8'));
+          const w=JSON.parse(fs.readFileSync(`${base}/work-target-mechanism-summary.json`,'utf8'));
+          if(!d.complete||d.decision_rows!==221||d.unique_evidence!==221) throw new Error(`target decisions incomplete ${JSON.stringify(d)}`);
+          if(t.output_counts.with_any_target<=0||t.output_counts.with_exact_target<=0) throw new Error(`canonical target view empty ${JSON.stringify(t.output_counts)}`);
+          if(w.output_counts.works<=0||w.output_counts.fact_rows<=0) throw new Error(`work view empty ${JSON.stringify(w.output_counts)}`);
+          console.log(JSON.stringify({decisions:d,canonical_target:t.output_counts,work_view:w.output_counts},null,2));
+          NODE
+
+      - name: Commit packet, review batches, and final views
         working-directory: work
         env:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
         run: |
           set -euo pipefail
+          base='data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1'
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add \
-            data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-evidence-split-packet.json \
-            data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-evidence-split-packet.jsonl \
-            data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-evidence-split-decisions.template.json \
-            data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-evidence-split-packet-summary.json \
-            data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-evidence-review-batches
-          if git diff --cached --quiet; then echo 'no split packet changes'; exit 0; fi
-          git commit -m "[CF-Pages-Skip] [skip actions] reviews: target evidence review batches"
+            "$base/target-evidence-split-packet.json" \
+            "$base/target-evidence-split-packet.jsonl" \
+            "$base/target-evidence-split-decisions.template.json" \
+            "$base/target-evidence-split-packet-summary.json" \
+            "$base/target-evidence-review-batches"
+          for f in \
+            target-evidence-decisions.json \
+            target-evidence-decisions.jsonl \
+            target-evidence-decisions-summary.json \
+            canonical-review-evaluation-target-evidence.jsonl \
+            canonical-review-evaluation-target-evidence-summary.json \
+            review-evaluation-facts.jsonl \
+            work-target-mechanism-summary.jsonl \
+            work-target-mechanism-summary.json; do
+            [ -f "$base/$f" ] && git add "$base/$f"
+          done
+          if git diff --cached --quiet; then echo 'no target evidence changes'; exit 0; fi
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: finalize target evidence and work view"
           for attempt in 1 2 3 4 5 6; do
             git fetch origin main
             git rebase origin/main
             if git push origin main; then exit 0; fi
             sleep $((attempt * 2))
           done
-          echo 'failed to push target evidence review batches after retries' >&2
+          echo 'failed to push target evidence outputs after retries' >&2
           exit 1
