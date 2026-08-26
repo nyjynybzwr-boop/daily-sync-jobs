@@ -36,7 +36,11 @@ jobs:
         working-directory: work
         run: node scripts/build-review-evaluation-target-evidence-split-packet.mjs
 
-      - name: Verify packet
+      - name: Build cluster-preserving review batches
+        working-directory: work
+        run: node scripts/build-review-evaluation-target-evidence-review-batches.mjs
+
+      - name: Verify packet and batches
         working-directory: work
         run: |
           set -euo pipefail
@@ -45,13 +49,16 @@ jobs:
           const base='data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1';
           const s=JSON.parse(fs.readFileSync(`${base}/target-evidence-split-packet-summary.json`,'utf8'));
           const t=JSON.parse(fs.readFileSync(`${base}/target-evidence-split-decisions.template.json`,'utf8'));
+          const i=JSON.parse(fs.readFileSync(`${base}/target-evidence-review-batches/index.json`,'utf8'));
           if(s.unresolved_clusters!==15) throw new Error(`expected 15 unresolved clusters, got ${s.unresolved_clusters}`);
           if(!s.assignment_rows||!s.unique_evidence) throw new Error(`empty split packet ${JSON.stringify(s)}`);
           if(t.decisions.length!==s.assignment_rows) throw new Error(`template mismatch ${t.decisions.length} != ${s.assignment_rows}`);
-          console.log(s);
+          if(i.total_rows!==s.assignment_rows||i.total_clusters!==15||i.batch_count!==5) throw new Error(`batch index mismatch ${JSON.stringify(i)}`);
+          if(i.batches.some(b=>!b.row_count)) throw new Error('empty review batch');
+          console.log({summary:s,batches:i.batches});
           NODE
 
-      - name: Commit packet
+      - name: Commit packet and review batches
         working-directory: work
         env:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
@@ -63,14 +70,15 @@ jobs:
             data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-evidence-split-packet.json \
             data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-evidence-split-packet.jsonl \
             data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-evidence-split-decisions.template.json \
-            data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-evidence-split-packet-summary.json
+            data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-evidence-split-packet-summary.json \
+            data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-evidence-review-batches
           if git diff --cached --quiet; then echo 'no split packet changes'; exit 0; fi
-          git commit -m "[CF-Pages-Skip] [skip actions] reviews: target evidence split packet"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: target evidence review batches"
           for attempt in 1 2 3 4 5 6; do
             git fetch origin main
             git rebase origin/main
             if git push origin main; then exit 0; fi
             sleep $((attempt * 2))
           done
-          echo 'failed to push target evidence split packet after retries' >&2
+          echo 'failed to push target evidence review batches after retries' >&2
           exit 1
