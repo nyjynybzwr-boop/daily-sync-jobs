@@ -41,20 +41,36 @@ jobs:
           REVIEW_MECHANISM_TAXONOMY_JSON: ${{ env.TAXONOMY_FILE }}
         run: node scripts/audit-review-evaluation-target-fields.mjs
 
+      - name: Audit play anchors for strict target use
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: node scripts/audit-review-play-target-anchors.mjs
+
       - name: Validate target audit outputs
         working-directory: work
         run: |
           set -euo pipefail
-          test -s "$PILOT_DIR/evaluation-target-field-audit.json"
-          test -s "$PILOT_DIR/evaluation-target-field-audit.md"
-          node - "$PILOT_DIR/evaluation-target-field-audit.json" <<'NODE'
+          for f in \
+            evaluation-target-field-audit.json \
+            evaluation-target-field-audit.md \
+            play-target-anchor-audit.json \
+            play-target-anchor-audit.md; do
+            test -s "$PILOT_DIR/$f" || { echo "missing $f" >&2; exit 1; }
+          done
+          node - "$PILOT_DIR/evaluation-target-field-audit.json" "$PILOT_DIR/play-target-anchor-audit.json" <<'NODE'
           const fs=require('fs');
-          const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
-          if(d.status!=='target_field_audit_not_target_taxonomy') throw new Error(`unexpected status ${d.status}`);
-          if(d.source_counts?.evidence_rows!==7223) throw new Error(`expected 7223 evidence rows, got ${d.source_counts?.evidence_rows}`);
-          if(!d.target_field_coverage||!d.facet_audit||!d.play_target_audit||!d.mechanism_target_join_audit) throw new Error('audit sections missing');
-          if(!Array.isArray(d.provisional_target_design_implications)||d.provisional_target_design_implications.length<5) throw new Error('design implications missing');
-          console.log({evidence:d.source_counts.evidence_rows,semantic_usable:d.target_field_coverage.semantic_target_usable,play_evidence:d.play_target_audit.unique_evidence_with_play_anchor,mechanism_assigned:d.mechanism_target_join_audit.evidence_with_canonical_mechanism_assignment,target_unresolved:d.mechanism_target_join_audit.mechanism_assigned_but_target_unresolved});
+          const field=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          const play=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+          if(field.status!=='target_field_audit_not_target_taxonomy') throw new Error(`unexpected field status ${field.status}`);
+          if(field.source_counts?.evidence_rows!==7223) throw new Error(`expected 7223 evidence rows, got ${field.source_counts?.evidence_rows}`);
+          if(!field.target_field_coverage||!field.facet_audit||!field.play_target_audit||!field.mechanism_target_join_audit) throw new Error('field audit sections missing');
+          if(!Array.isArray(field.provisional_target_design_implications)||field.provisional_target_design_implications.length<5) throw new Error('design implications missing');
+          if(play.status!=='play_anchor_target_audit_not_target_taxonomy') throw new Error(`unexpected play audit status ${play.status}`);
+          if(play.source_counts?.assignment_rows!==756||play.source_counts?.audited_rows!==756) throw new Error(`expected 756 play assignment rows, got ${play.source_counts?.assignment_rows}/${play.source_counts?.audited_rows}`);
+          if(!Array.isArray(play.anchor_summary)||play.anchor_summary.length<16) throw new Error('play anchor summaries missing');
+          if((play.overall?.ambiguous_non_target_candidate_rows??0)<1) throw new Error('strict play audit unexpectedly found no ambiguous rows');
+          console.log({evidence:field.source_counts.evidence_rows,semantic_usable:field.target_field_coverage.semantic_target_usable,mechanism_assigned:field.mechanism_target_join_audit.evidence_with_canonical_mechanism_assignment,play_assignments:play.source_counts.assignment_rows,play_strict:play.overall.strict_target_candidate_rows,play_ambiguous:play.overall.ambiguous_non_target_candidate_rows});
           NODE
 
       - name: Commit target audit outputs
@@ -65,7 +81,11 @@ jobs:
           set -euo pipefail
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add "$PILOT_DIR/evaluation-target-field-audit.json" "$PILOT_DIR/evaluation-target-field-audit.md"
+          git add \
+            "$PILOT_DIR/evaluation-target-field-audit.json" \
+            "$PILOT_DIR/evaluation-target-field-audit.md" \
+            "$PILOT_DIR/play-target-anchor-audit.json" \
+            "$PILOT_DIR/play-target-anchor-audit.md"
           if git diff --cached --quiet; then
             echo 'no target audit changes to commit'
             exit 0
