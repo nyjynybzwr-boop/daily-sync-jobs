@@ -103,6 +103,10 @@ jobs:
         working-directory: work
         run: node scripts/build-review-reading-packet.mjs --build
 
+      - name: Normalize review ratings to five-point scale
+        working-directory: work
+        run: node scripts/normalize-review-reading-rating.mjs
+
       - name: Verify packet privacy boundary
         working-directory: work
         run: |
