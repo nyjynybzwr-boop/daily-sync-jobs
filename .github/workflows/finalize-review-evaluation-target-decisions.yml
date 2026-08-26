@@ -1,0 +1,67 @@
+name: Finalize review evaluation target decisions
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/finalize-review-evaluation-target-decisions.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: finalize-review-evaluation-target-decisions
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Merge five reviewed target batches
+        working-directory: work
+        run: node scripts/merge-review-evaluation-target-decision-batches.mjs
+
+      - name: Strictly validate all target decisions
+        working-directory: work
+        run: node scripts/validate-review-evaluation-target-decisions.mjs
+
+      - name: Print final summary
+        working-directory: work
+        run: cat data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-mapping-decisions-summary.json
+
+      - name: Commit canonical target decisions
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-mapping-decisions.json \
+            data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-mapping-decisions-summary.json
+          if git diff --cached --quiet; then echo 'no target decision changes'; exit 0; fi
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: finalize 74 evaluation-target decisions"
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin main; then exit 0; fi
+            sleep $((attempt * 2))
+          done
+          echo 'failed to push finalized target decisions after retries' >&2
+          exit 1
