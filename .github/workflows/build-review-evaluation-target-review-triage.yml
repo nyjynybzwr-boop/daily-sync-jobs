@@ -1,0 +1,82 @@
+name: Build review evaluation target review triage
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-review-evaluation-target-review-triage.yml'
+      - '.review-evaluation-target-triage-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-target-review-triage
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PILOT_DIR: data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build target review triage
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: node scripts/build-review-evaluation-target-review-triage.mjs
+
+      - name: Validate target review triage
+        working-directory: work
+        run: |
+          set -euo pipefail
+          test -s "$PILOT_DIR/target-review-triage.json"
+          test -s "$PILOT_DIR/target-review-triage.md"
+          node - "$PILOT_DIR/target-review-triage.json" <<'NODE'
+          const fs=require('fs');
+          const t=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(t.status!=='review_triage_only_not_target_decisions') throw new Error(`unexpected status ${t.status}`);
+          if(t.source_counts?.clusters!==74||t.cards?.length!==74||t.review_order?.length!==74) throw new Error(`expected 74 triage cards/order, got ${t.source_counts?.clusters}/${t.cards?.length}/${t.review_order?.length}`);
+          const ids=new Set(t.review_order||[]);
+          if(ids.size!==74) throw new Error(`review order is not unique: ${ids.size}`);
+          if(!t.queue_counts?.single_family_first_pass) throw new Error('single-family first-pass queue is empty');
+          if(!t.queue_counts?.split_or_multi_target_review) throw new Error('split/multi-target queue is empty');
+          if(t.queue_counts?.texture_boundary_review!==33) throw new Error(`expected 33 texture boundary clusters, got ${t.queue_counts?.texture_boundary_review}`);
+          console.log({queues:t.queue_counts,first:t.review_order.slice(0,12)});
+          NODE
+
+      - name: Commit target review triage
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$PILOT_DIR/target-review-triage.json" "$PILOT_DIR/target-review-triage.md"
+          if git diff --cached --quiet; then
+            echo 'no triage changes to commit'
+            exit 0
+          fi
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: target review triage"
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin main; then exit 0; fi
+            sleep $((attempt * 2))
+          done
+          echo 'failed to push target review triage after retries' >&2
+          exit 1
