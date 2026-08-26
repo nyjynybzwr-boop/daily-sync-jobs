@@ -110,6 +110,18 @@ jobs:
             echo 'holdout review incomplete; final promotion packet not built'
           fi
 
+      - name: Validate final mechanism promotion decisions
+        working-directory: work
+        env:
+          REVIEW_HOLDOUT_OUT_DIR: ${{ env.OUT_DIR }}
+        run: |
+          set -euo pipefail
+          if test -s "$OUT_DIR/final-mechanism-promotion-decisions.json"; then
+            node scripts/validate-review-evaluation-final-promotion-decisions.mjs
+          else
+            echo 'no final promotion decisions yet; skipping validation'
+          fi
+
       - name: Commit holdout packet and review state
         working-directory: work
         env:
