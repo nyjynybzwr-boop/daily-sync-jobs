@@ -1,0 +1,78 @@
+name: Build review evaluation target review batches
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-review-evaluation-target-review-batches.yml'
+      - '.review-evaluation-target-review-batch-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-target-review-batches
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PILOT_DIR: data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1
+      BATCH_DIR: data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-review-batches
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build compact target review batches
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+          REVIEW_TARGET_BATCH_SIZE: '15'
+        run: node scripts/build-review-evaluation-target-review-batches.mjs
+
+      - name: Validate batch outputs
+        working-directory: work
+        run: |
+          set -euo pipefail
+          test -s "$BATCH_DIR/manifest.json"
+          for n in 001 002 003 004 005; do test -s "$BATCH_DIR/target-review-batch-$n.json"; done
+          node - "$BATCH_DIR/manifest.json" <<'NODE'
+          const fs=require('fs');
+          const m=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(m.status!=='target_review_batch_manifest') throw new Error(`unexpected ${m.status}`);
+          if(m.total_rows!==74) throw new Error(`expected 74 rows, got ${m.total_rows}`);
+          if(m.batch_count!==5) throw new Error(`expected 5 batches, got ${m.batch_count}`);
+          const sizes=m.batches.map(x=>x.row_count);
+          if(JSON.stringify(sizes)!==JSON.stringify([15,15,15,15,14])) throw new Error(`bad batch sizes ${sizes}`);
+          console.log({total:m.total_rows,batches:m.batch_count,sizes});
+          NODE
+
+      - name: Commit review batches
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$BATCH_DIR"
+          if git diff --cached --quiet; then echo 'no target review batch changes'; exit 0; fi
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: target review batches"
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin main; then exit 0; fi
+            sleep $((attempt * 2))
+          done
+          exit 1
