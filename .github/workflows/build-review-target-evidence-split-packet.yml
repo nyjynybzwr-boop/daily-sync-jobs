@@ -72,7 +72,9 @@ jobs:
           done
           node scripts/finalize-review-evaluation-target-evidence-decisions.mjs
           node scripts/build-canonical-review-evaluation-target-evidence-view.mjs
+          node scripts/build-canonical-review-evaluation-evidence-decisions.mjs
           node scripts/build-review-evaluation-work-target-mechanism-view.mjs
+          node scripts/validate-review-evaluation-work-target-mechanism-view.mjs
 
       - name: Verify final target views when present
         working-directory: work
@@ -85,11 +87,16 @@ jobs:
           if(!fs.existsSync(p)){ console.log('final target decisions not present yet; skip final verification'); process.exit(0); }
           const d=JSON.parse(fs.readFileSync(p,'utf8'));
           const t=JSON.parse(fs.readFileSync(`${base}/canonical-review-evaluation-target-evidence-summary.json`,'utf8'));
+          const m=JSON.parse(fs.readFileSync(`${base}/canonical-review-evaluation-evidence-decisions-summary.json`,'utf8'));
           const w=JSON.parse(fs.readFileSync(`${base}/work-target-mechanism-summary.json`,'utf8'));
           if(!d.complete||d.decision_rows!==221||d.unique_evidence!==221) throw new Error(`target decisions incomplete ${JSON.stringify(d)}`);
           if(t.output_counts.with_any_target<=0||t.output_counts.with_exact_target<=0) throw new Error(`canonical target view empty ${JSON.stringify(t.output_counts)}`);
+          if(m.schema_version!==2||m.corrections?.applied_evidence!==4||m.corrections?.removed_key_rows!==4) throw new Error(`mechanism corrections not applied ${JSON.stringify(m.corrections)}`);
+          if(w.schema_version!==2||w.status!=='pilot_work_target_mechanism_view_provenance_aware') throw new Error(`work view not provenance-aware ${JSON.stringify({schema_version:w.schema_version,status:w.status})}`);
           if(w.output_counts.works<=0||w.output_counts.fact_rows<=0) throw new Error(`work view empty ${JSON.stringify(w.output_counts)}`);
-          console.log(JSON.stringify({decisions:d,canonical_target:t.output_counts,work_view:w.output_counts},null,2));
+          if('unambiguous_pair_evidence' in w.output_counts) throw new Error('deprecated unambiguous_pair_evidence survived');
+          if(w.global?.reviewed_pair_counts?.['illustration_artwork::scenario_worldbuilding_quality']||w.global?.provisional_pair_counts?.['illustration_artwork::scenario_worldbuilding_quality']||w.global?.same_evidence_pair_counts?.['illustration_artwork::scenario_worldbuilding_quality']) throw new Error('invalid illustration-artwork pair survived correction');
+          console.log(JSON.stringify({decisions:d,canonical_target:t.output_counts,canonical_mechanism:m.output_counts,corrections:m.corrections,work_view:w.output_counts},null,2));
           NODE
 
       - name: Commit packet, review batches, and final views
@@ -113,6 +120,8 @@ jobs:
             target-evidence-decisions-summary.json \
             canonical-review-evaluation-target-evidence.jsonl \
             canonical-review-evaluation-target-evidence-summary.json \
+            canonical-review-evaluation-evidence-decisions.jsonl \
+            canonical-review-evaluation-evidence-decisions-summary.json \
             review-evaluation-facts.jsonl \
             work-target-mechanism-summary.jsonl \
             work-target-mechanism-summary.json; do
