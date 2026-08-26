@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: materialize-male-r2-catalog-v2
+  group: materialize-male-r2-catalog-v3
   cancel-in-progress: false
 
 jobs:
@@ -59,7 +59,7 @@ jobs:
           const m=require('./data/male/r2/manga-progress.json');
           if(a.processed!==61892||a.pending!==0||a.next_chunk!==124||a.stopped_reason) throw new Error(`unexpected audio progress ${JSON.stringify({processed:a.processed,pending:a.pending,next_chunk:a.next_chunk,stopped:a.stopped_reason})}`);
           if(m.processed!==129383||m.pending!==0||m.next_chunk!==259||m.stopped_reason) throw new Error(`unexpected manga progress ${JSON.stringify({processed:m.processed,pending:m.pending,next_chunk:m.next_chunk,stopped:m.stopped_reason})}`);
-          console.log({audio:a.processed,audio_chunks:a.next_chunk,manga:m.processed,manga_chunks:m.next_chunk,total:a.processed+m.processed,known_manga_errors:(m.errors||[]).length});
+          console.log({audio:a.processed,audio_chunks:a.next_chunk,manga:m.processed,manga_chunks:m.next_chunk,total:a.processed+m.processed,progress_error_entries:(m.errors||[]).length});
           NODE
 
       - name: Prime Wrangler
@@ -93,8 +93,8 @@ jobs:
             return 1
           }
           export -f download_chunk
-          printf '%s\n' $(seq 0 123) | xargs -P 12 -n 1 bash -c 'download_chunk audio "$1" "$AUDIO_DIR"' _
-          printf '%s\n' $(seq 0 258) | xargs -P 12 -n 1 bash -c 'download_chunk manga "$1" "$MANGA_DIR"' _
+          printf '%s\n' $(seq 0 123) | xargs -P 24 -n 1 bash -c 'download_chunk audio "$1" "$AUDIO_DIR"' _
+          printf '%s\n' $(seq 0 258) | xargs -P 24 -n 1 bash -c 'download_chunk manga "$1" "$MANGA_DIR"' _
           audio_files=$(find "$AUDIO_DIR" -type f | wc -l)
           manga_files=$(find "$MANGA_DIR" -type f | wc -l)
           test "$audio_files" -eq 124
@@ -122,7 +122,11 @@ jobs:
           const out=process.argv[2], summaryPath=process.argv[3];
           const s=JSON.parse(await fsp.readFile(summaryPath,'utf8'));
           if(s.counts?.audio!==61892||s.counts?.manga!==129383||s.counts?.total_unique!==191275) throw new Error(`summary mismatch ${JSON.stringify(s.counts)}`);
-          if(s.counts?.detail_error_records!==1) throw new Error(`expected the single preserved manga placeholder, got ${s.counts?.detail_error_records}`);
+          if(s.counts?.detail_error_records!==s.detail_errors?.length) throw new Error(`detail error summary mismatch ${s.counts?.detail_error_records} != ${s.detail_errors?.length}`);
+          const audioErrors=(s.detail_errors||[]).filter(x=>x.media==='audio');
+          const mangaErrors=(s.detail_errors||[]).filter(x=>x.media==='manga');
+          if(audioErrors.length!==0) throw new Error(`male audio source unexpectedly contains ${audioErrors.length} detail_error records`);
+          if(mangaErrors.length!==s.counts.detail_error_records) throw new Error(`non-manga detail errors present: manga=${mangaErrors.length}, total=${s.counts.detail_error_records}`);
           let ids=0, placeholder=false;
           const rl=readline.createInterface({input:fs.createReadStream(out,{encoding:'utf8'}),crlfDelay:Infinity});
           for await (const line of rl) {
@@ -132,10 +136,10 @@ jobs:
             if(m[1]==='RJ248380' && line.includes('"detail_error":')) placeholder=true;
           }
           if(ids!==191275) throw new Error(`expected 191275 IDs, got ${ids}`);
-          if(!placeholder) throw new Error('RJ248380 placeholder was not preserved');
+          if(!placeholder) throw new Error('known RJ248380 source placeholder was not preserved');
           const stat=await fsp.stat(out);
           if(stat.size!==s.output_bytes) throw new Error(`output size mismatch ${stat.size} != ${s.output_bytes}`);
-          console.log({ids,counts:s.counts,output_bytes:s.output_bytes,output_mib:(s.output_bytes/1024/1024).toFixed(1),placeholder});
+          console.log({ids,counts:s.counts,source_placeholders:{audio:audioErrors.length,manga:mangaErrors.length},output_bytes:s.output_bytes,output_gib:(s.output_bytes/1024/1024/1024).toFixed(3),placeholder});
           NODE
           grep -F 'data/catalog/male/full/details.json filter=lfs' .gitattributes >/dev/null
           git check-attr filter -- "$OUT"
