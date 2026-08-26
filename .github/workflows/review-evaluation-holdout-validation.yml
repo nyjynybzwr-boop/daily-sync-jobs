@@ -157,6 +157,19 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add "$OUT_DIR"
           if test -f "$TAXONOMY_FILE"; then git add "$TAXONOMY_FILE"; fi
-          git commit -m "[CF-Pages-Skip] [skip actions] reviews: provisional mechanism holdout validation" || exit 0
-          git pull --rebase origin main
-          git push origin main
+          if git diff --cached --quiet; then
+            echo 'no generated changes to commit'
+            exit 0
+          fi
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: provisional mechanism holdout validation"
+          for attempt in 1 2 3 4 5 6; do
+            echo "push attempt $attempt"
+            git fetch origin main
+            git rebase origin/main
+            if git push origin main; then
+              exit 0
+            fi
+            sleep $((attempt * 2))
+          done
+          echo 'failed to push after retries' >&2
+          exit 1
