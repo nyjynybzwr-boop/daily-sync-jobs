@@ -1,0 +1,80 @@
+name: Refresh review evaluation version inputs
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/refresh-review-evaluation-version-inputs.yml'
+      - '.review-evaluation-version-refresh-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-version-inputs
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Refresh effective target vocabulary
+        working-directory: work
+        run: node scripts/build-effective-review-evaluation-target-vocabulary.mjs
+
+      - name: Refresh analysis version manifest
+        working-directory: work
+        run: node scripts/build-review-evaluation-analysis-version-manifest.mjs
+
+      - name: Verify generated source fingerprints
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs'), crypto=require('crypto');
+          const sha=s=>crypto.createHash('sha256').update(s).digest('hex');
+          const base='data/research/review-evaluation-spec/';
+          const reg=fs.readFileSync(base+'evaluation-target-taxonomy-candidates-v1.json','utf8');
+          const prom=fs.readFileSync(base+'target-promotion-decisions-v1.json','utf8');
+          const vocab=JSON.parse(fs.readFileSync(base+'effective-target-mapping-vocabulary-v1.json','utf8'));
+          if(vocab.schema_version!==2) throw new Error(`effective vocab schema ${vocab.schema_version}`);
+          if(vocab.source_fingerprints?.base_registry_sha256!==sha(reg)) throw new Error('base registry fingerprint mismatch');
+          if(vocab.source_fingerprints?.promotion_decisions_sha256!==sha(prom)) throw new Error('promotion fingerprint mismatch');
+          if(!(vocab.families||[]).flatMap(f=>f.candidate_targets||[]).some(t=>t.key==='vocal_interplay')) throw new Error('vocal_interplay missing');
+          const manifest=JSON.parse(fs.readFileSync(base+'analysis-version-manifest-v1.json','utf8'));
+          if(manifest.status!=='review_evaluation_analysis_version_inputs_frozen') throw new Error(`unexpected manifest ${manifest.status}`);
+          console.log({families:vocab.counts.families,targets:vocab.counts.targets,promoted:vocab.counts.promoted_overlay_entries,manifest:manifest.status});
+          NODE
+
+      - name: Commit refreshed generated inputs
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            data/research/review-evaluation-spec/effective-target-mapping-vocabulary-v1.json \
+            data/research/review-evaluation-spec/analysis-version-manifest-v1.json
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: refresh effective vocabulary and version manifest" || exit 0
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin HEAD:main; then exit 0; fi
+            sleep $((attempt * 3))
+          done
+          exit 1
