@@ -18,6 +18,7 @@ on:
   push:
     paths:
       - '.github/workflows/build-review-evaluation-pilot.yml'
+      - '.review-evaluation-pilot-trigger'
 
 permissions:
   contents: read
