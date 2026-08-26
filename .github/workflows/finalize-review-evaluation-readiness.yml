@@ -1,0 +1,142 @@
+name: Finalize review evaluation rest75 and readiness
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/finalize-review-evaluation-readiness.yml'
+      - '.review-evaluation-finalize-readiness-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-finalize-readiness
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HOLDOUT_DIR: data/research/review-evaluation-holdout/otome-audio-rest75-pair-v1
+      SPEC_DIR: data/research/review-evaluation-spec
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Precheck 2425 human decisions
+        id: precheck
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE' >> "$GITHUB_OUTPUT"
+          const fs=require('fs'), path=require('path');
+          const dir=process.env.HOLDOUT_DIR;
+          let completed=0, files=0;
+          for(let i=1;i<=5;i++){
+            const n=String(i).padStart(3,'0');
+            const f=path.join(dir,`rest75-pair-holdout-decisions-batch-${n}.json`);
+            if(!fs.existsSync(f)) continue;
+            files++;
+            const d=JSON.parse(fs.readFileSync(f,'utf8'));
+            completed+=(d.decisions||[]).filter(x=>x&&x.classification).length;
+          }
+          console.error({decision_files:files,completed_rows:completed,expected:2425});
+          console.log(`completed_rows=${completed}`);
+          console.log(`complete=${completed===2425?'true':'false'}`);
+          NODE
+
+      - name: Report incomplete holdout without mutating outputs
+        if: steps.precheck.outputs.complete != 'true'
+        run: echo "rest75 human review incomplete: ${{ steps.precheck.outputs.completed_rows }}/2425; finalization intentionally skipped"
+
+      - name: Finalize and validate rest75 decisions
+        if: steps.precheck.outputs.complete == 'true'
+        working-directory: work
+        run: node scripts/validate-review-evaluation-rest75-pair-holdout-decisions.mjs
+
+      - name: Build rest75 robustness report
+        if: steps.precheck.outputs.complete == 'true'
+        working-directory: work
+        run: node scripts/build-review-evaluation-rest75-robustness-report.mjs
+
+      - name: Build pair confidence registry
+        if: steps.precheck.outputs.complete == 'true'
+        working-directory: work
+        run: node scripts/build-review-evaluation-pair-confidence-registry.mjs
+
+      - name: Build confidence-qualified production pair gate
+        if: steps.precheck.outputs.complete == 'true'
+        working-directory: work
+        run: node scripts/build-review-evaluation-production-pair-qualification.mjs
+
+      - name: Build production pair view v2
+        if: steps.precheck.outputs.complete == 'true'
+        working-directory: work
+        run: node scripts/build-review-evaluation-production-pair-view-v2.mjs
+
+      - name: Validate production pair view v2
+        if: steps.precheck.outputs.complete == 'true'
+        working-directory: work
+        run: node scripts/validate-review-evaluation-production-pair-view-v2.mjs
+
+      - name: Refresh effective target vocabulary
+        if: steps.precheck.outputs.complete == 'true'
+        working-directory: work
+        run: node scripts/build-effective-review-evaluation-target-vocabulary.mjs
+
+      - name: Refresh analysis version manifest
+        if: steps.precheck.outputs.complete == 'true'
+        working-directory: work
+        run: node scripts/build-review-evaluation-analysis-version-manifest.mjs
+
+      - name: Evaluate production readiness and keep report on BLOCK
+        if: steps.precheck.outputs.complete == 'true'
+        id: readiness
+        working-directory: work
+        run: |
+          set +e
+          node scripts/check-review-evaluation-production-readiness.mjs
+          rc=$?
+          set -e
+          node - <<'NODE' >> "$GITHUB_OUTPUT"
+          const fs=require('fs');
+          const f='data/research/review-evaluation-spec/review-evaluation-production-readiness.json';
+          const d=JSON.parse(fs.readFileSync(f,'utf8'));
+          console.error({status:d.status,blockers:d.blockers||d.failed_checks||[]});
+          console.log(`status=${d.status}`);
+          NODE
+          echo "readiness checker exit code: $rc"
+
+      - name: Commit finalization/readiness outputs
+        if: steps.precheck.outputs.complete == 'true'
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$HOLDOUT_DIR" "$SPEC_DIR"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: finalize rest75 and production readiness" || exit 0
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin HEAD:main; then exit 0; fi
+            sleep $((attempt * 3))
+          done
+          exit 1
+
+      - name: Final status
+        if: steps.precheck.outputs.complete == 'true'
+        run: echo "review evaluation readiness = ${{ steps.readiness.outputs.status }}"
