@@ -1,3 +1,4 @@
+# trigger: finalize reviewed 221-evidence target decisions
 name: Finalize review target evidence
 
 on:
