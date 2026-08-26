@@ -1,0 +1,162 @@
+name: Build BL audio review evaluation cross-market cohort
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-bl-audio-review-evaluation-cohort.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bl-audio-review-evaluation-cross-market-cohort
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      R2_BUCKET_NAME: melosignal-data
+      REVIEW_SEGMENT: bl-audio
+      REVIEW_EVAL_COHORT: data/research/review-evaluation-spec/bl-audio-pilot-cohort-v1.json
+      REVIEW_EVAL_MAX_EVIDENCE_PER_WORK: '160'
+      REVIEW_MANIFEST: data/reviews/manifests/bl-audio.json
+      REVIEW_TARGETS: data/reviews/targets/bl-audio.json
+      CATALOG_PATH: .tmp/bl-audio-review-catalog.json
+      PLAN: .tmp/bl-review-eval-cohort/plan.json
+      KEYS: .tmp/bl-review-eval-cohort/chunk-keys.txt
+      RAW_DIR: .tmp/bl-review-eval-cohort/raw
+      PILOT_DIR: data/research/review-evaluation-pilot/bl-audio-review-evaluation-semantic-pilot-v1
+
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build deterministic balanced BL cohort spec
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node scripts/build-bl-audio-review-evaluation-cohort-spec.mjs
+          node - "$REVIEW_EVAL_COHORT" <<'NODE'
+          const fs=require('fs');
+          const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(d.segment!=='bl-audio') throw new Error(`segment ${d.segment}`);
+          if(d.product_ids?.length!==48||new Set(d.product_ids).size!==48) throw new Error(`expected 48 unique works, got ${d.product_ids?.length}`);
+          for(const key of ['high','medium','low']) if(d.selection_snapshot?.selected_band_counts?.[key]!==16) throw new Error(`bad ${key} band count`);
+          console.log({works:d.product_ids.length,circles:d.selection_snapshot.selected_unique_circles,bands:d.selection_snapshot.selected_band_counts,pools:d.selection_snapshot.band_pool_counts});
+          NODE
+
+      - name: Build minimal BL catalog metadata view
+        working-directory: work
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$CATALOG_PATH")"
+          node - "$REVIEW_TARGETS" "$CATALOG_PATH" <<'NODE'
+          const fs=require('fs');
+          const src=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          const works=(src.targets||[]).map(x=>({product_id:x.product_id,title:x.title||'',circle:x.circle||'',review_count:x.expected_review_count??null,labels:[],tags:[]}));
+          fs.writeFileSync(process.argv[3],JSON.stringify({works}));
+          console.log({catalog_works:works.length});
+          NODE
+
+      - name: Plan exact frozen review chunks
+        working-directory: work
+        env:
+          REVIEW_EVAL_COHORT_PLAN: ${{ env.PLAN }}
+          REVIEW_EVAL_COHORT_KEYS: ${{ env.KEYS }}
+        run: |
+          set -euo pipefail
+          node scripts/build-review-evaluation-cohort-evidence.mjs --plan
+          node - "$PLAN" <<'NODE'
+          const fs=require('fs'); const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(d.selected_work_count!==48) throw new Error(`expected 48 cohort works, got ${d.selected_work_count}`);
+          if(!d.chunk_count) throw new Error('no chunks planned');
+          console.log({works:d.selected_work_count,chunks:d.chunk_count});
+          NODE
+
+      - name: Download only required BL review chunks from R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo 'CLOUDFLARE_ACCOUNT_ID missing' >&2; exit 1; }
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo 'CLOUDFLARE_API_TOKEN missing' >&2; exit 1; }
+          mkdir -p "$RAW_DIR"
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            out="$RAW_DIR/$(basename "$key")"
+            ok=0
+            for attempt in 1 2 3; do
+              if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null; then ok=1; break; fi
+              sleep $((attempt * 5))
+            done
+            [ "$ok" -eq 1 ] || { echo "failed $key" >&2; exit 1; }
+          done < "$KEYS"
+
+      - name: Build BL balanced cohort evidence
+        working-directory: work
+        env:
+          REVIEW_EVAL_COHORT_PLAN: ${{ env.PLAN }}
+          REVIEW_EVAL_COHORT_RAW: ${{ env.RAW_DIR }}
+          REVIEW_EVAL_OUT: data/research/review-evaluation-pilot
+        run: node scripts/build-review-evaluation-cohort-evidence.mjs --build
+
+      - name: Compile structured JSONL
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: node scripts/compile-review-evaluation-pilot-jsonl.mjs
+
+      - name: Verify BL cohort and privacy
+        working-directory: work
+        run: |
+          set -euo pipefail
+          test -s "$PILOT_DIR/manifest.json"
+          test -s "$PILOT_DIR/evidence.jsonl"
+          test -s "$PILOT_DIR/evidence-index.json"
+          node - "$PILOT_DIR/manifest.json" "$PILOT_DIR/evidence-index.json" <<'NODE'
+          const fs=require('fs');
+          const m=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          const idx=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+          if(m.segment!=='bl-audio') throw new Error(`segment ${m.segment}`);
+          if(m.selected_work_count!==48) throw new Error(`selected works ${m.selected_work_count}`);
+          if(m.works_with_reviews<40) throw new Error(`too few works with reviews ${m.works_with_reviews}`);
+          if(m.source_review_count<100) throw new Error(`too few source reviews ${m.source_review_count}`);
+          if(idx.row_count!==m.exported_evidence_count) throw new Error(`JSONL row mismatch ${idx.row_count} != ${m.exported_evidence_count}`);
+          console.log({works:m.selected_work_count,with_reviews:m.works_with_reviews,reviews:m.source_review_count,candidates:m.evidence_candidate_count,exported:m.exported_evidence_count,languages:idx.language_counts});
+          NODE
+          if grep -R -E -n 'https?://|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$PILOT_DIR" --include='*.md' --include='*.jsonl'; then
+            echo 'privacy verifier: URL/email-like text leaked' >&2; exit 1
+          fi
+
+      - name: Commit BL cross-market cohort evidence
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$REVIEW_EVAL_COHORT" "$PILOT_DIR"
+          if git diff --cached --quiet; then echo 'no BL cohort changes'; exit 0; fi
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: BL audio cross-market evaluation cohort"
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin main; then exit 0; fi
+            sleep $((attempt * 2))
+          done
+          exit 1
