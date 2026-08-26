@@ -1,0 +1,151 @@
+name: Build disjoint review evaluation shadow cohort
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-review-evaluation-shadow-cohort.yml'
+      - '.review-evaluation-shadow-cohort-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-shadow-cohort
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      R2_BUCKET_NAME: melosignal-data
+      REVIEW_SEGMENT: otome-audio
+      REVIEW_EVAL_COHORT: data/research/review-evaluation-spec/shadow-cohort-v1.json
+      REVIEW_EVAL_MAX_EVIDENCE_PER_WORK: '20'
+      REVIEW_EVAL_OUT: data/research/review-evaluation-calibration
+      PLAN: .tmp/review-eval-shadow/plan.json
+      KEYS: .tmp/review-eval-shadow/chunk-keys.txt
+      RAW_DIR: .tmp/review-eval-shadow/raw
+      SHADOW_DIR: data/research/review-evaluation-calibration/otome-audio-otome-audio-review-evaluation-shadow-v1
+
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build disjoint shadow cohort spec
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node scripts/build-review-evaluation-shadow-cohort-spec.mjs
+          node - <<'NODE'
+          const fs=require('fs');
+          const d=JSON.parse(fs.readFileSync('data/research/review-evaluation-spec/shadow-cohort-v1.json','utf8'));
+          if(d.status!=='disjoint_shadow_calibration_cohort_spec_not_gold_labels') throw new Error(`unexpected status ${d.status}`);
+          if(d.counts?.works!==24) throw new Error(`expected 24 works, got ${d.counts?.works}`);
+          for(const k of ['high','medium','low']) if(d.diagnostics?.[k]?.selected_works!==8) throw new Error(`${k}: expected 8 selected`);
+          console.log({works:d.counts.works,circles:d.counts.unique_circles,diagnostics:d.diagnostics});
+          NODE
+
+      - name: Plan exact review chunks
+        working-directory: work
+        env:
+          REVIEW_EVAL_COHORT_PLAN: ${{ env.PLAN }}
+          REVIEW_EVAL_COHORT_KEYS: ${{ env.KEYS }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$PLAN")"
+          node scripts/build-review-evaluation-cohort-evidence.mjs --plan
+          node - "$PLAN" <<'NODE'
+          const fs=require('fs'); const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(d.selected_work_count!==24) throw new Error(`expected 24 shadow works, got ${d.selected_work_count}`);
+          if(!d.chunk_count) throw new Error('no chunks planned');
+          console.log({works:d.selected_work_count,chunks:d.chunk_count});
+          NODE
+
+      - name: Download only required frozen review chunks from R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RAW_DIR"
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            out="$RAW_DIR/$(basename "$key")"
+            ok=0
+            for attempt in 1 2 3; do
+              if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null; then ok=1; break; fi
+              sleep $((attempt * 5))
+            done
+            [ "$ok" -eq 1 ] || { echo "failed $key" >&2; exit 1; }
+          done < "$KEYS"
+
+      - name: Build shadow evidence
+        working-directory: work
+        env:
+          REVIEW_EVAL_COHORT_PLAN: ${{ env.PLAN }}
+          REVIEW_EVAL_COHORT_RAW: ${{ env.RAW_DIR }}
+        run: node scripts/build-review-evaluation-cohort-evidence.mjs --build
+
+      - name: Compile structured JSONL
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.SHADOW_DIR }}
+        run: node scripts/compile-review-evaluation-pilot-jsonl.mjs
+
+      - name: Verify shadow scope, size and privacy
+        working-directory: work
+        run: |
+          set -euo pipefail
+          test -s "$SHADOW_DIR/manifest.json"
+          test -s "$SHADOW_DIR/evidence.jsonl"
+          test -s "$SHADOW_DIR/evidence-index.json"
+          node - <<'NODE'
+          const fs=require('fs');
+          const spec=JSON.parse(fs.readFileSync('data/research/review-evaluation-spec/shadow-cohort-v1.json','utf8'));
+          const discovery=JSON.parse(fs.readFileSync('data/research/review-evaluation-spec/pilot-cohort-v1.json','utf8'));
+          const rest=JSON.parse(fs.readFileSync('data/research/review-evaluation-boundary-pilot/otome-audio-rest75-low-rating-2023-2024-2025-2026.json','utf8'));
+          const m=JSON.parse(fs.readFileSync(process.env.SHADOW_DIR+'/manifest.json','utf8'));
+          const idx=JSON.parse(fs.readFileSync(process.env.SHADOW_DIR+'/evidence-index.json','utf8'));
+          const forbidden=new Set([...(discovery.product_ids||[]),...(discovery.comparison_product_ids||[]),...(rest.reviews||[]).map(x=>x.product_id)].map(x=>String(x).toUpperCase()));
+          const overlap=(spec.product_ids||[]).filter(x=>forbidden.has(String(x).toUpperCase()));
+          if(overlap.length) throw new Error(`shadow leakage: ${overlap.join(',')}`);
+          if(m.selected_work_count!==24) throw new Error(`selected works ${m.selected_work_count}`);
+          if(m.works_with_reviews<20) throw new Error(`too few works with reviews ${m.works_with_reviews}`);
+          if(m.exported_evidence_count>480) throw new Error(`evidence exceeds 24x20 cap: ${m.exported_evidence_count}`);
+          if(m.exported_evidence_count<120) throw new Error(`too few shadow evidence rows: ${m.exported_evidence_count}`);
+          if(idx.row_count!==m.exported_evidence_count) throw new Error(`JSONL row mismatch ${idx.row_count} != ${m.exported_evidence_count}`);
+          console.log({works:m.selected_work_count,with_reviews:m.works_with_reviews,reviews:m.source_review_count,evidence:m.exported_evidence_count,languages:idx.language_counts});
+          NODE
+          if grep -R -E -n 'https?://|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$SHADOW_DIR" --include='*.md' --include='*.jsonl'; then
+            echo 'privacy verifier: URL/email-like text leaked' >&2; exit 1
+          fi
+
+      - name: Commit shadow cohort and evidence
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add data/research/review-evaluation-spec/shadow-cohort-v1.json "$SHADOW_DIR"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: disjoint shadow calibration cohort evidence" || exit 0
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin HEAD:main; then exit 0; fi
+            sleep $((attempt * 3))
+          done
+          exit 1
