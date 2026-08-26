@@ -109,6 +109,12 @@ jobs:
           REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
         run: node scripts/build-review-evaluation-mechanism-mapping-packet.mjs
 
+      - name: Build mechanism decision template
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: node scripts/build-review-evaluation-mechanism-decision-template.mjs
+
       - name: Validate discovery outputs
         working-directory: work
         run: |
@@ -124,10 +130,12 @@ jobs:
             play-evaluation-anchors.json \
             play-evaluation-reason-clusters.json \
             play-evaluation-reason-clusters.md \
+            play-evaluation-reason-assignments.jsonl \
             play-evaluation-reason-cluster-quality.json \
             play-evaluation-reason-cluster-quality.md \
             mechanism-mapping-packet.json \
-            mechanism-mapping-packet.md; do
+            mechanism-mapping-packet.md \
+            mechanism-mapping-decisions.template.json; do
               test -s "$PILOT_DIR/$f" || { echo "missing $f" >&2; exit 1; }
           done
           python - <<'PY'
@@ -139,19 +147,25 @@ jobs:
           play=json.load(open(f'{p}/play-evaluation-reason-clusters.json',encoding='utf-8'))
           pq=json.load(open(f'{p}/play-evaluation-reason-cluster-quality.json',encoding='utf-8'))
           mapping=json.load(open(f'{p}/mechanism-mapping-packet.json',encoding='utf-8'))
+          template=json.load(open(f'{p}/mechanism-mapping-decisions.template.json',encoding='utf-8'))
+          assignment_lines=sum(1 for line in open(f'{p}/play-evaluation-reason-assignments.jsonl',encoding='utf-8') if line.strip())
           if sem['input_rows'] < 1000: raise SystemExit('semantic input unexpectedly small')
           if sem['cluster_count'] < 5: raise SystemExit(f"too few semantic clusters: {sem['cluster_count']}")
           play_clusters=sum(a['cluster_count'] for a in play['anchor_results'])
           if play_clusters < 5: raise SystemExit(f'too few play reason clusters: {play_clusters}')
           if pq.get('cluster_count') != play_clusters: raise SystemExit(f"play quality mismatch {pq.get('cluster_count')} != {play_clusters}")
+          if play.get('assignment_rows') != assignment_lines: raise SystemExit(f"play assignment mismatch {play.get('assignment_rows')} != {assignment_lines}")
           if len(mapping.get('mechanism_candidates',[])) < 8: raise SystemExit('mechanism mapping vocabulary unexpectedly small')
           if not mapping.get('general_candidates'): raise SystemExit('mapping packet has no general candidates')
           if not mapping.get('play_candidates'): raise SystemExit('mapping packet has no play candidates')
+          if len(template.get('general_decisions',[])) != len(mapping.get('general_candidates',[])): raise SystemExit('general decision template mismatch')
+          if len(template.get('play_decisions',[])) != len(mapping.get('play_candidates',[])): raise SystemExit('play decision template mismatch')
           print({
             'semantic_views': {'usable':views.get('target_usable_rows'),'scope_counts':views.get('semantic_scope_counts')},
             'semantic': {k:sem[k] for k in ['input_rows','eligible_rows','clustered_rows','noise_rows','cluster_count']},
             'semantic_quality': sq.get('status_counts'),
             'play_reason_clusters': play_clusters,
+            'play_assignment_rows': assignment_lines,
             'play_quality': pq.get('status_counts'),
             'mapping_packet': {'mechanisms':len(mapping.get('mechanism_candidates',[])),'general':len(mapping.get('general_candidates',[])),'play':len(mapping.get('play_candidates',[]))},
           })
