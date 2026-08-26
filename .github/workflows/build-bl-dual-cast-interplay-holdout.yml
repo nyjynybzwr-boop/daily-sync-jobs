@@ -1,0 +1,118 @@
+name: Build BL dual-cast interplay target holdout
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-bl-dual-cast-interplay-holdout.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bl-dual-cast-interplay-target-holdout
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      R2_BUCKET_NAME: melosignal-data
+      REVIEW_MANIFEST: data/reviews/manifests/bl-audio.json
+      RAW_DIR: .tmp/bl-dual-cast-holdout/raw
+      OUT_DIR: data/research/review-evaluation-holdout/bl-audio-dual-cast-targets-v1
+
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: List completed BL review chunk keys
+        working-directory: work
+        run: |
+          set -euo pipefail
+          mkdir -p "$RAW_DIR"
+          node - "$REVIEW_MANIFEST" .tmp/bl-dual-cast-holdout/keys.txt <<'NODE'
+          const fs=require('fs');
+          const m=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(m.segment!=='bl-audio') throw new Error(`bad segment ${m.segment}`);
+          if(Number(m.processed_target_works)!==Number(m.source_target_works)) throw new Error(`BL review crawl incomplete ${m.processed_target_works}/${m.source_target_works}`);
+          const chunks=(m.chunks||[]).filter(c=>c.complete&&!c.stopped_reason&&c.key);
+          if(!chunks.length) throw new Error('no completed BL chunks');
+          fs.mkdirSync(require('path').dirname(process.argv[3]),{recursive:true});
+          fs.writeFileSync(process.argv[3],chunks.map(c=>c.key).join('\n')+'\n');
+          console.log({source_works:m.source_target_works,fetched_reviews:m.fetched_reviews,chunks:chunks.length});
+          NODE
+
+      - name: Download all frozen BL review chunks from R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo 'CLOUDFLARE_ACCOUNT_ID missing' >&2; exit 1; }
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo 'CLOUDFLARE_API_TOKEN missing' >&2; exit 1; }
+          mkdir -p "$RAW_DIR"
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            out="$RAW_DIR/$(basename "$key")"
+            ok=0
+            for attempt in 1 2 3; do
+              if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null; then ok=1; break; fi
+              sleep $((attempt * 5))
+            done
+            [ "$ok" -eq 1 ] || { echo "failed $key" >&2; exit 1; }
+          done < .tmp/bl-dual-cast-holdout/keys.txt
+
+      - name: Build disjoint dual-cast interplay holdout packet
+        working-directory: work
+        env:
+          BL_INTERPLAY_RAW_DIR: ${{ env.RAW_DIR }}
+          BL_INTERPLAY_HOLDOUT_DIR: ${{ env.OUT_DIR }}
+        run: node scripts/build-bl-audio-dual-cast-interplay-holdout-packet.mjs
+
+      - name: Verify anti-leakage and privacy
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - "$OUT_DIR/dual-cast-interplay-holdout-packet.json" <<'NODE'
+          const fs=require('fs');const p=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(!p.anti_leakage?.discovery_48_works_excluded||p.anti_leakage.excluded_discovery_work_count!==48) throw new Error('discovery exclusion failed');
+          if(!p.counts?.selected_candidates) throw new Error(`no candidates ${JSON.stringify(p.counts)}`);
+          if(p.counts.selected_unique_products<2) throw new Error(`too few products ${p.counts.selected_unique_products}`);
+          console.log({source:p.source,counts:p.counts});
+          NODE
+          if grep -R -E -n 'https?://|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$OUT_DIR" --include='*.json'; then
+            echo 'privacy verifier: URL/email-like text leaked' >&2; exit 1
+          fi
+
+      - name: Commit holdout packet
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$OUT_DIR"
+          if git diff --cached --quiet; then echo 'no holdout changes'; exit 0; fi
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: BL dual-cast target holdout packet"
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin main; then exit 0; fi
+            sleep $((attempt * 2))
+          done
+          exit 1
