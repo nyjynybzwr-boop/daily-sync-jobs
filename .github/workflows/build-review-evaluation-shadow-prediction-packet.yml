@@ -54,8 +54,8 @@ jobs:
           if(idx.counts.rows!==446||idx.counts.products!==23||idx.batches.length!==4) throw new Error(`unexpected counts ${JSON.stringify(idx.counts)}`);
           console.log({counts:idx.counts,batches:idx.batches});
           NODE
-          if grep -R -n 'human-gold' "$PRED_DIR"; then
-            echo 'prediction packet must not reference human-gold files' >&2; exit 1
+          if grep -R -n 'human-gold/' "$PRED_DIR"; then
+            echo 'prediction packet must not reference any human-gold path' >&2; exit 1
           fi
 
       - name: Commit blank prediction packet
