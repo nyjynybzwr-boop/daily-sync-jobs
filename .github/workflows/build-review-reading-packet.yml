@@ -11,6 +11,7 @@ on:
   push:
     paths:
       - '.github/workflows/build-review-reading-packet.yml'
+      - '.review-reading-request-path'
 
 permissions:
   contents: read
@@ -25,13 +26,20 @@ jobs:
     timeout-minutes: 30
     env:
       R2_BUCKET_NAME: melosignal-data
-      REVIEW_PACKET_REQUEST: ${{ inputs.request_path || 'data/research/review-reading-requests/otome-audio-qualitative-2023-2026.json' }}
+      REVIEW_PACKET_REQUEST: ${{ inputs.request_path || '' }}
       REVIEW_EXPERIENCE_GZ: .tmp/review-reading/experience.json.gz
       REVIEW_PACKET_PLAN: .tmp/review-reading/plan.json
       REVIEW_PACKET_KEYS: .tmp/review-reading/chunk-keys.txt
       REVIEW_PACKET_RAW_DIR: .tmp/review-reading/raw
       REVIEW_PACKET_OUTPUT_FILES: .tmp/review-reading/output-files.txt
     steps:
+      - name: Checkout runner trigger metadata
+        uses: actions/checkout@v4
+        with:
+          path: runner
+          sparse-checkout: .review-reading-request-path
+          sparse-checkout-cone-mode: false
+
       - name: Checkout private source
         env:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
@@ -51,9 +59,13 @@ jobs:
           mkdir -p .tmp/review-reading/raw
           node - <<'NODE' >> "$GITHUB_ENV"
           const fs=require('fs');
-          const p=process.env.REVIEW_PACKET_REQUEST;
+          let p=String(process.env.REVIEW_PACKET_REQUEST||'').trim();
+          const queued='../runner/.review-reading-request-path';
+          if(!p && fs.existsSync(queued)) p=String(fs.readFileSync(queued,'utf8')).trim();
+          if(!p) p='data/research/review-reading-requests/otome-audio-qualitative-2023-2026.json';
           const req=JSON.parse(fs.readFileSync(p,'utf8'));
           if(!req.segment) throw new Error('request.segment is required');
+          console.log(`REVIEW_PACKET_REQUEST=${p}`);
           console.log(`REVIEW_SEGMENT=${String(req.segment).trim()}`);
           console.log(`REVIEW_PACKET_ID=${String(req.packet_id||'packet').trim()}`);
           NODE
