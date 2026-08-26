@@ -70,6 +70,35 @@ jobs:
         working-directory: work
         run: node scripts/build-review-evaluation-rest75-robustness-report.mjs
 
+      - name: Build official rest75 new-candidate review packet
+        if: steps.precheck.outputs.complete == 'true'
+        working-directory: work
+        run: node scripts/build-review-evaluation-rest75-new-candidate-review-packet.mjs
+
+      - name: Detect completed new-candidate adjudication
+        if: steps.precheck.outputs.complete == 'true'
+        id: candidate_review
+        working-directory: work
+        run: |
+          node - <<'NODE' >> "$GITHUB_OUTPUT"
+          const fs=require('fs'), path=require('path');
+          const f=path.join(process.env.HOLDOUT_DIR,'rest75-new-candidate-decisions.json');
+          let exists=false;
+          if(fs.existsSync(f)){
+            try{
+              const d=JSON.parse(fs.readFileSync(f,'utf8'));
+              exists=Array.isArray(d.decisions)&&d.decisions.length>=0;
+            }catch{}
+          }
+          console.error({completed_candidate_decisions:exists});
+          console.log(`exists=${exists?'true':'false'}`);
+          NODE
+
+      - name: Validate existing human new-candidate decisions
+        if: steps.precheck.outputs.complete == 'true' && steps.candidate_review.outputs.exists == 'true'
+        working-directory: work
+        run: node scripts/validate-review-evaluation-rest75-new-candidate-decisions.mjs
+
       - name: Build pair confidence registry
         if: steps.precheck.outputs.complete == 'true'
         working-directory: work
