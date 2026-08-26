@@ -1,3 +1,3 @@
-rerun=2026-08-26T18:46:00+09:00
-reason=clean raw target hints, reject praise fallback, multilingual register cleanup, boilerplate quality guard
-source_commit=9fb509a248070ee7acfd7334a577b3d0d80733dd
+rerun=2026-08-26T18:50:00+09:00
+reason=drop whole creator-thanks sentences before target stripping and reject residual thanks fragments
+source_commit=1f0864b2a0fa721836aefca0732ac8468ab61eee
