@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: materialize-male-r2-catalog
+  group: materialize-male-r2-catalog-v2
   cancel-in-progress: false
 
 jobs:
@@ -69,7 +69,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: npx --yes wrangler@latest --version
 
-      - name: Download all frozen male audio and manga chunks
+      - name: Download all frozen male audio and manga chunks in parallel
         working-directory: work
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -92,9 +92,14 @@ jobs:
             echo "failed to download $key" >&2
             return 1
           }
-          for idx in $(seq 0 123); do download_chunk audio "$idx" "$AUDIO_DIR"; done
-          for idx in $(seq 0 258); do download_chunk manga "$idx" "$MANGA_DIR"; done
-          echo "audio files=$(find "$AUDIO_DIR" -type f | wc -l) manga files=$(find "$MANGA_DIR" -type f | wc -l)"
+          export -f download_chunk
+          printf '%s\n' $(seq 0 123) | xargs -P 12 -n 1 bash -c 'download_chunk audio "$1" "$AUDIO_DIR"' _
+          printf '%s\n' $(seq 0 258) | xargs -P 12 -n 1 bash -c 'download_chunk manga "$1" "$MANGA_DIR"' _
+          audio_files=$(find "$AUDIO_DIR" -type f | wc -l)
+          manga_files=$(find "$MANGA_DIR" -type f | wc -l)
+          test "$audio_files" -eq 124
+          test "$manga_files" -eq 259
+          echo "audio files=$audio_files manga files=$manga_files"
 
       - name: Materialize ID-complete details map
         working-directory: work
@@ -105,21 +110,32 @@ jobs:
           MALE_FULL_DETAILS_SUMMARY: ${{ env.SUMMARY }}
         run: node scripts/materialize-male-r2-details.mjs
 
-      - name: Verify materialized catalog and LFS rule
+      - name: Verify materialized catalog and LFS rule without giant JSON parse
         working-directory: work
         run: |
           set -euo pipefail
           test -s "$OUT"; test -s "$SUMMARY"
-          node - "$OUT" "$SUMMARY" <<'NODE'
-          const fs=require('fs');
-          const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
-          const s=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
-          const ids=Object.keys(d);
-          if(ids.length!==191275) throw new Error(`expected 191275 IDs, got ${ids.length}`);
+          node --input-type=module - "$OUT" "$SUMMARY" <<'NODE'
+          import fs from 'node:fs';
+          import fsp from 'node:fs/promises';
+          import readline from 'node:readline';
+          const out=process.argv[2], summaryPath=process.argv[3];
+          const s=JSON.parse(await fsp.readFile(summaryPath,'utf8'));
           if(s.counts?.audio!==61892||s.counts?.manga!==129383||s.counts?.total_unique!==191275) throw new Error(`summary mismatch ${JSON.stringify(s.counts)}`);
           if(s.counts?.detail_error_records!==1) throw new Error(`expected the single preserved manga placeholder, got ${s.counts?.detail_error_records}`);
-          if(!d.RJ248380?.detail_error) throw new Error('RJ248380 placeholder was not preserved');
-          console.log({ids:ids.length,counts:s.counts,error:d.RJ248380.detail_error});
+          let ids=0, placeholder=false;
+          const rl=readline.createInterface({input:fs.createReadStream(out,{encoding:'utf8'}),crlfDelay:Infinity});
+          for await (const line of rl) {
+            const m=line.match(/^  "((?:RJ|VJ|BJ|AJ)\d+)": /);
+            if(!m) continue;
+            ids += 1;
+            if(m[1]==='RJ248380' && line.includes('"detail_error":')) placeholder=true;
+          }
+          if(ids!==191275) throw new Error(`expected 191275 IDs, got ${ids}`);
+          if(!placeholder) throw new Error('RJ248380 placeholder was not preserved');
+          const stat=await fsp.stat(out);
+          if(stat.size!==s.output_bytes) throw new Error(`output size mismatch ${stat.size} != ${s.output_bytes}`);
+          console.log({ids,counts:s.counts,output_bytes:s.output_bytes,output_mib:(s.output_bytes/1024/1024).toFixed(1),placeholder});
           NODE
           grep -F 'data/catalog/male/full/details.json filter=lfs' .gitattributes >/dev/null
           git check-attr filter -- "$OUT"
@@ -134,6 +150,7 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add "$OUT" "$SUMMARY"
           git diff --cached --stat
+          git show ":$OUT" | grep -F 'version https://git-lfs.github.com/spec/v1' >/dev/null
           if git diff --cached --quiet; then echo 'no materialized catalog changes'; exit 0; fi
           git commit -m "[CF-Pages-Skip] [skip actions] male catalog: materialize complete R2 details"
           for attempt in 1 2 3 4 5 6; do
