@@ -81,3 +81,5 @@ jobs:
           git commit -m "[CF-Pages-Skip] [skip actions] reviews: mixed evidence split packet" || exit 0
           git pull --rebase origin main
           git push origin main
+
+# Rebuild trigger: atmosphere_immersion_mood remap on 2026-08-26
