@@ -1,0 +1,139 @@
+name: Build review reading packet
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_path:
+        description: 'Private repo request JSON path'
+        required: true
+        type: string
+        default: 'data/research/review-reading-requests/otome-audio-qualitative-2023-2026.json'
+  push:
+    paths:
+      - '.github/workflows/build-review-reading-packet.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-reading-packet
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      R2_BUCKET_NAME: melosignal-data
+      REVIEW_PACKET_REQUEST: ${{ inputs.request_path || 'data/research/review-reading-requests/otome-audio-qualitative-2023-2026.json' }}
+      REVIEW_EXPERIENCE_GZ: .tmp/review-reading/experience.json.gz
+      REVIEW_PACKET_PLAN: .tmp/review-reading/plan.json
+      REVIEW_PACKET_KEYS: .tmp/review-reading/chunk-keys.txt
+      REVIEW_PACKET_RAW_DIR: .tmp/review-reading/raw
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Resolve request
+        working-directory: work
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp/review-reading/raw
+          node - <<'NODE' >> "$GITHUB_ENV"
+          const fs=require('fs');
+          const p=process.env.REVIEW_PACKET_REQUEST;
+          const req=JSON.parse(fs.readFileSync(p,'utf8'));
+          if(!req.segment) throw new Error('request.segment is required');
+          console.log(`REVIEW_SEGMENT=${String(req.segment).trim()}`);
+          console.log(`REVIEW_PACKET_ID=${String(req.packet_id||'packet').trim()}`);
+          NODE
+
+      - name: Download derived experience analysis
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          key="reviews-derived/experience/${REVIEW_SEGMENT}/latest.json.gz"
+          for attempt in 1 2 3; do
+            if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$REVIEW_EXPERIENCE_GZ" --remote >/dev/null; then
+              echo "downloaded $key"
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          echo "failed to download $key" >&2
+          exit 1
+
+      - name: Plan representative works and raw chunks
+        working-directory: work
+        run: node scripts/build-review-reading-packet.mjs --plan
+
+      - name: Download only required raw review chunks
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            out="$REVIEW_PACKET_RAW_DIR/$(basename "$key")"
+            echo "download $key"
+            ok=0
+            for attempt in 1 2 3; do
+              if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null; then ok=1; break; fi
+              sleep $((attempt * 5))
+            done
+            [ "$ok" -eq 1 ] || { echo "failed to download $key" >&2; exit 1; }
+          done < "$REVIEW_PACKET_KEYS"
+
+      - name: Build private Markdown reading packet
+        working-directory: work
+        run: node scripts/build-review-reading-packet.mjs --build
+
+      - name: Verify packet privacy boundary
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const plan=JSON.parse(fs.readFileSync(process.env.REVIEW_PACKET_PLAN,'utf8'));
+          const meta=JSON.parse(fs.readFileSync(plan.output_manifest,'utf8'));
+          const md=fs.readFileSync(plan.output_markdown,'utf8');
+          if(meta.private_analysis_only!==true) throw new Error('packet must be private analysis only');
+          if(meta.raw_review_text_in_markdown!==true) throw new Error('packet does not contain review bodies');
+          if(meta.reviewer_identifiers_included!==false||meta.review_ids_included!==false) throw new Error('identifier boundary violated');
+          if(!meta.works?.length||!meta.total_sampled_review_bodies) throw new Error('packet is empty');
+          if(/member_review_id|review_id\s*:/i.test(md)) throw new Error('structured review identifier leaked into markdown');
+          console.log({packet:meta.packet_id,works:meta.works.length,reviews:meta.total_sampled_review_bodies,bytes:Buffer.byteLength(md)});
+          NODE
+
+      - name: Commit reading packet to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          node - <<'NODE' > .tmp/review-reading-output-files.txt
+          const fs=require('fs');
+          const p=JSON.parse(fs.readFileSync(process.env.REVIEW_PACKET_PLAN,'utf8'));
+          console.log(p.output_markdown);
+          console.log(p.output_manifest);
+          NODE
+          while IFS= read -r file; do git add "$file"; done < .tmp/review-reading-output-files.txt
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: ${REVIEW_PACKET_ID} reading packet" || exit 0
+          git pull --rebase origin main
+          git push origin main
