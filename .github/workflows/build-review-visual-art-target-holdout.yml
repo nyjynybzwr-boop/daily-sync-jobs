@@ -1,0 +1,70 @@
+name: Build review visual-art target holdout
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-review-visual-art-target-holdout.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-review-visual-art-target-holdout
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build visual-art target holdout candidates
+        working-directory: work
+        run: node scripts/build-review-evaluation-visual-art-target-holdout-packet.mjs
+
+      - name: Verify packet
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const base='data/research/review-evaluation-holdout/otome-audio-rest75-targets-v1';
+          const p=JSON.parse(fs.readFileSync(`${base}/visual-art-target-holdout-packet.json`,'utf8'));
+          const t=JSON.parse(fs.readFileSync(`${base}/visual-art-target-holdout-decisions.template.json`,'utf8'));
+          if(p.holdout_review_count!==239) throw new Error(`unexpected holdout reviews ${p.holdout_review_count}`);
+          if(!p.rows.length) throw new Error('no visual-art target candidates');
+          if(t.decisions.length!==p.rows.length) throw new Error(`template mismatch ${t.decisions.length}/${p.rows.length}`);
+          console.log({reviews:p.holdout_review_count,rows:p.rows.length,summary:p.summary});
+          NODE
+
+      - name: Commit packet
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          out='data/research/review-evaluation-holdout/otome-audio-rest75-targets-v1'
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$out/visual-art-target-holdout-packet.json" "$out/visual-art-target-holdout-packet.md" "$out/visual-art-target-holdout-decisions.template.json"
+          if git diff --cached --quiet; then echo 'no visual-art target holdout changes'; exit 0; fi
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: visual-art target holdout candidates"
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin main; then exit 0; fi
+            sleep $((attempt * 2))
+          done
+          exit 1
