@@ -61,7 +61,36 @@ jobs:
           console.log({heldout:packet.holdout_review_count,candidates:packet.rows.length,axes:packet.axis_summary});
           NODE
 
-      - name: Commit holdout candidate packet
+      - name: Validate reviewed holdout batches
+        working-directory: work
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=("$OUT_DIR"/holdout-decisions.batch-*.json)
+          if test ${#files[@]} -eq 0; then
+            echo 'no reviewed holdout batches yet'
+          else
+            for f in "${files[@]}"; do
+              echo "validating $f"
+              REVIEW_HOLDOUT_OUT_DIR="$OUT_DIR" REVIEW_HOLDOUT_BATCH_JSON="$f" node scripts/validate-review-evaluation-holdout-decision-batch.mjs
+            done
+          fi
+
+      - name: Merge reviewed holdout batches
+        working-directory: work
+        env:
+          REVIEW_HOLDOUT_OUT_DIR: ${{ env.OUT_DIR }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=("$OUT_DIR"/holdout-decisions.batch-*.json)
+          if test ${#files[@]} -gt 0; then
+            node scripts/merge-review-evaluation-holdout-decision-batches.mjs
+          else
+            echo 'no reviewed holdout batches yet; skipping merge'
+          fi
+
+      - name: Commit holdout packet and review state
         working-directory: work
         env:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
@@ -70,6 +99,6 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add "$OUT_DIR"
-          git commit -m "[CF-Pages-Skip] [skip actions] reviews: provisional mechanism holdout candidates" || exit 0
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: provisional mechanism holdout validation" || exit 0
           git pull --rebase origin main
           git push origin main
