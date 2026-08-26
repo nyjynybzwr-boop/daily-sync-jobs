@@ -1,6 +1,6 @@
 name: Finalize review evaluation target decisions
 
-# Canonicalizes the five human-reviewed target decision batches.
+# Canonicalizes the five human-reviewed target decision batches, including split-level candidate vocabulary.
 on:
   workflow_dispatch:
   push:
