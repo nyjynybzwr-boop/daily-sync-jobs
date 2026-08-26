@@ -1,0 +1,41 @@
+name: Extract review experience headline
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/extract-review-experience-headline.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    env:
+      REVIEW_SEGMENT: otome-audio
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Extract compact headline
+        working-directory: work
+        run: node scripts/extract-review-experience-headline.mjs
+
+      - name: Commit headline to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          file="data/research/review-experience-headline/${REVIEW_SEGMENT}.json"
+          git add "$file"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: ${REVIEW_SEGMENT} experience headline" || exit 0
+          git pull --rebase origin main
+          git push origin main
