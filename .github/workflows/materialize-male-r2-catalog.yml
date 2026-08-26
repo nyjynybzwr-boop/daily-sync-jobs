@@ -1,0 +1,146 @@
+name: Materialize male full R2 catalog into Git LFS
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/materialize-male-r2-catalog.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: materialize-male-r2-catalog
+  cancel-in-progress: false
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      R2_BUCKET_NAME: melosignal-data
+      AUDIO_DIR: .tmp/male-r2-materialize/audio
+      MANGA_DIR: .tmp/male-r2-materialize/manga
+      OUT: data/catalog/male/full/details.json
+      SUMMARY: data/catalog/male/full/manifest.json
+
+    steps:
+      - name: Require credentials
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo 'CLOUDFLARE_ACCOUNT_ID missing' >&2; exit 1; }
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo 'CLOUDFLARE_API_TOKEN missing' >&2; exit 1; }
+
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+          cd work
+          git lfs install --local
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify frozen male R2 progress
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const a=require('./data/male/r2/audio-progress.json');
+          const m=require('./data/male/r2/manga-progress.json');
+          if(a.processed!==61892||a.pending!==0||a.next_chunk!==124||a.stopped_reason) throw new Error(`unexpected audio progress ${JSON.stringify({processed:a.processed,pending:a.pending,next_chunk:a.next_chunk,stopped:a.stopped_reason})}`);
+          if(m.processed!==129383||m.pending!==0||m.next_chunk!==259||m.stopped_reason) throw new Error(`unexpected manga progress ${JSON.stringify({processed:m.processed,pending:m.pending,next_chunk:m.next_chunk,stopped:m.stopped_reason})}`);
+          console.log({audio:a.processed,audio_chunks:a.next_chunk,manga:m.processed,manga_chunks:m.next_chunk,total:a.processed+m.processed,known_manga_errors:(m.errors||[]).length});
+          NODE
+
+      - name: Prime Wrangler
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx --yes wrangler@latest --version
+
+      - name: Download all frozen male audio and manga chunks
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$AUDIO_DIR" "$MANGA_DIR"
+          download_chunk() {
+            media="$1"; idx="$2"; dir="$3"
+            padded="$(printf '%05d' "$idx")"
+            key="male/${media}/raw/chunk-${padded}.json.gz"
+            out="${dir}/chunk-${padded}.json.gz"
+            for attempt in 1 2 3; do
+              if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null; then
+                test -s "$out" && return 0
+              fi
+              rm -f "$out"
+              sleep $((attempt * 3))
+            done
+            echo "failed to download $key" >&2
+            return 1
+          }
+          for idx in $(seq 0 123); do download_chunk audio "$idx" "$AUDIO_DIR"; done
+          for idx in $(seq 0 258); do download_chunk manga "$idx" "$MANGA_DIR"; done
+          echo "audio files=$(find "$AUDIO_DIR" -type f | wc -l) manga files=$(find "$MANGA_DIR" -type f | wc -l)"
+
+      - name: Materialize ID-complete details map
+        working-directory: work
+        env:
+          MALE_AUDIO_R2_RAW_DIR: ${{ env.AUDIO_DIR }}
+          MALE_MANGA_R2_RAW_DIR: ${{ env.MANGA_DIR }}
+          MALE_FULL_DETAILS_OUT: ${{ env.OUT }}
+          MALE_FULL_DETAILS_SUMMARY: ${{ env.SUMMARY }}
+        run: node scripts/materialize-male-r2-details.mjs
+
+      - name: Verify materialized catalog and LFS rule
+        working-directory: work
+        run: |
+          set -euo pipefail
+          test -s "$OUT"; test -s "$SUMMARY"
+          node - "$OUT" "$SUMMARY" <<'NODE'
+          const fs=require('fs');
+          const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          const s=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+          const ids=Object.keys(d);
+          if(ids.length!==191275) throw new Error(`expected 191275 IDs, got ${ids.length}`);
+          if(s.counts?.audio!==61892||s.counts?.manga!==129383||s.counts?.total_unique!==191275) throw new Error(`summary mismatch ${JSON.stringify(s.counts)}`);
+          if(s.counts?.detail_error_records!==1) throw new Error(`expected the single preserved manga placeholder, got ${s.counts?.detail_error_records}`);
+          if(!d.RJ248380?.detail_error) throw new Error('RJ248380 placeholder was not preserved');
+          console.log({ids:ids.length,counts:s.counts,error:d.RJ248380.detail_error});
+          NODE
+          grep -F 'data/catalog/male/full/details.json filter=lfs' .gitattributes >/dev/null
+          git check-attr filter -- "$OUT"
+
+      - name: Commit materialized catalog through LFS
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$OUT" "$SUMMARY"
+          git diff --cached --stat
+          if git diff --cached --quiet; then echo 'no materialized catalog changes'; exit 0; fi
+          git commit -m "[CF-Pages-Skip] [skip actions] male catalog: materialize complete R2 details"
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin main; then exit 0; fi
+            sleep $((attempt * 3))
+          done
+          echo 'failed to push male materialized catalog after retries' >&2
+          exit 1
