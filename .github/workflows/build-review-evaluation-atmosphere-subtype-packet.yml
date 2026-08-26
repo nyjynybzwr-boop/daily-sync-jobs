@@ -36,7 +36,7 @@ jobs:
         working-directory: work
         run: |
           set -euo pipefail
-          for f in review-evaluation-mechanism-assignments.jsonl semantic-views.jsonl; do
+          for f in review-evaluation-mechanism-assignments.jsonl semantic-views.jsonl atmosphere-subtype-decisions.json; do
             test -s "$PILOT_DIR/$f" || { echo "missing $PILOT_DIR/$f" >&2; exit 1; }
           done
 
@@ -63,7 +63,19 @@ jobs:
           console.log(s);
           NODE
 
-      - name: Commit atmosphere packet
+      - name: Validate reviewed atmosphere decisions
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: node scripts/validate-review-evaluation-atmosphere-subtype-decisions.mjs
+
+      - name: Apply reviewed atmosphere decisions
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: node scripts/apply-review-evaluation-atmosphere-subtype-decisions.mjs
+
+      - name: Commit atmosphere packet and resolutions
         working-directory: work
         env:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
@@ -73,7 +85,9 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add "$PILOT_DIR/atmosphere-subtype-discovery-packet.json" \
                   "$PILOT_DIR/atmosphere-subtype-discovery-packet.md" \
-                  "$PILOT_DIR/atmosphere-subtype-decisions.template.json"
-          git commit -m "[CF-Pages-Skip] [skip actions] reviews: atmosphere subtype discovery packet" || exit 0
+                  "$PILOT_DIR/atmosphere-subtype-decisions.template.json" \
+                  "$PILOT_DIR/atmosphere-subtype-resolutions.jsonl" \
+                  "$PILOT_DIR/atmosphere-subtype-resolution-summary.json"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: atmosphere subtype reviewed resolutions" || exit 0
           git pull --rebase origin main
           git push origin main
