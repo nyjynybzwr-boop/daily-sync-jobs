@@ -34,6 +34,13 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Build canonical evidence decision view
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+          REVIEW_MECHANISM_TAXONOMY_JSON: ${{ env.TAXONOMY_FILE }}
+        run: node scripts/build-canonical-review-evaluation-evidence-decisions.mjs
+
       - name: Audit evaluation target fields
         working-directory: work
         env:
@@ -47,6 +54,16 @@ jobs:
           REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
         run: node scripts/audit-review-play-target-anchors.mjs
 
+      - name: Build target mapping packet
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+          REVIEW_MECHANISM_TAXONOMY_JSON: ${{ env.TAXONOMY_FILE }}
+        run: |
+          set -euo pipefail
+          node scripts/build-review-evaluation-target-mapping-packet.mjs
+          node scripts/sync-review-evaluation-target-packet-canonical-evidence.mjs
+
       - name: Validate target audit outputs
         working-directory: work
         run: |
@@ -55,13 +72,23 @@ jobs:
             evaluation-target-field-audit.json \
             evaluation-target-field-audit.md \
             play-target-anchor-audit.json \
-            play-target-anchor-audit.md; do
+            play-target-anchor-audit.md \
+            canonical-review-evaluation-evidence-decisions.jsonl \
+            canonical-review-evaluation-evidence-decisions-summary.json \
+            target-mapping-packet.json \
+            target-mapping-packet.md; do
             test -s "$PILOT_DIR/$f" || { echo "missing $f" >&2; exit 1; }
           done
-          node - "$PILOT_DIR/evaluation-target-field-audit.json" "$PILOT_DIR/play-target-anchor-audit.json" <<'NODE'
+          node - \
+            "$PILOT_DIR/evaluation-target-field-audit.json" \
+            "$PILOT_DIR/play-target-anchor-audit.json" \
+            "$PILOT_DIR/canonical-review-evaluation-evidence-decisions-summary.json" \
+            "$PILOT_DIR/target-mapping-packet.json" <<'NODE'
           const fs=require('fs');
           const field=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
           const play=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+          const canonical=JSON.parse(fs.readFileSync(process.argv[4],'utf8'));
+          const packet=JSON.parse(fs.readFileSync(process.argv[5],'utf8'));
           if(field.status!=='target_field_audit_not_target_taxonomy') throw new Error(`unexpected field status ${field.status}`);
           if(field.source_counts?.evidence_rows!==7223) throw new Error(`expected 7223 evidence rows, got ${field.source_counts?.evidence_rows}`);
           if(!field.target_field_coverage||!field.facet_audit||!field.play_target_audit||!field.mechanism_target_join_audit) throw new Error('field audit sections missing');
@@ -69,8 +96,18 @@ jobs:
           if(play.status!=='play_anchor_target_audit_not_target_taxonomy') throw new Error(`unexpected play audit status ${play.status}`);
           if(play.source_counts?.assignment_rows!==756||play.source_counts?.audited_rows!==756) throw new Error(`expected 756 play assignment rows, got ${play.source_counts?.assignment_rows}/${play.source_counts?.audited_rows}`);
           if(!Array.isArray(play.anchor_summary)||play.anchor_summary.length<16) throw new Error('play anchor summaries missing');
-          if((play.overall?.ambiguous_non_target_candidate_rows??0)<1) throw new Error('strict play audit unexpectedly found no ambiguous rows');
-          console.log({evidence:field.source_counts.evidence_rows,semantic_usable:field.target_field_coverage.semantic_target_usable,mechanism_assigned:field.mechanism_target_join_audit.evidence_with_canonical_mechanism_assignment,play_assignments:play.source_counts.assignment_rows,play_strict:play.overall.strict_target_candidate_rows,play_ambiguous:play.overall.ambiguous_non_target_candidate_rows});
+          if(play.overall?.strict_target_candidate_rows!==629) throw new Error(`expected 629 strict play rows, got ${play.overall?.strict_target_candidate_rows}`);
+          if(play.overall?.ambiguous_non_target_candidate_rows!==126) throw new Error(`expected 126 ambiguous play rows, got ${play.overall?.ambiguous_non_target_candidate_rows}`);
+          if(canonical.status!=='canonical_derived_view_preserves_source_review_history') throw new Error(`unexpected canonical status ${canonical.status}`);
+          if(canonical.output_counts?.with_mechanism!==891) throw new Error(`expected 891 canonical mechanism evidence, got ${canonical.output_counts?.with_mechanism}`);
+          if(canonical.canonicalized_former_provisional?.evidence!==69) throw new Error(`expected 69 canonicalized former provisional evidence, got ${canonical.canonicalized_former_provisional?.evidence}`);
+          if(canonical.canonicalized_former_provisional?.key_rows!==79) throw new Error(`expected 79 canonicalized former provisional key rows, got ${canonical.canonicalized_former_provisional?.key_rows}`);
+          if(packet.status!=='human_review_target_mapping_packet_not_taxonomy') throw new Error(`unexpected packet status ${packet.status}`);
+          if(packet.schema_version<2) throw new Error(`target packet was not synced to canonical evidence view: schema ${packet.schema_version}`);
+          if(packet.canonical_evidence_view?.with_canonical_mechanism!==891) throw new Error(`target packet canonical mechanism count mismatch ${packet.canonical_evidence_view?.with_canonical_mechanism}`);
+          if(packet.canonical_evidence_view?.former_provisional_evidence_canonicalized!==69) throw new Error('target packet did not retain canonicalized former provisional evidence');
+          if((packet.summary?.general_target_cluster_candidates??0)<1) throw new Error('target mapping packet has no semantic target candidates');
+          console.log({evidence:field.source_counts.evidence_rows,semantic_usable:field.target_field_coverage.semantic_target_usable,canonical_mechanism_evidence:canonical.output_counts.with_mechanism,former_provisional:canonical.canonicalized_former_provisional,play_strict:play.overall.strict_target_candidate_rows,play_ambiguous:play.overall.ambiguous_non_target_candidate_rows,target_clusters:packet.summary.general_target_cluster_candidates,target_flags:packet.summary.target_review_flag_counts});
           NODE
 
       - name: Commit target audit outputs
@@ -85,12 +122,16 @@ jobs:
             "$PILOT_DIR/evaluation-target-field-audit.json" \
             "$PILOT_DIR/evaluation-target-field-audit.md" \
             "$PILOT_DIR/play-target-anchor-audit.json" \
-            "$PILOT_DIR/play-target-anchor-audit.md"
+            "$PILOT_DIR/play-target-anchor-audit.md" \
+            "$PILOT_DIR/canonical-review-evaluation-evidence-decisions.jsonl" \
+            "$PILOT_DIR/canonical-review-evaluation-evidence-decisions-summary.json" \
+            "$PILOT_DIR/target-mapping-packet.json" \
+            "$PILOT_DIR/target-mapping-packet.md"
           if git diff --cached --quiet; then
             echo 'no target audit changes to commit'
             exit 0
           fi
-          git commit -m "[CF-Pages-Skip] [skip actions] reviews: evaluation target field audit"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: evaluation target mapping packet"
           for attempt in 1 2 3 4 5 6; do
             echo "push attempt $attempt"
             git fetch origin main
