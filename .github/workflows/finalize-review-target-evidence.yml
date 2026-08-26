@@ -1,0 +1,87 @@
+name: Finalize review target evidence
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: finalize-review-target-evidence
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Finalize 221 human evidence target decisions
+        working-directory: work
+        run: node scripts/finalize-review-evaluation-target-evidence-decisions.mjs
+
+      - name: Build canonical target evidence view
+        working-directory: work
+        run: node scripts/build-canonical-review-evaluation-target-evidence-view.mjs
+
+      - name: Build work target-mechanism view
+        working-directory: work
+        run: node scripts/build-review-evaluation-work-target-mechanism-view.mjs
+
+      - name: Verify final outputs
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const base='data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1';
+          const d=JSON.parse(fs.readFileSync(`${base}/target-evidence-decisions-summary.json`,'utf8'));
+          const t=JSON.parse(fs.readFileSync(`${base}/canonical-review-evaluation-target-evidence-summary.json`,'utf8'));
+          const w=JSON.parse(fs.readFileSync(`${base}/work-target-mechanism-summary.json`,'utf8'));
+          if(!d.complete||d.decision_rows!==221||d.unique_evidence!==221) throw new Error(`target decisions incomplete ${JSON.stringify(d)}`);
+          if(t.output_counts.with_any_target<=0||t.output_counts.with_exact_target<=0) throw new Error(`canonical target view empty ${JSON.stringify(t.output_counts)}`);
+          if(w.output_counts.works<=0||w.output_counts.fact_rows<=0) throw new Error(`work view empty ${JSON.stringify(w.output_counts)}`);
+          console.log(JSON.stringify({decisions:d,canonical_target:t.output_counts,work_view:w.output_counts},null,2));
+          NODE
+
+      - name: Commit final target views
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          base='data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1'
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            "$base/target-evidence-decisions.json" \
+            "$base/target-evidence-decisions.jsonl" \
+            "$base/target-evidence-decisions-summary.json" \
+            "$base/canonical-review-evaluation-target-evidence.jsonl" \
+            "$base/canonical-review-evaluation-target-evidence-summary.json" \
+            "$base/review-evaluation-facts.jsonl" \
+            "$base/work-target-mechanism-summary.jsonl" \
+            "$base/work-target-mechanism-summary.json"
+          if git diff --cached --quiet; then echo 'no final target view changes'; exit 0; fi
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: finalize target evidence and work view"
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin main; then exit 0; fi
+            sleep $((attempt * 2))
+          done
+          echo 'failed to push final target views after retries' >&2
+          exit 1
