@@ -1,0 +1,138 @@
+name: Build review evaluation full-corpus batch
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_number:
+        description: '1-based inference batch number'
+        required: false
+        default: '1'
+      batch_size:
+        description: 'Evidence rows per inference batch'
+        required: false
+        default: '120'
+  push:
+    paths:
+      - '.github/workflows/build-review-evaluation-full-corpus-batch.yml'
+      - '.review-evaluation-full-corpus-batch-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-full-corpus-batch
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      R2_BUCKET_NAME: melosignal-data
+      REVIEW_SEGMENT: otome-audio
+      REVIEW_EVAL_FULL_BATCH_NUMBER: ${{ inputs.batch_number || '1' }}
+      REVIEW_EVAL_FULL_BATCH_SIZE: ${{ inputs.batch_size || '120' }}
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify full-corpus rollout gate
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const r=JSON.parse(fs.readFileSync('data/research/review-evaluation-spec/review-evaluation-full-corpus-rollout-readiness.json','utf8'));
+          if(r.status!=='READY_FOR_FULL_CORPUS_BATCH_ROLLOUT'||r.ready!==true) throw new Error(`rollout gate blocked: ${r.status}`);
+          if(r.analysis_version_id!=='rev-eval-46255c55e8d1c5dc') throw new Error(`unexpected analysis version ${r.analysis_version_id}`);
+          if(r.selected_confidence_slice!=='medium_or_high') throw new Error(`unexpected confidence slice ${r.selected_confidence_slice}`);
+          if((r.blockers||[]).length) throw new Error(`blockers: ${r.blockers.join(', ')}`);
+          console.log({status:r.status,analysis_version_id:r.analysis_version_id,selected_confidence_slice:r.selected_confidence_slice});
+          NODE
+
+      - name: Download frozen otome-audio review chunks from R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          dir=".tmp/reviews-evaluation/${REVIEW_SEGMENT}"
+          mkdir -p "$dir"
+          node - <<'NODE' > .tmp/review-eval-full-chunk-keys.txt
+          const fs=require('fs');
+          const segment=process.env.REVIEW_SEGMENT;
+          const m=JSON.parse(fs.readFileSync(`data/reviews/manifests/${segment}.json`,'utf8'));
+          if(Number(m.processed_target_works||0)<Number(m.source_target_works||0)){
+            throw new Error(`${segment}: review crawl incomplete ${m.processed_target_works}/${m.source_target_works}`);
+          }
+          const chunks=(m.chunks||[]).filter(c=>c.complete&&!c.stopped_reason).sort((a,b)=>Number(a.index)-Number(b.index));
+          if(!chunks.length) throw new Error(`${segment}: no complete chunks`);
+          if(chunks.length!==Number(m.next_chunk||chunks.length)) throw new Error(`${segment}: incomplete chunk sequence ${chunks.length}/${m.next_chunk}`);
+          for(const c of chunks) console.log(c.key);
+          NODE
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            out="$dir/$(basename "$key")"
+            echo "download $key"
+            ok=0
+            for attempt in 1 2 3; do
+              if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null; then ok=1; break; fi
+              sleep $((attempt * 5))
+            done
+            [ "$ok" -eq 1 ] || { echo "failed to download $key" >&2; exit 1; }
+          done < .tmp/review-eval-full-chunk-keys.txt
+
+      - name: Build deterministic full-corpus inference packet
+        working-directory: work
+        env:
+          REVIEW_CHUNK_DIR: .tmp/reviews-evaluation/otome-audio
+        run: node scripts/build-review-evaluation-full-corpus-batch.mjs
+
+      - name: Verify packet contract and privacy boundary
+        working-directory: work
+        run: |
+          set -euo pipefail
+          root="data/research/review-evaluation-full-corpus/rev-eval-46255c55e8d1c5dc"
+          n=$(printf '%06d' "${REVIEW_EVAL_FULL_BATCH_NUMBER}")
+          test -s "$root/manifest.json"
+          test -s "$root/batches/full-corpus-input-batch-${n}.json"
+          test -s "$root/batches/full-corpus-predictions-batch-${n}.template.json"
+          node - "$root/manifest.json" "$root/batches/full-corpus-input-batch-${n}.json" <<'NODE'
+          const fs=require('fs');
+          const m=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          const b=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+          if(m.analysis_version_id!=='rev-eval-46255c55e8d1c5dc') throw new Error('manifest analysis version mismatch');
+          if(m.selected_confidence_slice!=='medium_or_high') throw new Error('manifest confidence slice mismatch');
+          if(!m.evidence_candidate_count||!m.batch_count) throw new Error('manifest corpus counts missing');
+          if(!Array.isArray(b.rows)||!b.rows.length) throw new Error('batch rows missing');
+          if(b.rows.length>Number(process.env.REVIEW_EVAL_FULL_BATCH_SIZE)) throw new Error('batch larger than requested size');
+          console.log({total_evidence:m.evidence_candidate_count,batch_count:m.batch_count,batch_number:b.batch_number,batch_rows:b.rows.length});
+          NODE
+          if grep -R -E -n 'https?://|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$root/batches/full-corpus-input-batch-${n}.json"; then
+            echo 'privacy verifier: URL/email-like text leaked' >&2; exit 1
+          fi
+
+      - name: Commit packet to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          root="data/research/review-evaluation-full-corpus/rev-eval-46255c55e8d1c5dc"
+          n=$(printf '%06d' "${REVIEW_EVAL_FULL_BATCH_NUMBER}")
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$root/manifest.json" "$root/batches/full-corpus-input-batch-${n}.json" "$root/batches/full-corpus-predictions-batch-${n}.template.json"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: build full-corpus inference batch ${n}" || exit 0
+          git pull --rebase origin main
+          git push origin main
