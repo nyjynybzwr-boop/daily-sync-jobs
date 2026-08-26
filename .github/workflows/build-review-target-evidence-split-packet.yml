@@ -1,0 +1,76 @@
+name: Build review target evidence split packet
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-review-target-evidence-split-packet.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-review-target-evidence-split-packet
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build target evidence split packet
+        working-directory: work
+        run: node scripts/build-review-evaluation-target-evidence-split-packet.mjs
+
+      - name: Verify packet
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const base='data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1';
+          const s=JSON.parse(fs.readFileSync(`${base}/target-evidence-split-packet-summary.json`,'utf8'));
+          const t=JSON.parse(fs.readFileSync(`${base}/target-evidence-split-decisions.template.json`,'utf8'));
+          if(s.unresolved_clusters!==15) throw new Error(`expected 15 unresolved clusters, got ${s.unresolved_clusters}`);
+          if(!s.assignment_rows||!s.unique_evidence) throw new Error(`empty split packet ${JSON.stringify(s)}`);
+          if(t.decisions.length!==s.assignment_rows) throw new Error(`template mismatch ${t.decisions.length} != ${s.assignment_rows}`);
+          console.log(s);
+          NODE
+
+      - name: Commit packet
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-evidence-split-packet.json \
+            data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-evidence-split-packet.jsonl \
+            data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-evidence-split-decisions.template.json \
+            data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1/target-evidence-split-packet-summary.json
+          if git diff --cached --quiet; then echo 'no split packet changes'; exit 0; fi
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: target evidence split packet"
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin main; then exit 0; fi
+            sleep $((attempt * 2))
+          done
+          echo 'failed to push target evidence split packet after retries' >&2
+          exit 1
