@@ -2,6 +2,10 @@ name: Build review evaluation boundary pilot
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-review-evaluation-boundary-pilot.yml'
+      - '.review-evaluation-boundary-trigger'
 
 permissions:
   contents: read
@@ -17,6 +21,9 @@ jobs:
     env:
       R2_BUCKET_NAME: melosignal-data
       REVIEW_SEGMENT: otome-audio
+      REVIEW_BOUNDARY_YEARS: '2023,2024,2025,2026'
+      REVIEW_BOUNDARY_MAX_PER_YEAR: '60'
+      REVIEW_BOUNDARY_MAX_PER_WORK: '3'
     steps:
       - name: Checkout private source
         env:
@@ -49,30 +56,46 @@ jobs:
           while IFS= read -r key; do
             [ -n "$key" ] || continue
             out="$dir/$(basename "$key")"
-            npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null
+            ok=0
+            for attempt in 1 2 3; do
+              if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null; then ok=1; break; fi
+              sleep $((attempt * 5))
+            done
+            [ "$ok" -eq 1 ] || { echo "failed $key" >&2; exit 1; }
           done < .tmp/review-boundary-chunk-keys.txt
 
       - name: Build rest75 low-rating Gold boundary pool
         working-directory: work
         env:
           REVIEW_CHUNK_DIR: .tmp/reviews-evaluation/otome-audio
-          REVIEW_BOUNDARY_YEARS: '2023,2024,2025,2026'
-          REVIEW_BOUNDARY_MAX_PER_YEAR: '60'
-          REVIEW_BOUNDARY_MAX_PER_WORK: '3'
+          REVIEW_BOUNDARY_OUT: data/research/review-evaluation-boundary-pilot
         run: node scripts/build-review-evaluation-boundary-pilot.mjs
 
-      - name: Verify and commit
+      - name: Verify boundary pool
+        working-directory: work
+        run: |
+          set -euo pipefail
+          base="data/research/review-evaluation-boundary-pilot/otome-audio-rest75-low-rating-2023-2024-2025-2026"
+          test -s "$base.json"
+          test -s "$base.md"
+          node - "$base.json" <<'NODE'
+          const fs=require('fs');
+          const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(Number(d.selected_count||0)<100) throw new Error(`boundary sample too small: ${d.selected_count}`);
+          const years={}; for(const r of d.reviews||[]) years[r.year]=(years[r.year]||0)+1;
+          console.log({candidates:d.candidate_count,selected:d.selected_count,years});
+          NODE
+          if grep -R -E -n 'https?://|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$base.md" "$base.json"; then
+            echo 'privacy verifier failed' >&2; exit 1
+          fi
+
+      - name: Commit boundary pool
         working-directory: work
         env:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
         run: |
           set -euo pipefail
           root=data/research/review-evaluation-boundary-pilot
-          test -n "$(find "$root" -type f -name '*.json' -print -quit)"
-          test -n "$(find "$root" -type f -name '*.md' -print -quit)"
-          if grep -R -E -n 'https?://|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$root"; then
-            echo 'privacy verifier failed' >&2; exit 1
-          fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add "$root"
