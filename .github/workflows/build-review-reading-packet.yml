@@ -103,7 +103,7 @@ jobs:
         working-directory: work
         run: node scripts/build-review-reading-packet.mjs --build
 
-      - name: Normalize review ratings to five-point scale
+      - name: Normalize review metadata and compact global index
         working-directory: work
         run: node scripts/normalize-review-reading-rating.mjs
 
