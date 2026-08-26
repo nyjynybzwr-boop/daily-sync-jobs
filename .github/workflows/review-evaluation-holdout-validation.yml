@@ -21,7 +21,7 @@ jobs:
     env:
       OUT_DIR: data/research/review-evaluation-holdout/otome-audio-rest75-provisional-v1
       PILOT_DIR: data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1
-      TAXONOMY_FILE: data/research/review-evaluation-spec/mechanism-taxonomy-v1.json
+      TAXONOMY_FILE: data/research/review-evaluation-spec/shared-mechanism-taxonomy-v1.json
     steps:
       - name: Checkout private source
         env:
@@ -133,15 +133,18 @@ jobs:
           set -euo pipefail
           if test -s "$OUT_DIR/final-mechanism-promotion-decisions.json"; then
             node scripts/apply-review-evaluation-final-mechanism-promotions.mjs
-            test -s "$TAXONOMY_FILE" || { echo 'mechanism taxonomy not generated' >&2; exit 1; }
+            test -s "$TAXONOMY_FILE" || { echo 'canonical mechanism taxonomy missing' >&2; exit 1; }
             node - "$TAXONOMY_FILE" <<'NODE'
           const fs=require('fs');
           const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
-          if(d.mechanism_count!==15) throw new Error(`expected 15 mechanisms after promotion, got ${d.mechanism_count}`);
+          if(d.status!=='human_validated_shared_taxonomy') throw new Error(`unexpected canonical status ${d.status}`);
+          const count=d.mechanism_count??d.mechanisms?.length??0;
+          if(count!==15||d.mechanisms?.length!==15) throw new Error(`expected canonical 15 mechanisms, got ${count}/${d.mechanisms?.length}`);
           for(const k of ['atmosphere_immersion_mood','scenario_worldbuilding_quality','audio_mix_technical_quality']) {
-            if(!d.mechanisms.some(x=>x.key===k&&x.source==='promoted_after_holdout')) throw new Error(`missing promoted mechanism ${k}`);
+            const m=d.mechanisms.find(x=>x.key===k);
+            if(!m||!String(m.provenance||'').includes('holdout')) throw new Error(`missing holdout-promoted canonical mechanism ${k}`);
           }
-          console.log({taxonomy:d.taxonomy_id,mechanisms:d.mechanism_count});
+          console.log({taxonomy:d.taxonomy_id||d.taxonomy_version,mechanisms:count,status:d.status});
           NODE
           else
             echo 'no final promotion decisions; taxonomy not changed'
@@ -162,10 +165,11 @@ jobs:
           const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
           if(d.mechanism_candidates?.length!==15) throw new Error(`mapping builder did not load 15 mechanisms: ${d.mechanism_candidates?.length}`);
           if(d.vocabulary_source!=='otome-audio-review-evaluation-mechanisms-v1') throw new Error(`unexpected vocabulary source: ${d.vocabulary_source}`);
+          if(d.vocabulary_status!=='human_validated_shared_taxonomy') throw new Error(`unexpected vocabulary status: ${d.vocabulary_status}`);
           for(const k of ['atmosphere_immersion_mood','scenario_worldbuilding_quality','audio_mix_technical_quality']) {
             if(!d.mechanism_candidates.some(x=>x.key===k)) throw new Error(`mapping vocabulary missing ${k}`);
           }
-          console.log({mapping_schema:d.schema_version,vocabulary:d.vocabulary_source,mechanisms:d.mechanism_candidates.length});
+          console.log({mapping_schema:d.schema_version,vocabulary:d.vocabulary_source,status:d.vocabulary_status,mechanisms:d.mechanism_candidates.length});
           NODE
 
       - name: Commit holdout packet and review state
