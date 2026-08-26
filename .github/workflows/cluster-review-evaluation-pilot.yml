@@ -28,6 +28,11 @@ jobs:
           GIT_LFS_SKIP_SMUDGE: '1'
         run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -42,30 +47,41 @@ jobs:
           test -s "$PILOT_DIR/evidence.jsonl"
           test -s "$PILOT_DIR/evidence-index.json"
 
-      - name: Embed and cluster evidence
+      - name: Build target-context semantic views
         working-directory: work
         env:
           REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: node scripts/build-review-evaluation-semantic-views.mjs
+
+      - name: Embed target-context view and cluster
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+          REVIEW_EVAL_EMBED_VIEW: target
           REVIEW_EVAL_EMBED_MODEL: intfloat/multilingual-e5-small
-          REVIEW_EVAL_MIN_CLUSTER_SIZE: '8'
-          REVIEW_EVAL_MIN_SAMPLES: '3'
+          REVIEW_EVAL_MIN_CLUSTER_SIZE: '6'
+          REVIEW_EVAL_MIN_SAMPLES: '2'
           REVIEW_EVAL_REPRESENTATIVES: '10'
-          REVIEW_EVAL_MIN_TEXT_LEN: '12'
+          REVIEW_EVAL_MIN_TEXT_LEN: '8'
+          REVIEW_EVAL_PCA_COMPONENTS: '40'
+          REVIEW_EVAL_CLUSTER_SELECTION_METHOD: leaf
         run: python scripts/cluster-review-evaluation-evidence.py
 
       - name: Validate discovery output
         working-directory: work
         run: |
           set -euo pipefail
-          test -s "$PILOT_DIR/semantic-clusters.json"
-          test -s "$PILOT_DIR/semantic-clusters.md"
-          test -s "$PILOT_DIR/semantic-assignments.jsonl"
+          test -s "$PILOT_DIR/semantic-views.jsonl"
+          test -s "$PILOT_DIR/semantic-views-index.json"
+          test -s "$PILOT_DIR/semantic-target-clusters.json"
+          test -s "$PILOT_DIR/semantic-target-clusters.md"
+          test -s "$PILOT_DIR/semantic-target-assignments.jsonl"
           python - <<'PY'
           import json, os
           p=os.environ['PILOT_DIR']
-          d=json.load(open(f'{p}/semantic-clusters.json',encoding='utf-8'))
-          if d['cluster_count'] < 2:
-              raise SystemExit(f"too few clusters: {d['cluster_count']}")
+          d=json.load(open(f'{p}/semantic-target-clusters.json',encoding='utf-8'))
+          if d['cluster_count'] < 5:
+              raise SystemExit(f"target-context clustering still too coarse: {d['cluster_count']} clusters")
           if d['clustered_rows'] <= 0:
               raise SystemExit('no clustered evidence')
           print({k:d[k] for k in ['input_rows','eligible_rows','clustered_rows','noise_rows','cluster_count']})
@@ -79,7 +95,7 @@ jobs:
           set -euo pipefail
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add "$PILOT_DIR/semantic-clusters.json" "$PILOT_DIR/semantic-clusters.md" "$PILOT_DIR/semantic-assignments.jsonl"
-          git commit -m "[CF-Pages-Skip] [skip actions] reviews: semantic evaluation clusters pilot" || exit 0
+          git add "$PILOT_DIR/semantic-views.jsonl" "$PILOT_DIR/semantic-views-index.json" "$PILOT_DIR/semantic-target-clusters.json" "$PILOT_DIR/semantic-target-clusters.md" "$PILOT_DIR/semantic-target-assignments.jsonl"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: target-context semantic clusters pilot" || exit 0
           git pull --rebase origin main
           git push origin main
