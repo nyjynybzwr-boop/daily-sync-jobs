@@ -152,10 +152,12 @@ jobs:
         env:
           REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
           REVIEW_MECHANISM_TAXONOMY_JSON: ${{ env.TAXONOMY_FILE }}
+          REVIEW_MECHANISM_MAPPING_JSON: /tmp/mechanism-mapping-packet.json
+          REVIEW_MECHANISM_MAPPING_MD: /tmp/mechanism-mapping-packet.md
         run: |
           set -euo pipefail
           node scripts/build-review-evaluation-mechanism-mapping-packet.mjs
-          node - "$PILOT_DIR/mechanism-mapping-packet.json" <<'NODE'
+          node - /tmp/mechanism-mapping-packet.json <<'NODE'
           const fs=require('fs');
           const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
           if(d.mechanism_candidates?.length!==15) throw new Error(`mapping builder did not load 15 mechanisms: ${d.mechanism_candidates?.length}`);
