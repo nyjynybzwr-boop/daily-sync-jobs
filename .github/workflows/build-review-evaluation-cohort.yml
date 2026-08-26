@@ -1,0 +1,128 @@
+name: Build balanced review evaluation cohort
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_evidence_per_work:
+        description: 'Max evidence excerpts per selected work'
+        required: false
+        default: '160'
+  push:
+    paths:
+      - '.github/workflows/build-review-evaluation-cohort.yml'
+      - '.review-evaluation-cohort-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-balanced-cohort
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      R2_BUCKET_NAME: melosignal-data
+      REVIEW_SEGMENT: otome-audio
+      REVIEW_EVAL_COHORT: data/research/review-evaluation-spec/pilot-cohort-v1.json
+      REVIEW_EVAL_MAX_EVIDENCE_PER_WORK: ${{ inputs.max_evidence_per_work || '160' }}
+      PLAN: .tmp/review-eval-cohort/plan.json
+      KEYS: .tmp/review-eval-cohort/chunk-keys.txt
+      RAW_DIR: .tmp/review-eval-cohort/raw
+      PILOT_DIR: data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Plan exact cohort chunks
+        working-directory: work
+        env:
+          REVIEW_EVAL_COHORT_PLAN: ${{ env.PLAN }}
+          REVIEW_EVAL_COHORT_KEYS: ${{ env.KEYS }}
+        run: |
+          set -euo pipefail
+          node scripts/build-review-evaluation-cohort-evidence.mjs --plan
+          node - "$PLAN" <<'NODE'
+          const fs=require('fs'); const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(d.selected_work_count!==48) throw new Error(`expected 48 cohort works, got ${d.selected_work_count}`);
+          if(!d.chunk_count) throw new Error('no chunks planned');
+          console.log({works:d.selected_work_count,chunks:d.chunk_count});
+          NODE
+
+      - name: Download only required frozen review chunks from R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RAW_DIR"
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            out="$RAW_DIR/$(basename "$key")"
+            ok=0
+            for attempt in 1 2 3; do
+              if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null; then ok=1; break; fi
+              sleep $((attempt * 5))
+            done
+            [ "$ok" -eq 1 ] || { echo "failed $key" >&2; exit 1; }
+          done < "$KEYS"
+
+      - name: Build balanced cohort evidence
+        working-directory: work
+        env:
+          REVIEW_EVAL_COHORT_PLAN: ${{ env.PLAN }}
+          REVIEW_EVAL_COHORT_RAW: ${{ env.RAW_DIR }}
+          REVIEW_EVAL_OUT: data/research/review-evaluation-pilot
+        run: node scripts/build-review-evaluation-cohort-evidence.mjs --build
+
+      - name: Compile structured JSONL
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: node scripts/compile-review-evaluation-pilot-jsonl.mjs
+
+      - name: Verify cohort and privacy
+        working-directory: work
+        run: |
+          set -euo pipefail
+          test -s "$PILOT_DIR/manifest.json"
+          test -s "$PILOT_DIR/evidence.jsonl"
+          test -s "$PILOT_DIR/evidence-index.json"
+          node - "$PILOT_DIR/manifest.json" "$PILOT_DIR/evidence-index.json" <<'NODE'
+          const fs=require('fs');
+          const m=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          const idx=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+          if(m.selected_work_count!==48) throw new Error(`selected works ${m.selected_work_count}`);
+          if(m.works_with_reviews<40) throw new Error(`too few works with reviews ${m.works_with_reviews}`);
+          if(m.source_review_count<100) throw new Error(`too few source reviews ${m.source_review_count}`);
+          if(idx.row_count!==m.exported_evidence_count) throw new Error(`JSONL row mismatch ${idx.row_count} != ${m.exported_evidence_count}`);
+          console.log({works:m.selected_work_count,with_reviews:m.works_with_reviews,reviews:m.source_review_count,candidates:m.evidence_candidate_count,exported:m.exported_evidence_count,languages:idx.language_counts});
+          NODE
+          if grep -R -E -n 'https?://|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$PILOT_DIR" --include='*.md' --include='*.jsonl'; then
+            echo 'privacy verifier: URL/email-like text leaked' >&2; exit 1
+          fi
+
+      - name: Commit balanced cohort evidence
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$PILOT_DIR"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: balanced evaluation cohort evidence" || exit 0
+          git pull --rebase origin main
+          git push origin main
