@@ -30,6 +30,7 @@ jobs:
       REVIEW_PACKET_PLAN: .tmp/review-reading/plan.json
       REVIEW_PACKET_KEYS: .tmp/review-reading/chunk-keys.txt
       REVIEW_PACKET_RAW_DIR: .tmp/review-reading/raw
+      REVIEW_PACKET_OUTPUT_FILES: .tmp/review-reading/output-files.txt
     steps:
       - name: Checkout private source
         env:
@@ -75,7 +76,7 @@ jobs:
           echo "failed to download $key" >&2
           exit 1
 
-      - name: Plan representative works and raw chunks
+      - name: Plan works and raw chunks
         working-directory: work
         run: node scripts/build-review-reading-packet.mjs --plan
 
@@ -110,16 +111,25 @@ jobs:
           const fs=require('fs');
           const plan=JSON.parse(fs.readFileSync(process.env.REVIEW_PACKET_PLAN,'utf8'));
           const meta=JSON.parse(fs.readFileSync(plan.output_manifest,'utf8'));
-          const md=fs.readFileSync(plan.output_markdown,'utf8');
           if(meta.private_analysis_only!==true) throw new Error('packet must be private analysis only');
           if(meta.raw_review_text_in_markdown!==true) throw new Error('packet does not contain review bodies');
-          if(meta.reviewer_identifiers_included!==false||meta.review_ids_included!==false) throw new Error('identifier boundary violated');
-          if(!meta.works?.length||!meta.total_sampled_review_bodies) throw new Error('packet is empty');
-          if(/member_review_id/i.test(md)||/^review_id\s*:/im.test(md)) throw new Error('structured review identifier leaked into markdown');
-          console.log({packet:meta.packet_id,works:meta.works.length,reviews:meta.total_sampled_review_bodies,bytes:Buffer.byteLength(md)});
+          if(meta.reviewer_identifiers_included!==false||meta.source_review_ids_included!==false) throw new Error('identifier boundary violated');
+          if(meta.review_refs_included!==true) throw new Error('safe review refs missing');
+          if(!meta.works?.length||!meta.total_review_bodies) throw new Error('packet is empty');
+          if(!Array.isArray(meta.files)||!meta.files.length) throw new Error('packet markdown files missing');
+          let bytes=0;
+          for(const file of meta.files){
+            const md=fs.readFileSync(file,'utf8');
+            bytes+=Buffer.byteLength(md);
+            if(/member_review_id/i.test(md)||/^review_id\s*:/im.test(md)) throw new Error(`structured source review identifier leaked into ${file}`);
+            if(/https?:\/\/\S+/i.test(md)||/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(md)) throw new Error(`unredacted contact/link text in ${file}`);
+          }
+          const index=JSON.parse(fs.readFileSync(plan.output_index,'utf8'));
+          if(!index.products||!index.total_products) throw new Error('global packet index missing');
+          console.log({packet:meta.packet_id,works:meta.works.length,reviews:meta.total_review_bodies,files:meta.files.length,bytes,index_products:index.total_products});
           NODE
 
-      - name: Commit reading packet to private source
+      - name: Commit reading packet and global index to private source
         working-directory: work
         env:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
@@ -127,13 +137,11 @@ jobs:
           set -euo pipefail
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          node - <<'NODE' > .tmp/review-reading-output-files.txt
-          const fs=require('fs');
-          const p=JSON.parse(fs.readFileSync(process.env.REVIEW_PACKET_PLAN,'utf8'));
-          console.log(p.output_markdown);
-          console.log(p.output_manifest);
-          NODE
-          while IFS= read -r file; do git add "$file"; done < .tmp/review-reading-output-files.txt
+          test -s "$REVIEW_PACKET_OUTPUT_FILES"
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            git add "$file"
+          done < "$REVIEW_PACKET_OUTPUT_FILES"
           git commit -m "[CF-Pages-Skip] [skip actions] reviews: ${REVIEW_PACKET_ID} reading packet" || exit 0
           git pull --rebase origin main
           git push origin main
