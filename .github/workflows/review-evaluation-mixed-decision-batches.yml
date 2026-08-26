@@ -50,6 +50,16 @@ jobs:
           REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
         run: node scripts/merge-review-evaluation-mixed-split-decision-batches.mjs
 
+      - name: Apply duplicate reconciliation overrides
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: |
+          set -euo pipefail
+          if test -s "$PILOT_DIR/mixed-evidence-split-decisions.json" && test -s "$PILOT_DIR/mixed-evidence-split-decision-overrides.json"; then
+            node scripts/apply-review-evaluation-mixed-decision-overrides.mjs
+          fi
+
       - name: Audit duplicate evidence decisions
         working-directory: work
         env:
@@ -62,6 +72,16 @@ jobs:
             echo 'final mixed decisions not complete yet; skipping duplicate audit'
           fi
 
+      - name: Summarize canonical evidence mechanisms
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: |
+          set -euo pipefail
+          if test -s "$PILOT_DIR/mixed-evidence-decisions-by-evidence.json"; then
+            node scripts/summarize-review-evaluation-canonical-evidence.mjs
+          fi
+
       - name: Commit coverage and reviewed decisions
         working-directory: work
         env:
@@ -72,10 +92,15 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add "$PILOT_DIR/mixed-evidence-split-batch-coverage.json" \
                   "$PILOT_DIR/mixed-evidence-split-decisions.partial.json"
-          if test -f "$PILOT_DIR/mixed-evidence-split-decisions.json"; then git add "$PILOT_DIR/mixed-evidence-split-decisions.json"; fi
-          if test -f "$PILOT_DIR/mixed-evidence-duplicate-audit.json"; then git add "$PILOT_DIR/mixed-evidence-duplicate-audit.json"; fi
-          if test -f "$PILOT_DIR/mixed-evidence-duplicate-audit.md"; then git add "$PILOT_DIR/mixed-evidence-duplicate-audit.md"; fi
-          if test -f "$PILOT_DIR/mixed-evidence-decisions-by-evidence.json"; then git add "$PILOT_DIR/mixed-evidence-decisions-by-evidence.json"; fi
-          git commit -m "[CF-Pages-Skip] [skip actions] reviews: mixed decision batch coverage" || exit 0
+          for f in \
+            mixed-evidence-split-decisions.json \
+            mixed-evidence-duplicate-audit.json \
+            mixed-evidence-duplicate-audit.md \
+            mixed-evidence-decisions-by-evidence.json \
+            mixed-evidence-canonical-summary.json \
+            mixed-evidence-canonical-summary.md; do
+            if test -f "$PILOT_DIR/$f"; then git add "$PILOT_DIR/$f"; fi
+          done
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: canonical mixed evidence decisions" || exit 0
           git pull --rebase origin main
           git push origin main
