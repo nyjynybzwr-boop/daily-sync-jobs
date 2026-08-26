@@ -1,2 +1,2 @@
-run: 2026-08-26T20:58:30+09:00
-purpose: validate all 259 held-out candidates with strict scenario reconciliation overrides
+run: 2026-08-26T21:06:00+09:00
+purpose: rebuild strict holdout summary and validate final promotion decisions for all three mechanisms
