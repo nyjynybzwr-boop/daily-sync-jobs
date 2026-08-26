@@ -1,0 +1,156 @@
+name: Analyze balanced review evaluation cohort
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/analyze-review-evaluation-balanced-cohort.yml'
+      - '.review-evaluation-balanced-analysis-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-balanced-analysis
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      PILOT_DIR: data/research/review-evaluation-pilot/otome-audio-otome-audio-review-evaluation-semantic-pilot-v1
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install semantic clustering dependencies
+        run: python -m pip install --quiet sentence-transformers scikit-learn
+
+      - name: Confirm balanced cohort evidence
+        working-directory: work
+        run: |
+          set -euo pipefail
+          test -s "$PILOT_DIR/manifest.json"
+          test -s "$PILOT_DIR/evidence.jsonl"
+          node - "$PILOT_DIR/manifest.json" <<'NODE'
+          const fs=require('fs'); const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(d.selected_work_count!==48) throw new Error(`expected 48 works, got ${d.selected_work_count}`);
+          if(d.source_review_count<1000) throw new Error(`unexpectedly few source reviews: ${d.source_review_count}`);
+          if(d.exported_evidence_count<1000) throw new Error(`unexpectedly few evidence rows: ${d.exported_evidence_count}`);
+          console.log({works:d.selected_work_count,reviews:d.source_review_count,evidence:d.exported_evidence_count});
+          NODE
+
+      - name: Build target-context semantic views
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: node scripts/build-review-evaluation-semantic-views.mjs
+
+      - name: Cluster target-context evidence
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+          REVIEW_EVAL_EMBED_VIEW: target
+          REVIEW_EVAL_EMBED_MODEL: intfloat/multilingual-e5-small
+          REVIEW_EVAL_MIN_CLUSTER_SIZE: '7'
+          REVIEW_EVAL_MIN_SAMPLES: '2'
+          REVIEW_EVAL_REPRESENTATIVES: '10'
+          REVIEW_EVAL_MIN_TEXT_LEN: '8'
+          REVIEW_EVAL_PCA_COMPONENTS: '40'
+          REVIEW_EVAL_CLUSTER_SELECTION_METHOD: leaf
+        run: python scripts/cluster-review-evaluation-evidence.py
+
+      - name: Score target-context cluster quality
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: node scripts/score-review-evaluation-cluster-quality.mjs
+
+      - name: Audit concrete play evaluation targets
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: node scripts/analyze-review-play-evaluation-anchors.mjs
+
+      - name: Cluster reasons within each play target
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+          REVIEW_EVAL_EMBED_MODEL: intfloat/multilingual-e5-small
+          REVIEW_PLAY_REASON_MIN_ROWS: '12'
+          REVIEW_PLAY_REASON_MIN_CLUSTER: '5'
+          REVIEW_PLAY_REASON_REPS: '10'
+        run: python scripts/cluster-review-play-evaluation-reasons.py
+
+      - name: Score play-reason clusters with target centrality
+        working-directory: work
+        env:
+          REVIEW_EVAL_PILOT_DIR: ${{ env.PILOT_DIR }}
+        run: node scripts/score-review-play-reason-cluster-quality.mjs
+
+      - name: Validate discovery outputs
+        working-directory: work
+        run: |
+          set -euo pipefail
+          for f in \
+            semantic-views.jsonl \
+            semantic-views-index.json \
+            semantic-target-clusters.json \
+            semantic-target-clusters.md \
+            semantic-target-assignments.jsonl \
+            semantic-target-cluster-quality.json \
+            semantic-target-cluster-quality.md \
+            play-evaluation-anchors.json \
+            play-evaluation-reason-clusters.json \
+            play-evaluation-reason-clusters.md \
+            play-evaluation-reason-cluster-quality.json \
+            play-evaluation-reason-cluster-quality.md; do
+              test -s "$PILOT_DIR/$f" || { echo "missing $f" >&2; exit 1; }
+          done
+          python - <<'PY'
+          import json, os
+          p=os.environ['PILOT_DIR']
+          sem=json.load(open(f'{p}/semantic-target-clusters.json',encoding='utf-8'))
+          sq=json.load(open(f'{p}/semantic-target-cluster-quality.json',encoding='utf-8'))
+          play=json.load(open(f'{p}/play-evaluation-reason-clusters.json',encoding='utf-8'))
+          pq=json.load(open(f'{p}/play-evaluation-reason-cluster-quality.json',encoding='utf-8'))
+          if sem['input_rows'] < 1000: raise SystemExit('semantic input unexpectedly small')
+          if sem['cluster_count'] < 5: raise SystemExit(f"too few semantic clusters: {sem['cluster_count']}")
+          play_clusters=sum(a['cluster_count'] for a in play['anchor_results'])
+          if play_clusters < 5: raise SystemExit(f'too few play reason clusters: {play_clusters}')
+          if pq.get('cluster_count') != play_clusters: raise SystemExit(f"play quality mismatch {pq.get('cluster_count')} != {play_clusters}")
+          print({
+            'semantic': {k:sem[k] for k in ['input_rows','eligible_rows','clustered_rows','noise_rows','cluster_count']},
+            'semantic_quality': sq.get('status_counts'),
+            'play_reason_clusters': play_clusters,
+            'play_quality': pq.get('status_counts'),
+          })
+          PY
+
+      - name: Commit balanced cohort discovery results
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$PILOT_DIR"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: balanced cohort semantic discovery" || exit 0
+          git pull --rebase origin main
+          git push origin main
