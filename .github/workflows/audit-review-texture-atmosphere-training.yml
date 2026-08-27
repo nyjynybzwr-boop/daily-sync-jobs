@@ -1,0 +1,48 @@
+name: Audit review texture atmosphere training coverage
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/audit-review-texture-atmosphere-training.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Audit existing atmosphere/immersion/mood training coverage
+        working-directory: work
+        run: node scripts/audit-review-texture-atmosphere-training.mjs
+
+      - name: Commit audit to private source
+        working-directory: work
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/research/review-evaluation-training/rev-eval-46255c55e8d1c5dc/texture-atmosphere-training-audit-v1.json
+          if git diff --cached --quiet; then
+            echo 'No audit changes.'
+            exit 0
+          fi
+          git commit -m '[CF-Pages-Skip] [skip actions] reviews: record texture training coverage audit'
+          git pull --rebase origin main
+          git push origin HEAD:main
