@@ -4,7 +4,6 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - '.github/workflows/evaluate-review-evaluation-mechanism-boundary-rbf-v5.yml'
       - '.review-evaluation-mechanism-boundary-rbf-v5-trigger'
 
 permissions:
