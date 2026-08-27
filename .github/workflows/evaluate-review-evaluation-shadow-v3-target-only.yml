@@ -98,7 +98,7 @@ jobs:
         if: steps.gate.outputs.should_run == 'true'
         working-directory: work
         env:
-          SYNC_TOKEN: ${{ secrets.SOURCE_REPO != '' && secrets.SYNC_TOKEN || secrets.SYNC_TOKEN }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
         run: |
           set -euo pipefail
           base=data/research/review-evaluation-classifier/${VERSION}
