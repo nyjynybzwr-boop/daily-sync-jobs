@@ -1,0 +1,45 @@
+name: Validate review reception-effect human gold
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/validate-review-reception-effect-gold.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate gold
+        working-directory: work
+        run: node scripts/validate-review-reception-effect-gold.mjs
+
+      - name: Commit validation summary
+        working-directory: work
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/research/review-reception-profile/training-effect-v1/gold-validation-summary-v1.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m '[CF-Pages-Skip] [skip actions] reviews: validate reception-effect human gold'
+          git pull --rebase origin main
+          git push origin HEAD:main
