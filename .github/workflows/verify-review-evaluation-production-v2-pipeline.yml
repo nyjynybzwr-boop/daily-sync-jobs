@@ -12,7 +12,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Checkout private source
         env:
@@ -31,6 +31,8 @@ jobs:
           node --check scripts/aggregate-review-evaluation-full-corpus-v1.mjs
           node --check scripts/publish-review-evaluation-work-details-v1.mjs
           node --check scripts/validate-review-evaluation-shadow-v2-gold-decisions.mjs
+          node --check scripts/wire-review-evaluation-work-detail.mjs
+          node --check web/review-evaluation-work-detail.js
 
       - name: Verify immutable v2 wiring inputs without opening human gold or prediction rows
         working-directory: work
@@ -49,3 +51,28 @@ jobs:
           if(i.status!=='shadow_v2_gold_batch_index'||i.counts?.evidence_rows!==452||i.batches?.length!==4) throw new Error('holdout index drift');
           console.log({freeze:f.freeze_payload_sha256,targets:expected,shadow_rows:i.counts.evidence_rows,predictions:p.outputs?.predictions_sha256});
           NODE
+
+      - name: Setup Node for site build
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: work/package-lock.json
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build site and verify work-detail radar assets
+        working-directory: work
+        run: |
+          set -euo pipefail
+          npm run build:site
+          test -s site/review-evaluation-work-detail.js
+          test -s site/review-evaluation-work-detail.css
+          grep -q 'review-evaluation-work-detail.css' site/index.html
+          grep -q 'review-evaluation-work-detail.js' site/index.html
+          grep -q "acting_performance:'演技'" site/review-evaluation-work-detail.js
+          grep -q "breath_vocalization:'吐息・発声'" site/review-evaluation-work-detail.js
+          grep -q "dialogue_writing:'台詞'" site/review-evaluation-work-detail.js
+          grep -q "voice_quality:'声質'" site/review-evaluation-work-detail.js
