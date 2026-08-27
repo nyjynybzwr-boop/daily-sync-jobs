@@ -1,0 +1,138 @@
+name: Finalize review evaluation Tier A v2
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.review-evaluation-tier-a-v2-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-tier-a-v2
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      HF_HOME: ${{ github.workspace }}/.cache/huggingface-v2
+      VERSION: rev-eval-46255c55e8d1c5dc
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: work/package-lock.json
+
+      - name: Install Node dependencies
+        working-directory: work
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Validate targeted blind gold and build Tier A v2 plan
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/validate-review-evaluation-targeted-training-supplement-decisions.mjs
+          node --check scripts/build-review-evaluation-classifier-training-pool-v2.mjs
+          node --check scripts/build-review-evaluation-classifier-plan-v2.mjs
+          node scripts/validate-review-evaluation-targeted-training-supplement-decisions.mjs
+          node scripts/build-review-evaluation-classifier-training-pool-v2.mjs
+          node scripts/build-review-evaluation-classifier-plan-v2.mjs
+          node - <<'NODE'
+          const fs=require('fs');
+          const v=JSON.parse(fs.readFileSync('data/research/review-evaluation-training/rev-eval-46255c55e8d1c5dc/targeted-supplement-v1/annotation/targeted-supplement-gold-validation-summary.json','utf8'));
+          const p=JSON.parse(fs.readFileSync('data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/classifier-plan-v2.json','utf8'));
+          if(v.status!=='validated_targeted_training_supplement_gold'||v.counts?.complete!==true) throw new Error(`targeted gold not ready: ${v.status}`);
+          if(v.counts?.packet_rows!==700||v.counts?.decision_rows!==700) throw new Error(`targeted row mismatch ${JSON.stringify(v.counts)}`);
+          if(p.status!=='local_classifier_plan_v2_ready_to_fit'||p.ready_to_fit!==true||(p.blockers||[]).length) throw new Error(`v2 plan blocked: ${p.status}`);
+          if(p.data_policy?.shadow_gold_or_predictions_used!==false) throw new Error('shadow seal contract drift');
+          console.log({targeted:v.counts,split:p.split.row_counts,target_labels:p.staged_tasks.find(x=>x.task==='target')?.eligible_labels?.length,mechanism_labels:p.staged_tasks.find(x=>x.task==='mechanism')?.eligible_labels?.length});
+          NODE
+
+      - name: Materialize free local E5 v2 embeddings
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/materialize-review-evaluation-training-embeddings-v2.mjs
+          node scripts/materialize-review-evaluation-training-embeddings-v2.mjs
+          f=.tmp/review-evaluation-classifier/${VERSION}/v2/training-embeddings-v2.jsonl
+          test -s "$f"
+          gzip -9 -c "$f" > "$f.gz"
+
+      - name: Upload v2 embedding cache to R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          f=.tmp/review-evaluation-classifier/${VERSION}/v2/training-embeddings-v2.jsonl.gz
+          mf=data/research/review-evaluation-classifier/${VERSION}/training-embedding-manifest-v2.json
+          key=review-evaluation-classifier/${VERSION}/training-v2/training-embeddings-v2.jsonl.gz
+          npx --yes wrangler r2 object put "melosignal-data/${key}" --file "$f" --remote >/dev/null
+          node - "$f" "$mf" <<'NODE'
+          const fs=require('fs'),crypto=require('crypto');
+          const [f,mf]=process.argv.slice(2);const b=fs.readFileSync(f),m=JSON.parse(fs.readFileSync(mf,'utf8'));
+          m.r2.compressed_bytes=b.length;m.r2.compressed_sha256=crypto.createHash('sha256').update(b).digest('hex');
+          fs.writeFileSync(mf,JSON.stringify(m,null,2)+'\n');
+          NODE
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install free local classifier dependencies
+        run: python -m pip install --disable-pip-version-check numpy scikit-learn
+
+      - name: Fit v2 logistic classifier and evaluate development split
+        working-directory: work
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/fit-review-evaluation-logistic-classifier-v2.py
+          python scripts/fit-review-evaluation-logistic-classifier-v2.py
+          node - <<'NODE'
+          const fs=require('fs');
+          const r=JSON.parse(fs.readFileSync('data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/logistic-internal-validation-report-v2.json','utf8'));
+          const m=JSON.parse(fs.readFileSync('data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/logistic-classifier-model-v2.json','utf8'));
+          if(r.shadow_v1_opened!==false||m.training?.shadow_used!==false) throw new Error('shadow seal violated');
+          if(m.algorithm?.paid_api!==false) throw new Error('paid classifier forbidden');
+          console.log({status:r.status,gates:r.gates,classification:r.validation.classification,target:r.validation.target_end_to_end,mechanism:r.validation.mechanism_end_to_end});
+          NODE
+          if grep -n -E 'shadow-calibration/.*/(human-gold|predictions)|shadow-predictions|human-gold' scripts/fit-review-evaluation-logistic-classifier-v2.py; then
+            echo 'v2 fit script references sealed shadow label assets' >&2; exit 1
+          fi
+
+      - name: Commit Tier A v2 compact outputs to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          cls=data/research/review-evaluation-classifier/${VERSION}
+          gold=data/research/review-evaluation-training/${VERSION}/targeted-supplement-v1/annotation
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            "$gold/targeted-supplement-gold-decisions.jsonl" \
+            "$gold/targeted-supplement-gold-validation-summary.json" \
+            "$cls/training-pool-v2.jsonl" \
+            "$cls/training-pool-v2-manifest.json" \
+            "$cls/classifier-plan-v2.json" \
+            "$cls/training-embedding-manifest-v2.json" \
+            "$cls/logistic-classifier-model-v2.json" \
+            "$cls/logistic-internal-validation-report-v2.json"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: finalize Tier A v2 classifier development evaluation" || exit 0
+          git pull --rebase origin main
+          git push origin main
