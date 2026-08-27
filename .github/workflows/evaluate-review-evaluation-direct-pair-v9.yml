@@ -1,0 +1,94 @@
+name: Evaluate review evaluation direct pair v9
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.review-evaluation-direct-pair-v9-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-direct-pair-v9
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VERSION: rev-eval-46255c55e8d1c5dc
+      HF_HOME: ${{ github.workspace }}/.cache/huggingface-direct-pair-v9
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: work/package-lock.json
+      - name: Install Node dependencies
+        working-directory: work
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Validate active boundary supplement
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node scripts/validate-review-evaluation-mechanism-active-boundary-supplement-v2-decisions.mjs
+          node - <<'NODE'
+          const fs=require('fs');const p='data/research/review-evaluation-training/rev-eval-46255c55e8d1c5dc/mechanism-active-boundary-supplement-v2/annotation/mechanism-active-boundary-supplement-gold-validation-summary.json';const x=JSON.parse(fs.readFileSync(p,'utf8'));
+          if(x.status!=='validated_mechanism_active_boundary_training_supplement_gold'||x.counts?.complete!==true||x.training_policy?.shadow_v1_sealed!==true||x.training_policy?.original_validation_used_for_selection!==false)throw new Error('active supplement not ready/sealed');
+          console.log({counts:x.counts,mechanisms:x.distribution?.mechanism});
+          NODE
+      - name: Materialize v1 and v2 supplement embeddings
+        working-directory: work
+        run: |
+          node scripts/materialize-review-evaluation-mechanism-boundary-embeddings-v1.mjs >/dev/null
+          node scripts/materialize-review-evaluation-mechanism-active-boundary-embeddings-v2.mjs >/dev/null
+      - name: Download frozen v2 base embeddings
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          d=.tmp/review-evaluation-classifier/${VERSION}/v2;mkdir -p "$d";key=review-evaluation-classifier/${VERSION}/training-v2/training-embeddings-v2.jsonl.gz
+          npx --yes wrangler@latest r2 object get "melosignal-data/${key}" --file "$d/training-embeddings-v2.jsonl.gz" --remote >/dev/null
+          gzip -dc "$d/training-embeddings-v2.jsonl.gz" > "$d/training-embeddings-v2.jsonl"
+          node - <<'NODE'
+          const fs=require('fs'),crypto=require('crypto'),V='rev-eval-46255c55e8d1c5dc';const m=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/training-embedding-manifest-v2.json`,'utf8'));const f=`.tmp/review-evaluation-classifier/${V}/v2/training-embeddings-v2.jsonl.gz`;const sha=crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');if(m.rows!==3528||m.vector_dimension!==384||m.r2?.compressed_sha256!==sha||m.model?.paid_api!==false)throw new Error('base provenance mismatch');
+          NODE
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install classifier dependencies
+        run: python -m pip install --disable-pip-version-check numpy scikit-learn
+      - name: Evaluate direct pair v9
+        working-directory: work
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/evaluate-review-evaluation-direct-pair-v9.py
+          python scripts/evaluate-review-evaluation-direct-pair-v9.py
+          r=data/research/review-evaluation-classifier/${VERSION}/direct-pair-development-report-v9.json
+          node - "$r" <<'NODE'
+          const fs=require('fs'),r=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));if(r.shadow_v1_opened!==false||r.paid_api!==false||r.data_contract?.active_selection_used_original_validation!==false)throw new Error('v9 contract drift');console.log({status:r.status,selected:r.development.selected_pair_keys,aggregate:r.development.selected_aggregate,pairs:r.development.pair_end_to_end,gates:r.gates});
+          NODE
+          if grep -n -E 'shadow-calibration/.*/(human-gold|predictions)|shadow-predictions|human-gold' scripts/evaluate-review-evaluation-direct-pair-v9.py; then echo 'v9 references sealed Shadow assets' >&2; exit 1; fi
+      - name: Commit compact v9 outputs to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          cls=data/research/review-evaluation-classifier/${VERSION};gold=data/research/review-evaluation-training/${VERSION}/mechanism-active-boundary-supplement-v2/annotation
+          git config user.name github-actions[bot];git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$gold/mechanism-active-boundary-supplement-gold-decisions.jsonl" "$gold/mechanism-active-boundary-supplement-gold-validation-summary.json" "$cls/mechanism-active-boundary-embedding-manifest-v2.json" "$cls/direct-pair-development-report-v9.json"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: evaluate active-boundary direct-pair v9" || exit 0
+          git reset --hard HEAD;git pull --rebase origin main;git push origin main
