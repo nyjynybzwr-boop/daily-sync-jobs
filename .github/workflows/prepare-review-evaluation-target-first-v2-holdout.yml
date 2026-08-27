@@ -1,0 +1,163 @@
+name: Prepare target-first v2 fresh disjoint holdout
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.review-evaluation-target-first-v2-holdout-prep-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-target-first-v2-holdout-prep
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      VERSION: rev-eval-46255c55e8d1c5dc
+      R2_BUCKET_NAME: melosignal-data
+      REVIEW_SEGMENT: otome-audio
+      REVIEW_EVAL_COHORT: data/research/review-evaluation-spec/shadow-cohort-v2.json
+      REVIEW_EVAL_MAX_EVIDENCE_PER_WORK: '20'
+      REVIEW_EVAL_OUT: data/research/review-evaluation-calibration
+      PLAN: .tmp/review-eval-shadow-v2/plan.json
+      KEYS: .tmp/review-eval-shadow-v2/chunk-keys.txt
+      RAW_DIR: .tmp/review-eval-shadow-v2/raw
+      SHADOW_DIR: data/research/review-evaluation-calibration/otome-audio-otome-audio-review-evaluation-shadow-v2
+      GOLD_DIR: data/research/review-evaluation-calibration/otome-audio-otome-audio-review-evaluation-shadow-v2/human-gold
+
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Freeze conservative target-first production v2 from pre-Shadow development only
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/freeze-review-evaluation-target-first-production-v2.mjs
+          node scripts/freeze-review-evaluation-target-first-production-v2.mjs
+          node - <<'NODE'
+          const fs=require('fs'),V='rev-eval-46255c55e8d1c5dc';
+          const f=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-freeze-v2.json`,'utf8'));
+          const expected=['acting_performance','breath_vocalization','dialogue_writing','voice_quality'];
+          if(f.status!=='review_evaluation_production_v2_frozen_before_new_disjoint_holdout'||f.production_scope!=='target_first_conservative'||f.selection_policy?.uses_shadow_v1_metrics!==false||JSON.stringify(f.targets?.selected_target_keys)!==JSON.stringify(expected)) throw new Error('v2 freeze drift');
+          if(f.mechanisms?.standalone_output!==false||(f.pairs?.selected_pair_keys||[]).length) throw new Error('mechanism/pair output unexpectedly enabled');
+          console.log({status:f.status,targets:f.targets.selected_target_keys,freeze:f.freeze_payload_sha256});
+          NODE
+
+      - name: Build fresh product-disjoint Shadow-v2 cohort spec
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/build-review-evaluation-shadow-v2-cohort-spec.mjs
+          node scripts/build-review-evaluation-shadow-v2-cohort-spec.mjs
+          node - <<'NODE'
+          const fs=require('fs');const d=JSON.parse(fs.readFileSync('data/research/review-evaluation-spec/shadow-cohort-v2.json','utf8'));
+          if(d.status!=='fresh_disjoint_shadow_v2_cohort_spec_not_gold_labels'||d.counts?.works!==24) throw new Error('Shadow-v2 spec invalid');
+          for(const k of ['high','medium','low']) if(d.diagnostics?.[k]?.selected_works!==8) throw new Error(`${k}: expected 8 works`);
+          for(const k of ['excludes_all_training_pool_v2_products','excludes_shadow_v1_products','excludes_mechanism_boundary_supplement_v1_products','excludes_mechanism_active_boundary_supplement_v2_products','selection_uses_no_labels_or_model_scores']) if(d.anti_leakage?.[k]!==true) throw new Error(`anti-leakage flag ${k}`);
+          console.log({works:d.counts.works,circles:d.counts.unique_circles,excluded:d.anti_leakage.excluded_product_counts});
+          NODE
+
+      - name: Plan exact frozen review chunks
+        working-directory: work
+        env:
+          REVIEW_EVAL_COHORT_PLAN: ${{ env.PLAN }}
+          REVIEW_EVAL_COHORT_KEYS: ${{ env.KEYS }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$PLAN")"
+          node scripts/build-review-evaluation-cohort-evidence.mjs --plan
+          node - "$PLAN" <<'NODE'
+          const fs=require('fs');const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(d.selected_work_count!==24||!d.chunk_count) throw new Error(`bad plan works=${d.selected_work_count} chunks=${d.chunk_count}`);
+          console.log({works:d.selected_work_count,chunks:d.chunk_count});
+          NODE
+
+      - name: Download only required frozen review chunks from R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RAW_DIR"
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            out="$RAW_DIR/$(basename "$key")"
+            ok=0
+            for attempt in 1 2 3; do
+              if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null; then ok=1; break; fi
+              sleep $((attempt * 5))
+            done
+            [ "$ok" -eq 1 ] || { echo "failed $key" >&2; exit 1; }
+          done < "$KEYS"
+
+      - name: Build and compile Shadow-v2 evidence
+        working-directory: work
+        env:
+          REVIEW_EVAL_COHORT_PLAN: ${{ env.PLAN }}
+          REVIEW_EVAL_COHORT_RAW: ${{ env.RAW_DIR }}
+          REVIEW_EVAL_PILOT_DIR: ${{ env.SHADOW_DIR }}
+        run: |
+          set -euo pipefail
+          node scripts/build-review-evaluation-cohort-evidence.mjs --build
+          node scripts/compile-review-evaluation-pilot-jsonl.mjs
+          node - <<'NODE'
+          const fs=require('fs');const m=JSON.parse(fs.readFileSync(process.env.SHADOW_DIR+'/manifest.json','utf8'));const idx=JSON.parse(fs.readFileSync(process.env.SHADOW_DIR+'/evidence-index.json','utf8'));
+          if(m.selected_work_count!==24||m.works_with_reviews<20) throw new Error(`Shadow-v2 evidence coverage works=${m.selected_work_count} with_reviews=${m.works_with_reviews}`);
+          if(m.exported_evidence_count<120||m.exported_evidence_count>480||idx.row_count!==m.exported_evidence_count) throw new Error(`Shadow-v2 evidence size ${m.exported_evidence_count}/${idx.row_count}`);
+          console.log({works:m.selected_work_count,with_reviews:m.works_with_reviews,reviews:m.source_review_count,evidence:m.exported_evidence_count});
+          NODE
+
+      - name: Build evidence-text-only blind human gold packet
+        working-directory: work
+        env:
+          REVIEW_SHADOW_V2_DIR: ${{ env.SHADOW_DIR }}
+          REVIEW_SHADOW_V2_GOLD_DIR: ${{ env.GOLD_DIR }}
+          REVIEW_SHADOW_V2_GOLD_BATCH_COUNT: '4'
+        run: |
+          set -euo pipefail
+          node --check scripts/build-review-evaluation-shadow-v2-gold-packet.mjs
+          node scripts/build-review-evaluation-shadow-v2-gold-packet.mjs
+          node - <<'NODE'
+          const fs=require('fs');const idx=JSON.parse(fs.readFileSync(process.env.GOLD_DIR+'/index.json','utf8'));const p=JSON.parse(fs.readFileSync(process.env.GOLD_DIR+'/shadow-v2-gold-packet.json','utf8'));
+          if(p.status!=='blank_fresh_disjoint_shadow_v2_gold_packet_evidence_text_only'||idx.batches.length!==4||idx.batches.reduce((s,b)=>s+b.row_count,0)!==p.counts.evidence_rows) throw new Error('Shadow-v2 blind packet invalid');
+          if(p.counts.evidence_rows<120||p.counts.evidence_rows>480) throw new Error(`bad packet size ${p.counts.evidence_rows}`);
+          console.log({rows:p.counts.evidence_rows,batches:idx.batches});
+          NODE
+          if grep -R -E -n '"(product_id|title|circle|review_ref|source_polarity_hint|raw_target_hint|facets|evaluation_cues|reaction_terms)"' "$GOLD_DIR" --include='*.json' --include='*.jsonl'; then
+            echo 'blind packet contains forbidden provenance/hint field' >&2; exit 1
+          fi
+
+      - name: Commit v2 freeze and fresh holdout packet
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "data/research/review-evaluation-classifier/${VERSION}/production-freeze-v2.json" data/research/review-evaluation-spec/shadow-cohort-v2.json "$SHADOW_DIR"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: freeze target-first v2 and prepare fresh Shadow-v2 blind holdout" || exit 0
+          git reset --hard HEAD
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin HEAD:main; then exit 0; fi
+            sleep $((attempt * 3))
+          done
+          exit 1
