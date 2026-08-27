@@ -1,0 +1,60 @@
+name: Validate review evaluation work-detail UI build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.review-evaluation-work-detail-ui-validate-trigger'
+      - '.github/workflows/validate-review-evaluation-work-detail-ui.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-work-detail-ui-validate
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: work/package-lock.json
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run full static build without deploy
+        working-directory: work
+        run: npm run build:site
+
+      - name: Verify work-detail radar assets are wired
+        working-directory: work
+        run: |
+          set -euo pipefail
+          grep -q 'review-evaluation-work-detail.css' web/index.html
+          grep -q 'review-evaluation-work-detail.js' web/index.html
+          test -s web/review-evaluation-work-detail.css
+          test -s web/review-evaluation-work-detail.js
+          node --check web/review-evaluation-work-detail.js
+          node --check scripts/wire-review-evaluation-work-detail.mjs
+          if [ -d site ]; then
+            grep -q 'review-evaluation-work-detail.css' site/index.html
+            grep -q 'review-evaluation-work-detail.js' site/index.html
+            test -s site/review-evaluation-work-detail.css
+            test -s site/review-evaluation-work-detail.js
+          fi
+          echo 'review-evaluation work-detail UI build validation passed'
