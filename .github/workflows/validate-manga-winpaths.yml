@@ -1,0 +1,64 @@
+name: Validate manga narrative and winpaths build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.manga-winpaths-validate-trigger'
+      - '.github/workflows/validate-manga-winpaths.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manga-winpaths-validate
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: work/package-lock.json
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run full static build without deploy
+        working-directory: work
+        run: npm run build:site
+
+      - name: Verify manga narrative and winpaths outputs
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node scripts/smoke-winpaths-build.mjs
+          node scripts/smoke-manga-winpaths.mjs
+          node - <<'NODE'
+          const fs=require('fs');
+          const d=JSON.parse(fs.readFileSync('site/data/dashboard.json','utf8'));
+          if(!d.media?.comic?.otome) throw new Error('otome comic dashboard missing');
+          if(!d.media?.comic?.bl) throw new Error('bl comic dashboard missing');
+          if(!d.media?.comic?.male) throw new Error('male comic dashboard missing');
+          if(!d.media.comic.male.narrative) throw new Error('male comic narrative missing');
+          for(const market of ['otome','bl','male']){
+            if(!Array.isArray(d.media.comic[market]?.history?.days)) throw new Error(`comic history missing: ${market}`);
+          }
+          console.log({comicMarkets:Object.keys(d.media.comic),maleNarrative:true});
+          NODE
+
+      - name: Report success
+        run: echo 'manga narrative + winpaths non-deploy validation passed'
