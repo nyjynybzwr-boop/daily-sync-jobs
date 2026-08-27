@@ -29,6 +29,7 @@ jobs:
           python -m py_compile scripts/evaluate-review-evaluation-shadow-v2-target-first-v2.py
           node --check scripts/merge-review-evaluation-full-corpus-shards-v1.mjs
           node --check scripts/aggregate-review-evaluation-full-corpus-v1.mjs
+          node --check scripts/publish-review-evaluation-work-details-v1.mjs
           node --check scripts/validate-review-evaluation-shadow-v2-gold-decisions.mjs
 
       - name: Verify immutable v2 wiring inputs without opening human gold or prediction rows
