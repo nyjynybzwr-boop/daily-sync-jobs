@@ -32,6 +32,22 @@ jobs:
         working-directory: work
         run: node scripts/audit-review-texture-atmosphere-training.mjs
 
+      - name: Verify joined blind human gold is non-empty
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const p = 'data/research/review-evaluation-training/rev-eval-46255c55e8d1c5dc/texture-atmosphere-training-audit-v1.json';
+          const audit = JSON.parse(fs.readFileSync(p, 'utf8'));
+          if (audit.status !== 'review_texture_atmosphere_training_coverage_audit_v2_joined_blind_gold') {
+            throw new Error(`unexpected audit status: ${audit.status}`);
+          }
+          if (!(audit.counts?.joined_human_gold_rows > 0)) throw new Error('joined_human_gold_rows is zero');
+          if (!(audit.counts?.texture_positive_rows > 0)) throw new Error('texture_positive_rows is zero');
+          if (audit.counts?.parse_errors !== 0) throw new Error(`parse errors: ${audit.counts.parse_errors}`);
+          console.log(JSON.stringify(audit.counts, null, 2));
+          NODE
+
       - name: Commit audit to private source
         working-directory: work
         run: |
