@@ -1,0 +1,138 @@
+name: Audit review reception evidence recall
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/audit-review-reception-evidence-recall.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-reception-evidence-recall
+  cancel-in-progress: false
+
+jobs:
+  build-blind-packet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      R2_BUCKET_NAME: melosignal-data
+      REVIEW_SEGMENT: otome-audio
+      REVIEW_CHUNK_DIR: .tmp/reviews-evaluation/otome-audio
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download frozen otome-audio review chunks from R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$REVIEW_CHUNK_DIR" .tmp
+          node - <<'NODE' > .tmp/reception-recall-chunk-keys.txt
+          const fs=require('fs');
+          const segment=process.env.REVIEW_SEGMENT;
+          const m=JSON.parse(fs.readFileSync(`data/reviews/manifests/${segment}.json`,'utf8'));
+          if(Number(m.processed_target_works||0)<Number(m.source_target_works||0)) {
+            throw new Error(`${segment}: review crawl incomplete ${m.processed_target_works}/${m.source_target_works}`);
+          }
+          const chunks=(m.chunks||[]).filter(c=>c.complete&&!c.stopped_reason).sort((a,b)=>Number(a.index)-Number(b.index));
+          if(!chunks.length) throw new Error(`${segment}: no complete chunks`);
+          if(chunks.length!==Number(m.next_chunk||chunks.length)) throw new Error(`${segment}: incomplete chunk sequence ${chunks.length}/${m.next_chunk}`);
+          for(const c of chunks) console.log(c.key);
+          NODE
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            out="$REVIEW_CHUNK_DIR/$(basename "$key")"
+            echo "download $key"
+            ok=0
+            for attempt in 1 2 3; do
+              if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null; then ok=1; break; fi
+              sleep $((attempt * 5))
+            done
+            [ "$ok" -eq 1 ] || { echo "failed to download $key" >&2; exit 1; }
+          done < .tmp/reception-recall-chunk-keys.txt
+
+      - name: Build blind full-review recall packet and extractor trace
+        working-directory: work
+        run: node scripts/audit-review-reception-evidence-recall.mjs
+
+      - name: Canonicalize concrete evaluated-elements category
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const p='data/research/review-reception-profile/evidence-recall-audit-v1/blind-full-review-annotation-packet-v1.json';
+          const x=JSON.parse(fs.readFileSync(p,'utf8'));
+          const cats=x?.annotation_rule?.categories || {};
+          if(cats.concrete_evaluated_elements && cats.concrete_praised_element) throw new Error('both old and canonical concrete category keys present');
+          if(cats.concrete_praised_element) {
+            cats.concrete_evaluated_elements=cats.concrete_praised_element;
+            delete cats.concrete_praised_element;
+          }
+          if(!cats.concrete_evaluated_elements) throw new Error('canonical concrete_evaluated_elements category missing');
+          fs.writeFileSync(p, JSON.stringify(x,null,2)+'\n');
+          NODE
+
+      - name: Verify blindness, corpus counts and sample contract
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const root='data/research/review-reception-profile/evidence-recall-audit-v1';
+          const packet=JSON.parse(fs.readFileSync(`${root}/blind-full-review-annotation-packet-v1.json`,'utf8'));
+          const trace=JSON.parse(fs.readFileSync(`${root}/extractor-trace-v1.json`,'utf8'));
+          const summary=JSON.parse(fs.readFileSync(`${root}/selection-summary-v1.json`,'utf8'));
+          if(packet.status!=='blind_full_review_reception_recall_annotation_packet_v1') throw new Error(`bad packet status ${packet.status}`);
+          if(trace.status!=='reception_recall_extractor_trace_not_annotation_input') throw new Error(`bad trace status ${trace.status}`);
+          if(summary.status!=='reception_recall_sample_selected_waiting_for_blind_annotation') throw new Error(`bad summary status ${summary.status}`);
+          if(summary.scanned_reviews!==206304) throw new Error(`unexpected review count ${summary.scanned_reviews}`);
+          if(summary.selected_rows!==320 || summary.selected_products!==320) throw new Error(`unexpected sample ${summary.selected_rows}/${summary.selected_products}`);
+          if(packet.rows?.length!==320 || trace.rows?.length!==320) throw new Error('packet/trace row count mismatch');
+          const ids=new Set(packet.rows.map(r=>r.annotation_row_id));
+          if(ids.size!==320) throw new Error('duplicate packet annotation ids');
+          for(const r of packet.rows) {
+            for(const forbidden of ['product_id','lane','seed_flags','review_seed_flags','survives_existing_candidate_gate','drop_reason']) {
+              if(Object.prototype.hasOwnProperty.call(r,forbidden)) throw new Error(`blind packet leaks ${forbidden}`);
+            }
+          }
+          const cats=Object.keys(packet.annotation_rule.categories||{}).sort();
+          const expected=['atmosphere_texture','concrete_evaluated_elements','emotional_response','sexual_response','story_relationship'].sort();
+          if(JSON.stringify(cats)!==JSON.stringify(expected)) throw new Error(`unexpected categories ${cats.join(',')}`);
+          console.log(JSON.stringify({scanned_works:summary.scanned_works,scanned_reviews:summary.scanned_reviews,selected_rows:summary.selected_rows,selected_products:summary.selected_products,actual_lane_counts:summary.actual_lane_counts,seed_proxy_only_not_gold_recall:summary.seed_proxy_only_not_gold_recall},null,2));
+          NODE
+
+      - name: Commit blind audit artifacts to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          root='data/research/review-reception-profile/evidence-recall-audit-v1'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$root/blind-full-review-annotation-packet-v1.json" "$root/extractor-trace-v1.json" "$root/selection-summary-v1.json"
+          if git diff --cached --quiet; then
+            echo 'No recall-audit artifact changes.'
+            exit 0
+          fi
+          git commit -m '[CF-Pages-Skip] [skip actions] reviews: build blind full-review evidence recall audit packet'
+          git pull --rebase origin main
+          git push origin HEAD:main
