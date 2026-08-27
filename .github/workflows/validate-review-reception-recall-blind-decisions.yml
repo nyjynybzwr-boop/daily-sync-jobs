@@ -28,6 +28,12 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Validate blind decisions without extractor trace
+      - name: Validate frozen blind decisions rows 0001-0015 without extractor trace
         working-directory: work
+        run: node scripts/validate-review-reception-recall-blind-decisions.mjs
+
+      - name: Validate frozen blind decisions rows 0016-0030 without extractor trace
+        working-directory: work
+        env:
+          REVIEW_RECEPTION_RECALL_DECISIONS_JSON: data/research/review-reception-profile/evidence-recall-audit-v1/annotation-decisions/blind-decisions-chatgpt-0016-0030.json
         run: node scripts/validate-review-reception-recall-blind-decisions.mjs
