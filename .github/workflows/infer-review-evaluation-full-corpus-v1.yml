@@ -1,0 +1,129 @@
+name: Infer review evaluation full corpus v1 shards
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.review-evaluation-full-corpus-v1-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-full-corpus-v1
+  cancel-in-progress: false
+
+jobs:
+  infer-shard:
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      VERSION: rev-eval-46255c55e8d1c5dc
+      REVIEW_EVAL_SHARD_COUNT: '32'
+      REVIEW_EVAL_SHARD_INDEX: ${{ matrix.shard }}
+      HF_HOME: ${{ github.workspace }}/.cache/huggingface-review-full-${{ matrix.shard }}
+      R2_BUCKET_NAME: melosignal-data
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Verify production authorization and freeze
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs'),crypto=require('crypto'),V='rev-eval-46255c55e8d1c5dc';
+          const f=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-freeze-v1.json`,'utf8'));
+          const a=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-authorization-v1.json`,'utf8'));
+          if(f.status!=='review_evaluation_production_v1_frozen_before_shadow'||a.status!=='review_evaluation_production_v1_authorized_after_blind_shadow'||a.blind_shadow_passed!==true) throw new Error('production not authorized');
+          if(a.freeze_payload_sha256!==f.freeze_payload_sha256) throw new Error('freeze/authorization mismatch');
+          console.log({freeze:f.freeze_payload_sha256,shadow:a.shadow_metrics||a.metrics||null});
+          NODE
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: work/package-lock.json
+
+      - name: Install Node dependencies
+        working-directory: work
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Download canonical inventory and frozen base embeddings
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          inv=.tmp/review-evaluation-inventory/${VERSION};base=.tmp/review-evaluation-classifier/${VERSION}/v2
+          mkdir -p "$inv" "$base"
+          npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/review-evaluation-full-corpus/${VERSION}/inventory/unique-evidence.jsonl.gz" --file "$inv/unique-evidence.jsonl.gz" --remote >/dev/null
+          npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/review-evaluation-classifier/${VERSION}/training-v2/training-embeddings-v2.jsonl.gz" --file "$base/training-embeddings-v2.jsonl.gz" --remote >/dev/null
+          gzip -dc "$base/training-embeddings-v2.jsonl.gz" > "$base/training-embeddings-v2.jsonl"
+          node - <<'NODE'
+          const fs=require('fs'),crypto=require('crypto'),V='rev-eval-46255c55e8d1c5dc';
+          const inv=JSON.parse(fs.readFileSync(`data/research/review-evaluation-full-corpus/${V}/inventory/inventory-manifest.json`,'utf8'));
+          const em=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/training-embedding-manifest-v2.json`,'utf8'));
+          const sha=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+          if(sha(`.tmp/review-evaluation-inventory/${V}/unique-evidence.jsonl.gz`)!==inv.artifacts.unique_evidence.sha256) throw new Error('unique inventory SHA drift');
+          if(sha(`.tmp/review-evaluation-classifier/${V}/v2/training-embeddings-v2.jsonl.gz`)!==em.r2.compressed_sha256) throw new Error('base embedding SHA drift');
+          NODE
+
+      - name: Materialize frozen supplement embeddings
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node scripts/validate-review-evaluation-mechanism-boundary-supplement-decisions.mjs >/dev/null
+          node scripts/validate-review-evaluation-mechanism-active-boundary-supplement-v2-decisions.mjs >/dev/null
+          node scripts/materialize-review-evaluation-mechanism-boundary-embeddings-v1.mjs >/dev/null
+          node scripts/materialize-review-evaluation-mechanism-active-boundary-embeddings-v2.mjs >/dev/null
+
+      - name: Materialize local E5 shard embeddings
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/materialize-review-evaluation-full-corpus-shard-embeddings-v1.mjs
+          node scripts/materialize-review-evaluation-full-corpus-shard-embeddings-v1.mjs
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install classifier dependencies
+        run: python -m pip install --disable-pip-version-check numpy scikit-learn
+
+      - name: Run authorized frozen shard inference
+        working-directory: work
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/infer-review-evaluation-full-corpus-shard-v1.py
+          python scripts/infer-review-evaluation-full-corpus-shard-v1.py
+
+      - name: Upload shard predictions to R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag=$(printf '%02d' "${REVIEW_EVAL_SHARD_INDEX}")
+          dir=.tmp/review-evaluation-full-corpus/${VERSION}/shards
+          key=review-evaluation-full-corpus/${VERSION}/production-v1/shards
+          test -s "$dir/shard-${tag}-predictions.jsonl.gz"
+          test -s "$dir/shard-${tag}-prediction-manifest.json"
+          npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/${key}/shard-${tag}-predictions.jsonl.gz" --file "$dir/shard-${tag}-predictions.jsonl.gz" --remote >/dev/null
+          npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/${key}/shard-${tag}-prediction-manifest.json" --file "$dir/shard-${tag}-prediction-manifest.json" --remote >/dev/null
+          echo "uploaded shard ${tag}"
