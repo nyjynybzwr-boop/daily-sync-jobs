@@ -1,4 +1,4 @@
-name: Validate review evaluation work-detail UI build
+name: Validate review evaluation target-first UI build
 
 on:
   workflow_dispatch:
@@ -41,7 +41,7 @@ jobs:
         working-directory: work
         run: npm run build:site
 
-      - name: Verify work-detail radar assets are wired
+      - name: Verify target-first review evaluation assets and gating
         working-directory: work
         run: |
           set -euo pipefail
@@ -49,12 +49,31 @@ jobs:
           grep -q 'review-evaluation-work-detail.js' web/index.html
           test -s web/review-evaluation-work-detail.css
           test -s web/review-evaluation-work-detail.js
+          test -s web/review-evaluation.html
+          test -s web/review-evaluation.css
+          test -s web/review-evaluation.js
           node --check web/review-evaluation-work-detail.js
+          node --check web/review-evaluation.js
           node --check scripts/wire-review-evaluation-work-detail.mjs
+          node --check scripts/wire-review-evaluation-dashboard.mjs
+          node --check scripts/build-review-evaluation-market-summary-v2.mjs
+          if [ -s web/data/review-evaluation/market-summary-v2.json ]; then
+            grep -q 'id="reviewEvaluationLink"' web/index.html
+          else
+            ! grep -q 'id="reviewEvaluationLink"' web/index.html
+          fi
           if [ -d site ]; then
             grep -q 'review-evaluation-work-detail.css' site/index.html
             grep -q 'review-evaluation-work-detail.js' site/index.html
             test -s site/review-evaluation-work-detail.css
             test -s site/review-evaluation-work-detail.js
+            test -s site/review-evaluation.html
+            test -s site/review-evaluation.css
+            test -s site/review-evaluation.js
+            if [ -s site/data/review-evaluation/market-summary-v2.json ]; then
+              grep -q 'id="reviewEvaluationLink"' site/index.html
+            else
+              ! grep -q 'id="reviewEvaluationLink"' site/index.html
+            fi
           fi
-          echo 'review-evaluation work-detail UI build validation passed'
+          echo 'review-evaluation target-first UI build validation passed'
