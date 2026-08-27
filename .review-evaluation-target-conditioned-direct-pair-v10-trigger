@@ -1,0 +1,2 @@
+triggered_at=2026-08-28T00:01:00+09:00
+reason=v9 active supplement improved positives but all-row direct-pair training remained unstable; final narrow check restricts training negatives to gold target-conditioned rows while keeping all calibration/development false-positive exposure and no predicted target gate
