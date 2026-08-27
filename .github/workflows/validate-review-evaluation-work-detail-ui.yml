@@ -57,6 +57,7 @@ jobs:
           node --check scripts/wire-review-evaluation-work-detail.mjs
           node --check scripts/wire-review-evaluation-dashboard.mjs
           node --check scripts/build-review-evaluation-market-summary-v2.mjs
+          node --check scripts/test-review-evaluation-target-first-presentation-v2.mjs
           if [ -s web/data/review-evaluation/market-summary-v2.json ]; then
             grep -q 'id="reviewEvaluationLink"' web/index.html
           else
@@ -76,4 +77,10 @@ jobs:
               ! grep -q 'id="reviewEvaluationLink"' site/index.html
             fi
           fi
-          echo 'review-evaluation target-first UI build validation passed'
+
+      - name: Smoke-test summary builder and hidden-to-live market navigation
+        working-directory: work
+        run: node scripts/test-review-evaluation-target-first-presentation-v2.mjs
+
+      - name: Report success
+        run: echo 'review-evaluation target-first UI build validation passed'
