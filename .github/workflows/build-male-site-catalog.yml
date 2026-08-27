@@ -108,6 +108,50 @@ jobs:
           OUT_DIR: web/data/catalog/manga/male
         run: node scripts/build-male-r2-web-sharded.mjs
 
+      - name: Materialize lightweight male audio release-date source
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const path=require('path');
+          const zlib=require('zlib');
+          const dir='.tmp/male-r2-download/audio';
+          const files=fs.readdirSync(dir).filter(name=>/^chunk-\d{5}\.json\.gz$/.test(name)).sort();
+          const rows=[];
+          const seen=new Set();
+          for(const name of files){
+            const payload=JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(dir,name))).toString('utf8'));
+            for(const item of payload.works||[]){
+              const product_id=String(item.product_id||'').toUpperCase();
+              if(!product_id||seen.has(product_id))continue;
+              seen.add(product_id);
+              rows.push({product_id,release_date_text:item.release_date_text||item.release_date||null});
+            }
+          }
+          fs.mkdirSync('data/catalog/male/full',{recursive:true});
+          fs.writeFileSync('data/catalog/male/full/details.json',JSON.stringify(rows));
+          console.log({male_audio_release_rows:rows.length});
+          if(rows.length<60000)throw new Error(`male audio release-date source unexpectedly small: ${rows.length}`);
+          NODE
+
+      - name: Rebuild male audio market insights
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node scripts/build-market-insights.mjs --market=male
+          node scripts/filter-market-insight-pairs.mjs --market=male
+          node - <<'NODE'
+          const fs=require('fs');
+          const full=JSON.parse(fs.readFileSync('web/data/reports/male/market-insights.json','utf8'));
+          const compact=JSON.parse(fs.readFileSync('web/data/reports/male/market-insights-compact.json','utf8'));
+          if(full.market!=='male'||compact.market!=='male')throw new Error('male market insight identity mismatch');
+          if(!compact.notable_pairs?.length)throw new Error('male market-insights notable_pairs empty');
+          if(!compact.top_segments?.length)throw new Error('male market-insights top_segments empty');
+          if(!compact.pair_filter_policy)throw new Error('male semantic pair filter was not applied');
+          console.log({male_insight_pairs:compact.notable_pairs.length,male_segments:compact.top_segments.length,pair_filter_policy:compact.pair_filter_policy});
+          NODE
+
       - name: Validate generated site data and Pages file limits
         working-directory: work
         run: |
@@ -146,11 +190,11 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add web/data/catalog/male web/data/catalog/manga/male
+          git add web/data/catalog/male web/data/catalog/manga/male web/data/reports/male
           if git diff --cached --quiet; then
-            echo 'No male catalog web-data changes.'
+            echo 'No male catalog or market-insight web-data changes.'
             exit 0
           fi
-          git commit -m '[skip actions] data: publish male full-catalog web indexes'
+          git commit -m '[skip actions] data: publish male full-catalog web indexes and insights'
           git pull --rebase origin main
           git push origin HEAD:main
