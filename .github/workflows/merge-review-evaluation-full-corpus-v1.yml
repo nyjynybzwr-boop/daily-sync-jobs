@@ -106,6 +106,21 @@ jobs:
           node --check scripts/aggregate-review-evaluation-full-corpus-v1.mjs
           node scripts/aggregate-review-evaluation-full-corpus-v1.mjs
 
+      - name: Build target-first market summary
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/build-review-evaluation-market-summary-v2.mjs
+          node scripts/build-review-evaluation-market-summary-v2.mjs
+          test -s web/data/review-evaluation/market-summary-v2.json
+          node - <<'NODE'
+          const fs=require('fs');
+          const p=JSON.parse(fs.readFileSync('web/data/review-evaluation/market-summary-v2.json','utf8'));
+          if(p.status!=='review_evaluation_target_first_market_summary_v2_ready'||p.production_scope!=='target_first_conservative'||p.targets?.length!==4) throw new Error('market summary validation failed');
+          if(p.interpretation?.mechanism_output_enabled!==false||p.interpretation?.pair_output_enabled!==false) throw new Error('market summary mechanism/pair drift');
+          console.log({status:p.status,counts:p.counts,targets:p.targets.map(x=>x.target_key)});
+          NODE
+
       - name: Publish work-detail web payload shards
         working-directory: work
         run: |
@@ -127,7 +142,7 @@ jobs:
           npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/${key}/unique-predictions-v2.jsonl.gz" --file "$dir/unique-predictions.jsonl.gz" --remote >/dev/null
           npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/${key}/work-aggregates-v2.jsonl.gz" --file "$dir/work-aggregates-v1.jsonl.gz" --remote >/dev/null
 
-      - name: Commit production manifests and work-detail payloads to private source
+      - name: Commit production manifests and target-first web payloads to private source
         working-directory: work
         env:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
