@@ -1,0 +1,33 @@
+name: Validate review reception recall blind decisions
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/validate-review-reception-recall-blind-decisions.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate blind decisions without extractor trace
+        working-directory: work
+        run: node scripts/validate-review-reception-recall-blind-decisions.mjs
