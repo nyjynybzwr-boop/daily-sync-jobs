@@ -1,0 +1,72 @@
+name: Daily Target A sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '5 14 * * *'
+  push:
+    paths:
+      - '.sync-target-a-trigger'
+      - '.github/workflows/sync-target-a-daily.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: sync-target-a
+  cancel-in-progress: false
+
+jobs:
+  sync-target-a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies and browser
+        working-directory: work
+        run: |
+          set -euo pipefail
+          npm ci >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Dependency installation failed.'; exit 1)
+          npm install --no-save playwright devalue >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Browser dependency installation failed.'; exit 1)
+          npx playwright install --with-deps chromium >>/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Browser installation failed.'; exit 1)
+
+      - name: Collect Target A rankings
+        working-directory: work
+        run: |
+          set -euo pipefail
+          bash scripts/ci/run-a.sh >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Target A collection failed.'; exit 1)
+
+      - name: Verify today's Target A snapshot exists
+        working-directory: work
+        run: |
+          set -euo pipefail
+          today=$(TZ=Asia/Tokyo date +%F)
+          test -s "data/raw/${today}.json" || { echo "missing data/raw/${today}.json" >&2; exit 1; }
+          node - "$today" <<'NODE'
+          const fs=require('fs');const today=process.argv[2];const p=JSON.parse(fs.readFileSync(`data/raw/${today}.json`,'utf8'));
+          if(p.captured_date_jst!==today) throw new Error(`date mismatch ${p.captured_date_jst}`);
+          if(p.category!=='voice') throw new Error(`unexpected category ${p.category}`);
+          if(!Array.isArray(p.items)||p.items.length===0) throw new Error('empty Target A ranking');
+          if(p.stopped_reason) throw new Error(`collector stopped: ${p.stopped_reason}`);
+          console.log({today,item_count:p.item_count,source_item_count:p.source_item_count,http_status:p.http_status});
+          NODE
+
+      - name: Push Target A results
+        working-directory: work
+        run: |
+          set -euo pipefail
+          bash scripts/ci/push.sh "data/raw data/labeled data/reports data/windows" "[skip actions] data: target A daily sync $(TZ=Asia/Tokyo date +%F' '%H:%M)" >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Push Target A failed.'; exit 1)
