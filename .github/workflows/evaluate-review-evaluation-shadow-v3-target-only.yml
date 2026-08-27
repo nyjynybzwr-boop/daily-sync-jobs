@@ -56,7 +56,8 @@ jobs:
 
       - name: Report no-op state
         if: steps.gate.outputs.should_run != 'true'
-        run: echo "Shadow-v3 evaluation skipped: ${{ steps.gate.outputs.reason }}"
+        run: |
+          echo "Shadow-v3 evaluation skipped: ${{ steps.gate.outputs.reason }}"
 
       - name: Validate fresh Shadow-v3 target-only gold
         if: steps.gate.outputs.should_run == 'true'
