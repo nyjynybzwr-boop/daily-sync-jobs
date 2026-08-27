@@ -1,0 +1,63 @@
+name: Freeze target-first review evaluation production v1 before Shadow
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.review-evaluation-target-first-production-v1-freeze-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-target-first-production-v1-freeze
+  cancel-in-progress: false
+
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERSION: rev-eval-46255c55e8d1c5dc
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Verify target-first prerequisites without opening Shadow
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/freeze-review-evaluation-target-first-production-v1.mjs
+          node - <<'NODE'
+          const fs=require('fs'),V='rev-eval-46255c55e8d1c5dc';
+          const t=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/rbf-svm-development-report-v2.json`,'utf8'));
+          const v10=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/target-conditioned-direct-pair-development-report-v10.json`,'utf8'));
+          if(t.shadow_v1_opened!==false||t.gates?.target_precision!==true||t.gates?.target_predictions!==true) throw new Error('target freeze prerequisite drift');
+          if(v10.shadow_v1_opened!==false||v10.all_gates_passed!==false||v10.development?.selected_pair_keys?.length) throw new Error('mechanism exhaustion prerequisite drift');
+          console.log({target_precision:t.development.target_end_to_end.micro_precision,target_predictions:t.development.target_end_to_end.predicted_assignments,v10_status:v10.status});
+          NODE
+          if grep -n -E 'shadow-calibration/.*/(human-gold|predictions)|shadow-predictions|human-gold' scripts/freeze-review-evaluation-target-first-production-v1.mjs; then echo 'target-first freeze generator references sealed Shadow labels' >&2; exit 1; fi
+      - name: Generate target-first freeze
+        working-directory: work
+        run: node scripts/freeze-review-evaluation-target-first-production-v1.mjs
+      - name: Verify target-first freeze
+        working-directory: work
+        run: |
+          node - <<'NODE'
+          const fs=require('fs'),V='rev-eval-46255c55e8d1c5dc';const x=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-freeze-v1.json`,'utf8'));
+          if(x.status!=='review_evaluation_production_v1_frozen_before_shadow'||x.production_scope!=='target_first'||x.shadow_v1_opened!==false||x.mechanisms?.standalone_output!==false||x.pairs?.selected_pair_keys?.length!==0||!x.freeze_payload_sha256) throw new Error('target-first freeze contract drift');
+          console.log({status:x.status,scope:x.production_scope,active_targets:Object.values(x.targets.models).filter(v=>v.active_for_output).length,freeze:x.freeze_payload_sha256});
+          NODE
+      - name: Commit freeze to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          out=data/research/review-evaluation-classifier/${VERSION}/production-freeze-v1.json
+          git config user.name github-actions[bot];git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$out";git commit -m "[CF-Pages-Skip] [skip actions] reviews: freeze target-first production v1 before Shadow" || exit 0
+          git reset --hard HEAD;git pull --rebase origin main;git push origin main
