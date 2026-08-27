@@ -39,10 +39,12 @@ jobs:
         working-directory: work
         run: |
           set -euo pipefail
+          node --check scripts/validate-review-evaluation-targeted-training-supplement-decisions.mjs
           node --check scripts/build-review-evaluation-classifier-training-pool-v2.mjs
           node --check scripts/build-review-evaluation-classifier-plan-v2.mjs
           node --check scripts/materialize-review-evaluation-training-embeddings-v2.mjs
           python3 -m py_compile scripts/fit-review-evaluation-logistic-classifier-v2.py
+          node scripts/validate-review-evaluation-targeted-training-supplement-decisions.mjs
           node scripts/build-review-evaluation-classifier-training-pool-v2.mjs
           node scripts/build-review-evaluation-classifier-plan-v2.mjs
           node - <<'NODE'
@@ -110,9 +112,10 @@ jobs:
         run: |
           set -euo pipefail
           b=data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc
+          t=data/research/review-evaluation-training/rev-eval-46255c55e8d1c5dc/targeted-supplement-v1/annotation
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add "$b/training-pool-v2.jsonl" "$b/training-pool-v2-manifest.json" "$b/classifier-plan-v2.json" "$b/training-embedding-manifest-v2.json" "$b/logistic-classifier-model-v2.json" "$b/logistic-internal-validation-report-v2.json"
+          git add "$t/targeted-supplement-gold-decisions.jsonl" "$t/targeted-supplement-gold-validation-summary.json" "$b/training-pool-v2.jsonl" "$b/training-pool-v2-manifest.json" "$b/classifier-plan-v2.json" "$b/training-embedding-manifest-v2.json" "$b/logistic-classifier-model-v2.json" "$b/logistic-internal-validation-report-v2.json"
           git commit -m "[CF-Pages-Skip] [skip actions] reviews: fit Tier A v2 classifier and validate internally" || exit 0
           git pull --rebase origin main
           git push origin main
