@@ -1,0 +1,75 @@
+name: Evaluate frozen target-first v2 on fresh Shadow-v2 gold
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.review-evaluation-shadow-v2-evaluate-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-shadow-v2-evaluate-v2
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VERSION: rev-eval-46255c55e8d1c5dc
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Validate fresh Shadow-v2 human gold
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/validate-review-evaluation-shadow-v2-gold-decisions.mjs
+          node scripts/validate-review-evaluation-shadow-v2-gold-decisions.mjs
+
+      - name: Verify pre-gold prediction provenance and fixed gates
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs'),V='rev-eval-46255c55e8d1c5dc';
+          const f=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-freeze-v2.json`,'utf8'));
+          const p=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/shadow-v2-target-first-prediction-manifest-v2.json`,'utf8'));
+          if(f.status!=='review_evaluation_production_v2_frozen_before_new_disjoint_holdout'||p.status!=='shadow_v2_target_first_predictions_frozen_before_human_gold'||p.inputs?.freeze_payload_sha256!==f.freeze_payload_sha256) throw new Error('freeze/prediction provenance drift');
+          if(p.strict_blind_sequence?.human_gold_decisions_read!==false||p.strict_blind_sequence?.predictions_must_be_committed_before_human_gold_annotation_starts!==true) throw new Error('blind sequence drift');
+          const g=f.authorization_gate?.fixed_before_holdout_scoring||{};
+          const expected={classification_precision_when_predicted_min:0.85,evaluative_precision_min:0.85,polarity_end_to_end_precision_when_predicted_min:0.85,target_micro_precision_min:0.80,target_predicted_assignments_min:20,target_distinct_predicted_labels_min:3};
+          if(JSON.stringify(g)!==JSON.stringify(expected)) throw new Error(`fixed gates drift ${JSON.stringify(g)}`);
+          console.log({freeze:f.freeze_payload_sha256,predictions:p.outputs?.predictions_sha256,gates:g});
+          NODE
+
+      - name: Score frozen predictions against fresh gold exactly once
+        working-directory: work
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/evaluate-review-evaluation-shadow-v2-target-first-v2.py
+          python scripts/evaluate-review-evaluation-shadow-v2-target-first-v2.py
+
+      - name: Commit immutable evaluation result and authorization if passed
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          base=data/research/review-evaluation-classifier/${VERSION}
+          gold=data/research/review-evaluation-calibration/otome-audio-otome-audio-review-evaluation-shadow-v2/human-gold
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$gold/shadow-v2-gold-decisions.jsonl" "$gold/shadow-v2-gold-validation-summary.json" "$base/shadow-v2-target-first-evaluation-report-v2.json"
+          test ! -f "$base/production-authorization-v2.json" || git add "$base/production-authorization-v2.json"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: score frozen target-first v2 on fresh Shadow-v2"
+          git reset --hard HEAD
+          for attempt in 1 2 3 4 5 6; do git fetch origin main; git rebase origin/main; if git push origin HEAD:main; then exit 0; fi; sleep $((attempt * 3)); done
+          exit 1
