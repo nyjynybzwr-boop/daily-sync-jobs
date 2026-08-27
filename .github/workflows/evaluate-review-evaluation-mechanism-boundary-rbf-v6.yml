@@ -116,5 +116,8 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add "$cls/mechanism-boundary-rbf-development-report-v6.json"
           git commit -m "[CF-Pages-Skip] [skip actions] reviews: evaluate mechanism-boundary RBF v6" || exit 0
+          # Validator/materializer regenerate tracked summaries with timestamps. Keep the
+          # committed v6 report, discard only those unrelated unstaged changes before rebase.
+          git reset --hard HEAD
           git pull --rebase origin main
           git push origin main
