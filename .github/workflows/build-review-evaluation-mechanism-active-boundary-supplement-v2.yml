@@ -1,0 +1,117 @@
+name: Build review evaluation mechanism active-boundary supplement v2
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.review-evaluation-mechanism-active-boundary-supplement-v2-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-mechanism-active-boundary-supplement-v2
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VERSION: rev-eval-46255c55e8d1c5dc
+      R2_BUCKET_NAME: melosignal-data
+      HF_HOME: ${{ github.workspace }}/.cache/huggingface-mech-active-v2
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: work/package-lock.json
+
+      - name: Install Node dependencies
+        working-directory: work
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify builder contracts and Shadow seal
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/build-review-evaluation-mechanism-active-boundary-supplement-v2.mjs
+          node --check scripts/validate-review-evaluation-mechanism-active-boundary-supplement-v2-decisions.mjs
+          node - <<'NODE'
+          const fs=require('fs');
+          const v8=JSON.parse(fs.readFileSync('data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/direct-pair-development-report-v8.json','utf8'));
+          const fusion=JSON.parse(fs.readFileSync('data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/pair-score-fusion-rbf-development-report-v8.json','utf8'));
+          if(v8.shadow_v1_opened!==false||fusion.shadow_v1_opened!==false)throw new Error('shadow seal violated');
+          if(v8.all_gates_passed!==false||fusion.all_gates_passed!==false)throw new Error('active supplement no longer justified');
+          NODE
+          if grep -n -E 'shadow-calibration/.*/(human-gold|predictions)|shadow-predictions|human-gold' scripts/build-review-evaluation-mechanism-active-boundary-supplement-v2.mjs; then echo 'builder references sealed Shadow label assets' >&2; exit 1; fi
+
+      - name: Download canonical evidence inventory and frozen base embeddings
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          inv=.tmp/review-evaluation-inventory/${VERSION}; emb=.tmp/review-evaluation-classifier/${VERSION}/v2
+          mkdir -p "$inv" "$emb"
+          npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/review-evaluation-full-corpus/${VERSION}/inventory/unique-evidence.jsonl.gz" --file "$inv/unique-evidence.jsonl.gz" --remote >/dev/null
+          npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/review-evaluation-full-corpus/${VERSION}/inventory/evidence-occurrences.jsonl.gz" --file "$inv/evidence-occurrences.jsonl.gz" --remote >/dev/null
+          npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/review-evaluation-classifier/${VERSION}/training-v2/training-embeddings-v2.jsonl.gz" --file "$emb/training-embeddings-v2.jsonl.gz" --remote >/dev/null
+          gzip -dc "$emb/training-embeddings-v2.jsonl.gz" > "$emb/training-embeddings-v2.jsonl"
+          node - <<'NODE'
+          const fs=require('fs'),crypto=require('crypto'),V='rev-eval-46255c55e8d1c5dc';
+          const inv=JSON.parse(fs.readFileSync(`data/research/review-evaluation-full-corpus/${V}/inventory/inventory-manifest.json`,'utf8'));
+          const files={unique_evidence:`.tmp/review-evaluation-inventory/${V}/unique-evidence.jsonl.gz`,evidence_occurrences:`.tmp/review-evaluation-inventory/${V}/evidence-occurrences.jsonl.gz`};
+          for(const [k,f] of Object.entries(files)){const sha=crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');if(sha!==inv.artifacts[k].sha256)throw new Error(`${k} sha mismatch`);}
+          const m=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/training-embedding-manifest-v2.json`,'utf8'));
+          const gz=`.tmp/review-evaluation-classifier/${V}/v2/training-embeddings-v2.jsonl.gz`;const sha=crypto.createHash('sha256').update(fs.readFileSync(gz)).digest('hex');
+          if(m.rows!==3528||m.vector_dimension!==384||m.r2?.compressed_sha256!==sha||m.model?.paid_api!==false)throw new Error('base embedding provenance mismatch');
+          NODE
+
+      - name: Materialize prior mechanism supplement embeddings
+        working-directory: work
+        run: node scripts/materialize-review-evaluation-mechanism-boundary-embeddings-v1.mjs >/dev/null
+
+      - name: Build active-learning blind packet
+        working-directory: work
+        run: node scripts/build-review-evaluation-mechanism-active-boundary-supplement-v2.mjs
+
+      - name: Verify packet blindness and quotas
+        working-directory: work
+        run: |
+          set -euo pipefail
+          root=data/research/review-evaluation-training/${VERSION}/mechanism-active-boundary-supplement-v2
+          node - "$root/annotation/mechanism-active-boundary-supplement-gold-packet.json" "$root/mechanism-active-boundary-supplement-selection-audit.json" <<'NODE'
+          const fs=require('fs');const [pp,ap]=process.argv.slice(2),p=JSON.parse(fs.readFileSync(pp,'utf8')),a=JSON.parse(fs.readFileSync(ap,'utf8'));
+          if(p.rows.length!==300||p.counts.voice_rows!==200||p.counts.character_rows!==100||p.counts.batches!==3)throw new Error('quota drift');
+          if(a.policy?.original_validation_used_for_selection!==false||a.anti_leakage?.excludes_mechanism_boundary_supplement_v1_products!==true)throw new Error('acquisition leakage contract drift');
+          const lanes={};for(const r of a.rows)lanes[`${r.lane_key}:${r.acquisition_kind}`]=(lanes[`${r.lane_key}:${r.acquisition_kind}`]||0)+1;
+          const expected={'voice:positive_neighbor':130,'voice:hard_boundary':70,'character:positive_neighbor':65,'character:hard_boundary':35};for(const [k,n] of Object.entries(expected))if(lanes[k]!==n)throw new Error(`${k} ${lanes[k]}/${n}`);
+          for(const r of p.rows)for(const f of ['product_id','review_ref','lane_key','acquisition_kind','acquisition_score','pos_similarity','neg_similarity','margin'])if(f in r)throw new Error(`blind leak ${f} ${r.row_id}`);
+          console.log({rows:p.rows.length,products:a.counts.selected_products,lanes,pools:a.candidate_pool_counts,anchors:a.anchor_counts});
+          NODE
+
+      - name: Commit packet to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          root=data/research/review-evaluation-training/${VERSION}/mechanism-active-boundary-supplement-v2
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$root"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: build mechanism active-boundary supplement v2" || exit 0
+          git reset --hard HEAD
+          git pull --rebase origin main
+          git push origin main
