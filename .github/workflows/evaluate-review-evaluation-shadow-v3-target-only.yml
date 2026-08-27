@@ -98,7 +98,7 @@ jobs:
         if: steps.gate.outputs.should_run == 'true'
         working-directory: work
         env:
-          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          SYNC_TOKEN: ${{ secrets.SOURCE_REPO != '' && secrets.SYNC_TOKEN || secrets.SYNC_TOKEN }}
         run: |
           set -euo pipefail
           base=data/research/review-evaluation-classifier/${VERSION}
@@ -112,14 +112,34 @@ jobs:
           for attempt in 1 2 3 4 5 6; do git fetch origin main; git rebase origin/main; if git push origin HEAD:main; then exit 0; fi; sleep $((attempt * 3)); done
           exit 1
 
-      - name: Report fixed authorization decision
+      - name: Read fixed Shadow-v3 authorization decision
+        id: decision
         if: steps.gate.outputs.should_run == 'true'
         working-directory: work
         run: |
           set -euo pipefail
           python - <<'PY'
-          import json, pathlib
+          import json, pathlib, os
           p=pathlib.Path('data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/shadow-v3-target-only-evaluation-report-v3.json')
           r=json.loads(p.read_text())
-          print(json.dumps({'passed':r.get('decision',{}).get('passed'),'checks':r.get('checks'),'metrics':r.get('metrics')},ensure_ascii=False))
+          passed=r.get('decision',{}).get('passed') is True
+          print(json.dumps({'passed':passed,'checks':r.get('checks'),'metrics':r.get('metrics')},ensure_ascii=False))
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+              f.write(f"authorized={'true' if passed else 'false'}\n")
           PY
+
+      - name: Trigger production-v3 full-corpus inference when authorized
+        if: steps.decision.outputs.authorized == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          printf 'triggered_at=%s\nscope=target-only-v3-authorized-full-corpus\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .review-evaluation-full-corpus-v3-trigger
+          git add .review-evaluation-full-corpus-v3-trigger
+          git commit -m "reviews: trigger authorized target-only v3 full-corpus inference"
+          git push
+
+      - name: Report fixed-gate rejection without workflow error
+        if: steps.gate.outputs.should_run == 'true' && steps.decision.outputs.authorized != 'true'
+        run: |
+          echo 'Shadow-v3 failed the frozen production-v3 target-only authorization gate. Full-corpus inference was not triggered. No post-holdout tuning is permitted.'
