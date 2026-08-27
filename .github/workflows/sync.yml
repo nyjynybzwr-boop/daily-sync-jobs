@@ -22,7 +22,6 @@ on:
           - m
         default: a
   schedule:
-    - cron: '0 14 * * *'
     - cron: '30 14 * * *'
 
 concurrency:
