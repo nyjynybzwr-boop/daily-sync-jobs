@@ -1,0 +1,89 @@
+name: Materialize review evaluation Tier B target training
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/materialize-review-evaluation-tier-b-target.yml'
+      - '.review-evaluation-tier-b-target-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-tier-b-target
+  cancel-in-progress: false
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HF_HOME: ${{ github.workspace }}/.cache/huggingface
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: work/package-lock.json
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build leakage-safe Tier B target pool
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/build-review-evaluation-tier-b-target-training.mjs
+          node scripts/build-review-evaluation-tier-b-target-training.mjs
+
+      - name: Embed Tier B evidence locally
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/materialize-review-evaluation-tier-b-target-embeddings.mjs
+          node scripts/materialize-review-evaluation-tier-b-target-embeddings.mjs
+          f=.tmp/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/tier-b-target-embeddings.jsonl
+          test -s "$f"
+          gzip -9 -c "$f" > "$f.gz"
+
+      - name: Upload Tier B embeddings to R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          f=.tmp/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/tier-b-target-embeddings.jsonl.gz
+          key=review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/training/tier-b-target-embeddings.jsonl.gz
+          npx --yes wrangler r2 object put "melosignal-data/${key}" --file "$f" --remote
+          mf=data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/tier-b-target-embedding-manifest.json
+          node - "$f" "$mf" <<'NODE'
+          const fs=require('fs'),crypto=require('crypto');const [f,mf]=process.argv.slice(2),b=fs.readFileSync(f),m=JSON.parse(fs.readFileSync(mf,'utf8'));m.r2.compressed_bytes=b.length;m.r2.compressed_sha256=crypto.createHash('sha256').update(b).digest('hex');fs.writeFileSync(mf,JSON.stringify(m,null,2)+'\n');
+          NODE
+
+      - name: Verify and commit compact Tier B assets
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          root=data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc
+          node - "$root/tier-b-target-training-manifest.json" "$root/tier-b-target-embedding-manifest.json" <<'NODE'
+          const fs=require('fs');const a=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),e=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));if(a.counts?.usable_target_rows!==197||a.counts?.shadow_overlap!==0)throw new Error('Tier B pool mismatch');if(e.rows!==197||e.vector_dimension!==384||e.model?.paid_api!==false||!e.r2?.compressed_sha256)throw new Error('Tier B embedding mismatch');console.log({pool:a.counts,embeddings:{rows:e.rows,split_counts:e.split_counts,r2:e.r2}});
+          NODE
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$root/tier-b-target-training-candidates.jsonl" "$root/tier-b-target-training-manifest.json" "$root/tier-b-target-embedding-manifest.json"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: materialize Tier B target training candidates" || exit 0
+          git pull --rebase origin main
+          git push origin main
