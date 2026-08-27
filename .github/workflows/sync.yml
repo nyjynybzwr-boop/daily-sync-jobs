@@ -26,7 +26,7 @@ on:
     - cron: '30 14 * * *'
 
 concurrency:
-  group: sync
+  group: "sync-${{ github.event_name }}-${{ github.event.inputs.target || github.event.schedule }}"
   cancel-in-progress: false
 
 permissions:
@@ -232,4 +232,5 @@ jobs:
       - name: Push results (M)
         if: steps.target.outputs.target == 'm'
         working-directory: work
-        run: bash scripts/ci/push.sh "data/manga/catalog" "[skip actions] data: manga catalog external sync $(TZ=Asia/Tokyo date +%F' '%H:%M)" >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Push M failed.'; exit 1)
+        run: |
+          bash scripts/ci/push.sh "data/manga/catalog" "[skip actions] data: manga catalog external sync $(TZ=Asia/Tokyo date +%F' '%H:%M)" >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Push M failed.'; exit 1)
