@@ -2,12 +2,14 @@ name: Evaluate frozen target-first v2 on fresh Shadow-v2 gold
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '*/15 * * * *'
   push:
     paths:
       - '.review-evaluation-shadow-v2-evaluate-trigger'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: review-evaluation-shadow-v2-evaluate-v2
@@ -20,6 +22,9 @@ jobs:
     env:
       VERSION: rev-eval-46255c55e8d1c5dc
     steps:
+      - name: Checkout public runner
+        uses: actions/checkout@v4
+
       - name: Checkout private source
         env:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
@@ -27,7 +32,34 @@ jobs:
           GIT_LFS_SKIP_SMUDGE: '1'
         run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
 
+      - name: Decide whether fresh Shadow-v2 is ready and unscored
+        id: gate
+        run: |
+          set -euo pipefail
+          base=work/data/research/review-evaluation-classifier/${VERSION}
+          gold=work/data/research/review-evaluation-calibration/otome-audio-otome-audio-review-evaluation-shadow-v2/human-gold
+          report="$base/shadow-v2-target-first-evaluation-report-v2.json"
+          if [ -s "$report" ]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "reason=already_scored" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          for n in 001 002 003 004; do
+            if [ ! -s "$gold/shadow-v2-gold-decisions-batch-${n}.json" ]; then
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              echo "reason=gold_incomplete" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          echo "reason=ready" >> "$GITHUB_OUTPUT"
+
+      - name: Report no-op state
+        if: steps.gate.outputs.should_run != 'true'
+        run: echo "Shadow-v2 evaluation skipped: ${{ steps.gate.outputs.reason }}"
+
       - name: Validate fresh Shadow-v2 human gold
+        if: steps.gate.outputs.should_run == 'true'
         working-directory: work
         run: |
           set -euo pipefail
@@ -35,6 +67,7 @@ jobs:
           node scripts/validate-review-evaluation-shadow-v2-gold-decisions.mjs
 
       - name: Verify pre-gold prediction provenance and fixed gates
+        if: steps.gate.outputs.should_run == 'true'
         working-directory: work
         run: |
           set -euo pipefail
@@ -51,6 +84,7 @@ jobs:
           NODE
 
       - name: Score frozen predictions against fresh gold exactly once
+        if: steps.gate.outputs.should_run == 'true'
         working-directory: work
         run: |
           set -euo pipefail
@@ -58,6 +92,7 @@ jobs:
           python scripts/evaluate-review-evaluation-shadow-v2-target-first-v2.py
 
       - name: Commit immutable evaluation result and authorization if passed
+        if: steps.gate.outputs.should_run == 'true'
         working-directory: work
         env:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
@@ -73,3 +108,22 @@ jobs:
           git reset --hard HEAD
           for attempt in 1 2 3 4 5 6; do git fetch origin main; git rebase origin/main; if git push origin HEAD:main; then exit 0; fi; sleep $((attempt * 3)); done
           exit 1
+
+      - name: Trigger full-corpus production-v2 inference when authorized
+        if: steps.gate.outputs.should_run == 'true'
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, pathlib, sys
+          p=pathlib.Path('work/data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/shadow-v2-target-first-evaluation-report-v2.json')
+          r=json.loads(p.read_text())
+          if r.get('decision',{}).get('passed') is not True:
+              print('Shadow-v2 failed fixed authorization gate; full-corpus inference will not be triggered.')
+              sys.exit(2)
+          PY
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          printf 'triggered_at=%s\nscope=target-first-v2-authorized-full-corpus\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .review-evaluation-full-corpus-v1-trigger
+          git add .review-evaluation-full-corpus-v1-trigger
+          git commit -m "reviews: trigger authorized target-first v2 full-corpus inference"
+          git push
