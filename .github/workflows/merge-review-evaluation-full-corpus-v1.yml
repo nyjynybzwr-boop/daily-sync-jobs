@@ -40,7 +40,7 @@ jobs:
         working-directory: work
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Verify production authorization
+      - name: Verify frozen target-first production authorization
         working-directory: work
         run: |
           set -euo pipefail
@@ -48,8 +48,9 @@ jobs:
           const fs=require('fs'),V='rev-eval-46255c55e8d1c5dc';
           const f=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-freeze-v1.json`,'utf8'));
           const a=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-authorization-v1.json`,'utf8'));
-          if(a.status!=='review_evaluation_production_v1_authorized_after_blind_shadow'||a.blind_shadow_passed!==true||a.freeze_payload_sha256!==f.freeze_payload_sha256) throw new Error('production authorization/freeze mismatch');
-          console.log({freeze:f.freeze_payload_sha256,authorization:a.status});
+          if(f.production_scope!=='target_first'||f.mechanisms?.standalone_output!==false||(f.pairs?.selected_pair_keys||[]).length) throw new Error('target-first freeze drift');
+          if(a.status!=='review_evaluation_production_v1_authorized_after_frozen_shadow_evaluation'||a.shadow_evaluation_passed!==true||a.strict_blind_claim!==false||a.no_post_shadow_tuning!==true||a.mechanism_output_enabled!==false||a.freeze_payload_sha256!==f.freeze_payload_sha256) throw new Error('production authorization/freeze mismatch');
+          console.log({freeze:f.freeze_payload_sha256,authorization:a.status,strict_blind_claim:a.strict_blind_claim});
           NODE
 
       - name: Download all 32 prediction shards and canonical inventory
