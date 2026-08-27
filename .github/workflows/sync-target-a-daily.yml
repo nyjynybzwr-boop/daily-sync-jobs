@@ -61,14 +61,14 @@ jobs:
           npm install --no-save playwright devalue >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Browser dependency installation failed.'; exit 1)
           npx playwright install --with-deps chromium >>/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Browser installation failed.'; exit 1)
 
-      - name: Collect Target A rankings
+      - name: Collect Target A daily ranking
         if: steps.need.outputs.needed == 'true'
         working-directory: work
         run: |
           set -euo pipefail
-          bash scripts/ci/run-a.sh >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Target A collection failed.'; exit 1)
+          timeout 12m node scripts/collect-ranking.mjs
 
-      - name: Verify today's Target A snapshot exists
+      - name: Verify today's Target A daily snapshot
         if: steps.need.outputs.needed == 'true'
         working-directory: work
         run: |
@@ -84,9 +84,38 @@ jobs:
           console.log({today,item_count:p.item_count,source_item_count:p.source_item_count,http_status:p.http_status});
           NODE
 
-      - name: Push Target A results
+      - name: Checkpoint Target A daily immediately
         if: steps.need.outputs.needed == 'true'
         working-directory: work
         run: |
           set -euo pipefail
-          bash scripts/ci/push.sh "data/raw data/labeled data/reports data/windows" "[skip actions] data: target A daily sync $(TZ=Asia/Tokyo date +%F' '%H:%M)" >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Push Target A failed.'; exit 1)
+          bash scripts/ci/push.sh "data/raw" "[skip actions] data: target A daily checkpoint $(TZ=Asia/Tokyo date +%F' '%H:%M)" >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Push Target A daily failed.'; exit 1)
+
+      - name: Analyze Target A daily
+        if: steps.need.outputs.needed == 'true'
+        working-directory: work
+        run: |
+          set -euo pipefail
+          timeout 8m node scripts/analyze-trends.mjs || { echo '::warning::Target A daily analysis timed out/failed after the raw daily checkpoint was already pushed.'; exit 0; }
+          bash scripts/ci/push.sh "data/labeled data/reports" "[skip actions] data: target A daily analysis $(TZ=Asia/Tokyo date +%F' '%H:%M)" >/tmp/step.log 2>&1 || { cat /tmp/step.log; echo '::warning::Target A daily analysis push failed; raw daily checkpoint is safe.'; exit 0; }
+
+      - name: Collect Target A week and month rankings
+        id: windows
+        if: steps.need.outputs.needed == 'true'
+        working-directory: work
+        run: |
+          set -euo pipefail
+          if timeout 25m node scripts/collect-window-rankings.mjs; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo '::warning::Target A week/month collection timed out or failed; raw daily checkpoint is safe.'
+          fi
+
+      - name: Analyze and push Target A windows
+        if: steps.need.outputs.needed == 'true' && steps.windows.outputs.ok == 'true'
+        working-directory: work
+        run: |
+          set -euo pipefail
+          timeout 8m node scripts/analyze-window-rankings.mjs || { echo '::warning::Target A window analysis timed out/failed.'; exit 0; }
+          bash scripts/ci/push.sh "data/windows" "[skip actions] data: target A windows $(TZ=Asia/Tokyo date +%F' '%H:%M)" >/tmp/step.log 2>&1 || { cat /tmp/step.log; echo '::warning::Target A window push failed.'; exit 0; }
