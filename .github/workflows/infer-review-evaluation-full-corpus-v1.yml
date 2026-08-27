@@ -36,17 +36,18 @@ jobs:
           GIT_LFS_SKIP_SMUDGE: '1'
         run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
 
-      - name: Verify production authorization and freeze
+      - name: Verify frozen target-first authorization and freeze
         working-directory: work
         run: |
           set -euo pipefail
           node - <<'NODE'
-          const fs=require('fs'),crypto=require('crypto'),V='rev-eval-46255c55e8d1c5dc';
+          const fs=require('fs'),V='rev-eval-46255c55e8d1c5dc';
           const f=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-freeze-v1.json`,'utf8'));
           const a=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-authorization-v1.json`,'utf8'));
-          if(f.status!=='review_evaluation_production_v1_frozen_before_shadow'||a.status!=='review_evaluation_production_v1_authorized_after_blind_shadow'||a.blind_shadow_passed!==true) throw new Error('production not authorized');
+          if(f.status!=='review_evaluation_production_v1_frozen_before_shadow'||f.production_scope!=='target_first'||f.immutable_after_shadow_open!==true||f.mechanisms?.standalone_output!==false||(f.pairs?.selected_pair_keys||[]).length) throw new Error('target-first production freeze drift');
+          if(a.status!=='review_evaluation_production_v1_authorized_after_frozen_shadow_evaluation'||a.shadow_evaluation_passed!==true||a.strict_blind_claim!==false||a.no_post_shadow_tuning!==true||a.mechanism_output_enabled!==false) throw new Error('production not authorized by frozen Shadow evaluation');
           if(a.freeze_payload_sha256!==f.freeze_payload_sha256) throw new Error('freeze/authorization mismatch');
-          console.log({freeze:f.freeze_payload_sha256,shadow:a.shadow_metrics||a.metrics||null});
+          console.log({freeze:f.freeze_payload_sha256,authorization:a.status,strict_blind_claim:a.strict_blind_claim});
           NODE
 
       - name: Setup Node
@@ -81,15 +82,6 @@ jobs:
           if(sha(`.tmp/review-evaluation-classifier/${V}/v2/training-embeddings-v2.jsonl.gz`)!==em.r2.compressed_sha256) throw new Error('base embedding SHA drift');
           NODE
 
-      - name: Materialize frozen supplement embeddings
-        working-directory: work
-        run: |
-          set -euo pipefail
-          node scripts/validate-review-evaluation-mechanism-boundary-supplement-decisions.mjs >/dev/null
-          node scripts/validate-review-evaluation-mechanism-active-boundary-supplement-v2-decisions.mjs >/dev/null
-          node scripts/materialize-review-evaluation-mechanism-boundary-embeddings-v1.mjs >/dev/null
-          node scripts/materialize-review-evaluation-mechanism-active-boundary-embeddings-v2.mjs >/dev/null
-
       - name: Materialize local E5 shard embeddings
         working-directory: work
         run: |
@@ -105,7 +97,7 @@ jobs:
       - name: Install classifier dependencies
         run: python -m pip install --disable-pip-version-check numpy scikit-learn
 
-      - name: Run authorized frozen shard inference
+      - name: Run authorized frozen target-first shard inference
         working-directory: work
         run: |
           set -euo pipefail
