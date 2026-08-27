@@ -3,16 +3,22 @@ name: Daily Target A sync
 on:
   workflow_dispatch:
   schedule:
-    # Primary run at 23:25 JST, plus three unattended self-healing retries
-    # spaced an hour apart (00:25/01:25/02:25 JST). Every run first checks
-    # whether today's data/raw/<date>.json already exists and no-ops if so,
-    # so a healthy primary run makes the retries free. If DLsite or the
-    # runner is transiently unavailable at 23:25, this recovers automatically
-    # overnight without anyone needing to be awake to notice or re-dispatch it.
+    # Primary run at 23:25 JST, plus one unattended self-healing retry at
+    # 23:40 JST. Every run first checks whether today's
+    # data/raw/<date>.json already exists and no-ops if so, so a healthy
+    # primary run makes the retry free.
+    #
+    # Both crons MUST stay before midnight JST. "today" below is whatever
+    # the JST wall clock says when the job runs, not the date the primary
+    # run was trying to collect for - once JST midnight has passed this
+    # target's day-ranking scrape reflects the NEW day (DLsite's "day"
+    # ranking has no way to ask for a past day), so a post-midnight run
+    # would silently collect and label the wrong day's data as a "recovery"
+    # of the missed one instead of actually filling the gap. A retry after
+    # midnight only makes sense once collect-ranking.mjs can be told which
+    # calendar day to target explicitly - it can't today.
     - cron: '25 14 * * *'
-    - cron: '25 15 * * *'
-    - cron: '25 16 * * *'
-    - cron: '25 17 * * *'
+    - cron: '40 14 * * *'
   push:
     paths:
       - '.sync-target-a-trigger'

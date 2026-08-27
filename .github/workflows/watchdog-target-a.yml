@@ -7,15 +7,19 @@ name: Target A freshness watchdog
 # real work, just checks that today's checkpoint landed, and fails loudly
 # (triggering GitHub's own scheduled-workflow-failure notification) if not.
 #
-# Deliberately scheduled AFTER sync-target-a-daily.yml's last self-healing
-# retry (23:25/00:25/01:25/02:25 JST), not right after the primary run: a
-# human does not need to be awake for the system to recover from a
-# transient failure, only to find out once every automatic retry has
-# already been exhausted and something actually needs a person's attention.
+# Scheduled AFTER sync-target-a-daily.yml's retry (23:25 then 23:40 JST),
+# not right after the primary run, so a transient failure gets one
+# unattended second chance before anyone is bothered.
+#
+# MUST stay before midnight JST, same reasoning as sync-target-a-daily.yml:
+# "today" here is the JST wall-clock date when THIS job runs. Past
+# midnight it would be checking for a file that (correctly) doesn't exist
+# yet for the new day - a guaranteed false alarm every single day, not a
+# real check of whether last night's collection succeeded.
 on:
   workflow_dispatch:
   schedule:
-    - cron: '50 17 * * *'
+    - cron: '55 14 * * *'
 
 permissions:
   contents: read
