@@ -1,0 +1,2 @@
+triggered_at=2026-08-27T21:49:00+09:00
+reason=single narrow calibration-alignment check; gold-target-conditioned calibration precision floor 0.80, min predictions 5, final aggregate gate unchanged
