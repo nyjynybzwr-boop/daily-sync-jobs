@@ -1,0 +1,118 @@
+name: Finalize review evaluation classifier v2
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/finalize-review-evaluation-classifier-v2.yml'
+      - '.review-evaluation-classifier-v2-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-classifier-v2
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Node dependencies
+        working-directory: work
+        run: npm ci --ignore-scripts
+
+      - name: Build Tier A v2 pool and leakage-safe plan
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/build-review-evaluation-classifier-training-pool-v2.mjs
+          node --check scripts/build-review-evaluation-classifier-plan-v2.mjs
+          node --check scripts/materialize-review-evaluation-training-embeddings-v2.mjs
+          python3 -m py_compile scripts/fit-review-evaluation-logistic-classifier-v2.py
+          node scripts/build-review-evaluation-classifier-training-pool-v2.mjs
+          node scripts/build-review-evaluation-classifier-plan-v2.mjs
+          node - <<'NODE'
+          const fs=require('fs');const b='data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc';
+          const m=JSON.parse(fs.readFileSync(`${b}/training-pool-v2-manifest.json`));const p=JSON.parse(fs.readFileSync(`${b}/classifier-plan-v2.json`));
+          if(m.status!=='classifier_training_pool_v2_ready'||p.status!=='local_classifier_plan_v2_ready_to_fit'||p.ready_to_fit!==true)throw new Error('v2 readiness failed');
+          if(m.policy?.tier_b_discovery48!=='rejected after precision regression in frozen development A/B; not pooled')throw new Error('Tier B policy drift');
+          if(p.data_policy?.shadow_gold_or_predictions_used!==false||p.split?.shadow_used_for_split_or_threshold!==false)throw new Error('shadow seal violated');
+          console.log({rows:m.counts.training_rows,split:p.split.row_counts,target:p.staged_tasks.find(x=>x.task==='target').eligible_labels.length,mechanism:p.staged_tasks.find(x=>x.task==='mechanism').eligible_labels.length});
+          NODE
+
+      - name: Materialize free local E5 embeddings v2
+        working-directory: work
+        run: node scripts/materialize-review-evaluation-training-embeddings-v2.mjs
+
+      - name: Compress and upload v2 embeddings to R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          src=.tmp/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/v2/training-embeddings-v2.jsonl
+          gz=${src}.gz
+          gzip -9 -c "$src" > "$gz"
+          sha=$(sha256sum "$gz" | awk '{print $1}')
+          bytes=$(stat -c%s "$gz")
+          mf=data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/training-embedding-manifest-v2.json
+          node - "$mf" "$sha" "$bytes" <<'NODE'
+          const fs=require('fs');const [f,sha,bytes]=process.argv.slice(2);const m=JSON.parse(fs.readFileSync(f));m.r2.compressed_sha256=sha;m.r2.compressed_bytes=Number(bytes);fs.writeFileSync(f,JSON.stringify(m,null,2)+'\n');
+          NODE
+          key=review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/training-v2/training-embeddings-v2.jsonl.gz
+          npx --yes wrangler@latest r2 object put "melosignal-data/${key}" --file "$gz" --remote >/dev/null
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install free local classifier dependencies
+        run: python -m pip install --disable-pip-version-check numpy scikit-learn
+
+      - name: Fit v2 classifier and evaluate internal validation
+        working-directory: work
+        run: python scripts/fit-review-evaluation-logistic-classifier-v2.py
+
+      - name: Verify zero-cost and sealed-shadow contract
+        working-directory: work
+        run: |
+          set -euo pipefail
+          b=data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc
+          node - "$b/logistic-classifier-model-v2.json" "$b/logistic-internal-validation-report-v2.json" <<'NODE'
+          const fs=require('fs');const [mf,rf]=process.argv.slice(2);const m=JSON.parse(fs.readFileSync(mf)),r=JSON.parse(fs.readFileSync(rf));
+          if(m.algorithm?.paid_api!==false||m.embedding?.paid_api!==false)throw new Error('paid API contract violated');
+          if(m.training?.shadow_used!==false||r.shadow_v1_opened!==false)throw new Error('shadow seal violated');
+          if(r.split?.unit!=='product_id')throw new Error('split unit drift');
+          console.log({status:r.status,gates:r.gates,classification:r.validation.classification,target:r.validation.target_end_to_end,mechanism:r.validation.mechanism_end_to_end});
+          NODE
+          if grep -n -E 'shadow-calibration/.*/(human-gold|predictions)|shadow-predictions|human-gold' scripts/fit-review-evaluation-logistic-classifier-v2.py; then echo 'v2 fit script references sealed shadow label assets' >&2; exit 1; fi
+
+      - name: Commit compact v2 training/model assets
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          b=data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$b/training-pool-v2.jsonl" "$b/training-pool-v2-manifest.json" "$b/classifier-plan-v2.json" "$b/training-embedding-manifest-v2.json" "$b/logistic-classifier-model-v2.json" "$b/logistic-internal-validation-report-v2.json"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: fit Tier A v2 classifier and validate internally" || exit 0
+          git pull --rebase origin main
+          git push origin main
