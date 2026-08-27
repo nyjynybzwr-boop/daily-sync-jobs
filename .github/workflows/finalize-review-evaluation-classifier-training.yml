@@ -1,0 +1,96 @@
+name: Finalize review evaluation classifier training
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.review-evaluation-classifier-training-finalize-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-classifier-training-finalize
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Require all eight blind decision batches
+        working-directory: work
+        run: |
+          set -euo pipefail
+          dir="data/research/review-evaluation-training/rev-eval-46255c55e8d1c5dc/representative-supplement-v1/annotation"
+          for n in 001 002 003 004 005 006 007 008; do
+            test -s "$dir/training-supplement-gold-decisions-batch-${n}.json" || { echo "missing completed decision batch ${n}" >&2; exit 1; }
+          done
+
+      - name: Validate representative supplement gold
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/validate-review-evaluation-training-supplement-decisions.mjs
+          node scripts/validate-review-evaluation-training-supplement-decisions.mjs
+
+      - name: Freeze current Tier A pool and classifier plan
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/build-review-evaluation-classifier-training-pool.mjs
+          node --check scripts/plan-review-evaluation-local-classifier.mjs
+          node --check scripts/audit-review-evaluation-tier-b-training-candidates.mjs
+          node scripts/build-review-evaluation-classifier-training-pool.mjs
+          node scripts/plan-review-evaluation-local-classifier.mjs
+          node scripts/audit-review-evaluation-tier-b-training-candidates.mjs
+
+      - name: Verify final training readiness without touching shadow labels
+        working-directory: work
+        run: |
+          set -euo pipefail
+          ann="data/research/review-evaluation-training/rev-eval-46255c55e8d1c5dc/representative-supplement-v1/annotation"
+          root="data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc"
+          node - "$ann/training-supplement-gold-validation-summary.json" "$root/training-pool-manifest.json" "$root/classifier-plan.json" "$root/tier-b-admission-audit.json" <<'NODE'
+          const fs=require('fs');
+          const s=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          const m=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+          const p=JSON.parse(fs.readFileSync(process.argv[4],'utf8'));
+          const b=JSON.parse(fs.readFileSync(process.argv[5],'utf8'));
+          if(s.status!=='validated_representative_training_supplement_gold'||s.counts?.complete!==true||s.counts?.packet_rows!==800) throw new Error(`supplement invalid ${s.status}`);
+          if(m.status!=='classifier_training_pool_ready') throw new Error(`training pool not ready ${m.status}`);
+          if(p.status!=='local_classifier_plan_ready_to_fit'||p.ready_to_fit!==true||p.blockers?.length) throw new Error(`classifier plan blocked ${p.status}`);
+          if(b.counts?.shadow_product_overlap!==0) throw new Error('Tier B shadow overlap');
+          if(m.policy?.shadow_usage!=='product_id exclusion list only; no shadow gold or predictions are read') throw new Error('shadow seal missing');
+          console.log({supplement:s.counts,training_pool:m.counts,plan:{status:p.status,split:p.split,target:p.staged_tasks.find(x=>x.task==='target'),mechanism:p.staged_tasks.find(x=>x.task==='mechanism')},tier_b:b.counts});
+          NODE
+          if grep -R -E -n 'shadow-calibration/.*/(human-gold|predictions)|shadow-predictions|human-gold' scripts/build-review-evaluation-classifier-training-pool.mjs scripts/plan-review-evaluation-local-classifier.mjs scripts/audit-review-evaluation-tier-b-training-candidates.mjs; then
+            echo 'training finalizer references sealed shadow label assets' >&2; exit 1
+          fi
+
+      - name: Commit validated gold and frozen training plan to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          ann="data/research/review-evaluation-training/rev-eval-46255c55e8d1c5dc/representative-supplement-v1/annotation"
+          root="data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$ann/training-supplement-gold-decisions.jsonl" "$ann/training-supplement-gold-validation-summary.json" "$root/training-pool.jsonl" "$root/training-pool-manifest.json" "$root/classifier-plan.json" "$root/tier-b-admission-audit.json"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: finalize classifier training gold and plan" || exit 0
+          git pull --rebase origin main
+          git push origin main
