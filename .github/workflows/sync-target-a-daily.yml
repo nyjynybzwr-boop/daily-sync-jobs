@@ -3,7 +3,16 @@ name: Daily Target A sync
 on:
   workflow_dispatch:
   schedule:
+    # Primary run at 23:25 JST, plus three unattended self-healing retries
+    # spaced an hour apart (00:25/01:25/02:25 JST). Every run first checks
+    # whether today's data/raw/<date>.json already exists and no-ops if so,
+    # so a healthy primary run makes the retries free. If DLsite or the
+    # runner is transiently unavailable at 23:25, this recovers automatically
+    # overnight without anyone needing to be awake to notice or re-dispatch it.
     - cron: '25 14 * * *'
+    - cron: '25 15 * * *'
+    - cron: '25 16 * * *'
+    - cron: '25 17 * * *'
   push:
     paths:
       - '.sync-target-a-trigger'
