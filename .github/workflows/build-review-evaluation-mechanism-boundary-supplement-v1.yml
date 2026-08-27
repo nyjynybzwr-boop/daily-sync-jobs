@@ -1,0 +1,111 @@
+name: Build review evaluation mechanism-boundary supplement v1
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-review-evaluation-mechanism-boundary-supplement-v1.yml'
+      - '.review-evaluation-mechanism-boundary-supplement-v1-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-mechanism-boundary-supplement-v1
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      R2_BUCKET_NAME: melosignal-data
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify builder and sealed-shadow inputs
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/build-review-evaluation-mechanism-boundary-supplement-v1.mjs
+          node - <<'NODE'
+          const fs=require('fs');
+          const inv=JSON.parse(fs.readFileSync('data/research/review-evaluation-full-corpus/rev-eval-46255c55e8d1c5dc/inventory/inventory-manifest.json','utf8'));
+          const v4=JSON.parse(fs.readFileSync('data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/target-gated-mechanism-rbf-development-report-v4.json','utf8'));
+          if(inv.analysis_version_id!=='rev-eval-46255c55e8d1c5dc')throw new Error('inventory version drift');
+          if(v4.shadow_v1_opened!==false)throw new Error('shadow already opened');
+          if(v4.gates?.target_precision!==true||v4.gates?.mechanism_precision!==false)throw new Error('v4 diagnosis drift');
+          console.log({unique:inv.artifacts.unique_evidence.rows,v4_status:v4.status});
+          NODE
+          if grep -n -E 'shadow-calibration/.*/(human-gold|predictions)|shadow-predictions|human-gold' scripts/build-review-evaluation-mechanism-boundary-supplement-v1.mjs; then
+            echo 'builder references sealed shadow labels' >&2; exit 1
+          fi
+
+      - name: Download canonical evidence inventory from R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          dir=.tmp/review-evaluation-inventory/rev-eval-46255c55e8d1c5dc
+          mkdir -p "$dir"
+          npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/review-evaluation-full-corpus/rev-eval-46255c55e8d1c5dc/inventory/unique-evidence.jsonl.gz" --file "$dir/unique-evidence.jsonl.gz" --remote >/dev/null
+          npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/review-evaluation-full-corpus/rev-eval-46255c55e8d1c5dc/inventory/evidence-occurrences.jsonl.gz" --file "$dir/evidence-occurrences.jsonl.gz" --remote >/dev/null
+          node - <<'NODE'
+          const fs=require('fs'),crypto=require('crypto');
+          const m=JSON.parse(fs.readFileSync('data/research/review-evaluation-full-corpus/rev-eval-46255c55e8d1c5dc/inventory/inventory-manifest.json','utf8'));
+          for(const [k,a] of Object.entries(m.artifacts)){
+            const file=`.tmp/review-evaluation-inventory/rev-eval-46255c55e8d1c5dc/${k==='unique_evidence'?'unique-evidence.jsonl.gz':'evidence-occurrences.jsonl.gz'}`;
+            const sha=crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+            if(sha!==a.sha256)throw new Error(`${k} sha mismatch`);
+          }
+          console.log('inventory provenance ok');
+          NODE
+
+      - name: Build focused 300-row blind packet
+        working-directory: work
+        run: node scripts/build-review-evaluation-mechanism-boundary-supplement-v1.mjs
+
+      - name: Verify blindness and quotas
+        working-directory: work
+        run: |
+          set -euo pipefail
+          root=data/research/review-evaluation-training/rev-eval-46255c55e8d1c5dc/mechanism-boundary-supplement-v1
+          node - "$root/annotation/mechanism-boundary-supplement-gold-packet.json" "$root/mechanism-boundary-supplement-selection-audit.json" <<'NODE'
+          const fs=require('fs');const [packetPath,auditPath]=process.argv.slice(2);
+          const p=JSON.parse(fs.readFileSync(packetPath,'utf8')),a=JSON.parse(fs.readFileSync(auditPath,'utf8'));
+          if(p.rows.length!==300||p.counts.batches!==3||p.counts.lanes!==2)throw new Error('packet counts drift');
+          if(Object.keys(a.lanes||{}).length!==2)throw new Error('lane count drift');
+          for(const [k,v] of Object.entries(a.lanes||{}))if(v.selected_rows!==150)throw new Error(`${k}: ${v.selected_rows}`);
+          if(p.anti_leakage?.excludes_targeted_supplement_v1_products!==true||p.anti_leakage?.shadow_gold_and_predictions_must_not_be_inspected!==true)throw new Error('anti leakage flags missing');
+          for(const r of p.rows)for(const forbidden of ['product_id','review_ref','title','circle','lane_key','rating','heuristic_polarity','facets'])if(forbidden in r)throw new Error(`packet leak ${forbidden} ${r.row_id}`);
+          console.log({rows:p.rows.length,batches:p.counts.batches,lanes:a.lanes,products:a.counts.selected_products});
+          NODE
+          if grep -E -n 'https?://|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$root/annotation/mechanism-boundary-supplement-gold-packet.json"; then
+            echo 'privacy verifier: URL/email-like text leaked' >&2; exit 1
+          fi
+
+      - name: Commit packet to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          root=data/research/review-evaluation-training/rev-eval-46255c55e8d1c5dc/mechanism-boundary-supplement-v1
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$root"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: build mechanism-boundary blind supplement v1" || exit 0
+          git pull --rebase origin main
+          git push origin main
