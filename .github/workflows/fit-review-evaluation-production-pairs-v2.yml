@@ -1,0 +1,82 @@
+name: Fit review evaluation production pairs v2
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/fit-review-evaluation-production-pairs-v2.yml'
+      - '.review-evaluation-production-pairs-v2-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-production-pairs-v2
+  cancel-in-progress: false
+
+jobs:
+  fit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install classifier dependencies
+        run: python -m pip install --disable-pip-version-check numpy scikit-learn
+
+      - name: Download frozen v2 E5 embeddings
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          d=.tmp/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/v2
+          mkdir -p "$d"
+          key=review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/training-v2/training-embeddings-v2.jsonl.gz
+          npx --yes wrangler@latest r2 object get "melosignal-data/${key}" --file "$d/training-embeddings-v2.jsonl.gz" --remote >/dev/null
+          gzip -dc "$d/training-embeddings-v2.jsonl.gz" > "$d/training-embeddings-v2.jsonl"
+          node - <<'NODE'
+          const fs=require('fs'),crypto=require('crypto');const b='data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc';const m=JSON.parse(fs.readFileSync(`${b}/training-embedding-manifest-v2.json`));const f='.tmp/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/v2/training-embeddings-v2.jsonl.gz';const sha=crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');if(m.rows!==3528||m.vector_dimension!==384||m.r2?.compressed_sha256!==sha)throw new Error('v2 embedding provenance mismatch');if(m.model?.paid_api!==false)throw new Error('paid embedding forbidden');console.log({rows:m.rows,dimension:m.vector_dimension,sha});
+          NODE
+
+      - name: Fit seven frozen production pairs directly
+        working-directory: work
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/fit-review-evaluation-production-pair-classifier-v2.py
+          python scripts/fit-review-evaluation-production-pair-classifier-v2.py
+
+      - name: Verify sealed shadow and pair-policy contract
+        working-directory: work
+        run: |
+          set -euo pipefail
+          b=data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc
+          node - "$b/production-pair-classifier-model-v2.json" "$b/production-pair-development-report-v2.json" <<'NODE'
+          const fs=require('fs');const [mf,rf]=process.argv.slice(2);const m=JSON.parse(fs.readFileSync(mf)),r=JSON.parse(fs.readFileSync(rf));if(m.paid_api!==false||m.shadow_used!==false||r.shadow_v1_opened!==false)throw new Error('zero-cost/shadow seal violation');if(Object.keys(m.pairs||{}).length!==7)throw new Error('production pair policy drift');console.log({status:r.status,selected:r.selected_pair_keys,aggregate:r.selected_aggregate,metrics:r.pair_metrics});
+          NODE
+          if grep -n -E 'shadow-calibration/.*/(human-gold|predictions)|shadow-predictions|human-gold' scripts/fit-review-evaluation-production-pair-classifier-v2.py; then echo 'direct-pair script references sealed shadow labels' >&2; exit 1; fi
+
+      - name: Commit compact direct-pair model and development report
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          b=data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$b/production-pair-classifier-model-v2.json" "$b/production-pair-development-report-v2.json"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: fit direct production pair classifier v2" || exit 0
+          git pull --rebase origin main
+          git push origin main
