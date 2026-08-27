@@ -1,0 +1,50 @@
+name: Verify review evaluation production-v2 pipeline wiring
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.review-evaluation-production-v2-verify-trigger'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Syntax check production-v2 scripts
+        working-directory: work
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/infer-review-evaluation-full-corpus-shard-v1.py
+          python -m py_compile scripts/evaluate-review-evaluation-shadow-v2-target-first-v2.py
+          node --check scripts/merge-review-evaluation-full-corpus-shards-v1.mjs
+          node --check scripts/aggregate-review-evaluation-full-corpus-v1.mjs
+          node --check scripts/validate-review-evaluation-shadow-v2-gold-decisions.mjs
+
+      - name: Verify immutable v2 wiring inputs without opening human gold or prediction rows
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs'),V='rev-eval-46255c55e8d1c5dc';
+          const expected=['acting_performance','breath_vocalization','dialogue_writing','voice_quality'];
+          const f=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-freeze-v2.json`,'utf8'));
+          const p=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/shadow-v2-target-first-prediction-manifest-v2.json`,'utf8'));
+          const i=JSON.parse(fs.readFileSync('data/research/review-evaluation-calibration/otome-audio-otome-audio-review-evaluation-shadow-v2/human-gold/index.json','utf8'));
+          if(f.status!=='review_evaluation_production_v2_frozen_before_new_disjoint_holdout') throw new Error('freeze status drift');
+          if(JSON.stringify(f.targets?.selected_target_keys)!==JSON.stringify(expected)) throw new Error('target allowlist drift');
+          if(p.status!=='shadow_v2_target_first_predictions_frozen_before_human_gold'||p.inputs?.rows!==452) throw new Error('prediction manifest drift');
+          if(p.strict_blind_sequence?.human_gold_decisions_read!==false) throw new Error('pre-gold provenance drift');
+          if(i.status!=='shadow_v2_gold_batch_index'||i.counts?.evidence_rows!==452||i.batches?.length!==4) throw new Error('holdout index drift');
+          console.log({freeze:f.freeze_payload_sha256,targets:expected,shadow_rows:i.counts.evidence_rows,predictions:p.outputs?.predictions_sha256});
+          NODE
