@@ -3,7 +3,7 @@ name: Daily Target A sync
 on:
   workflow_dispatch:
   schedule:
-    - cron: '5 14 * * *'
+    - cron: '25 14 * * *'
   push:
     paths:
       - '.sync-target-a-trigger'
@@ -31,12 +31,29 @@ jobs:
           set -euo pipefail
           git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
 
+      - name: Check whether today's Target A snapshot is missing
+        id: need
+        working-directory: work
+        run: |
+          set -euo pipefail
+          today=$(TZ=Asia/Tokyo date +%F)
+          echo "today=$today" >> "$GITHUB_OUTPUT"
+          if [ -s "data/raw/${today}.json" ]; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "Target A ${today} already exists; fallback is a no-op."
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "Target A ${today} is missing; fallback will collect it."
+          fi
+
       - name: Setup Node
+        if: steps.need.outputs.needed == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
       - name: Install dependencies and browser
+        if: steps.need.outputs.needed == 'true'
         working-directory: work
         run: |
           set -euo pipefail
@@ -45,16 +62,18 @@ jobs:
           npx playwright install --with-deps chromium >>/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Browser installation failed.'; exit 1)
 
       - name: Collect Target A rankings
+        if: steps.need.outputs.needed == 'true'
         working-directory: work
         run: |
           set -euo pipefail
           bash scripts/ci/run-a.sh >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Target A collection failed.'; exit 1)
 
       - name: Verify today's Target A snapshot exists
+        if: steps.need.outputs.needed == 'true'
         working-directory: work
         run: |
           set -euo pipefail
-          today=$(TZ=Asia/Tokyo date +%F)
+          today="${{ steps.need.outputs.today }}"
           test -s "data/raw/${today}.json" || { echo "missing data/raw/${today}.json" >&2; exit 1; }
           node - "$today" <<'NODE'
           const fs=require('fs');const today=process.argv[2];const p=JSON.parse(fs.readFileSync(`data/raw/${today}.json`,'utf8'));
@@ -66,6 +85,7 @@ jobs:
           NODE
 
       - name: Push Target A results
+        if: steps.need.outputs.needed == 'true'
         working-directory: work
         run: |
           set -euo pipefail
