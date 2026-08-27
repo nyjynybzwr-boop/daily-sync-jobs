@@ -1,0 +1,77 @@
+name: Smoke review evaluation local embedding
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/smoke-review-evaluation-local-embedding.yml'
+      - '.review-evaluation-local-embedding-smoke-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-local-embedding-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HF_HOME: ${{ github.workspace }}/.cache/huggingface
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: work/package-lock.json
+
+      - name: Install local embedding dependency
+        working-directory: work
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Smoke test local multilingual E5
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/smoke-review-evaluation-local-embedding.mjs
+          node scripts/smoke-review-evaluation-local-embedding.mjs
+
+      - name: Verify zero-cost evidence-only embedding result
+        working-directory: work
+        run: |
+          set -euo pipefail
+          f="data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/embedding-smoke.json"
+          test -s "$f"
+          node - "$f" <<'NODE'
+          const fs=require('fs');
+          const x=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(x.status!=='local_e5_embedding_smoke_passed') throw new Error(`bad status ${x.status}`);
+          if(x.model!=='Xenova/multilingual-e5-small'||x.paid_api!==false) throw new Error('unexpected model/provider');
+          if(JSON.stringify(x.model_input_fields)!==JSON.stringify(['evidence_text'])) throw new Error('model input boundary changed');
+          if(x.vector_dimension!==384) throw new Error(`unexpected E5 dimension ${x.vector_dimension}`);
+          console.log({status:x.status,model:x.model,sample_rows:x.sample_rows,vector_dimension:x.vector_dimension,max_normalization_error:x.max_normalization_error});
+          NODE
+
+      - name: Commit smoke result to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          f="data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/embedding-smoke.json"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$f"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: verify local E5 embedding runtime" || exit 0
+          git pull --rebase origin main
+          git push origin main
