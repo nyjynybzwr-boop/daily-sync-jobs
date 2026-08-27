@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
 
+# 2026-08-28: rerun after blind-gold packet/decision/provenance join fix.
 jobs:
   audit:
     runs-on: ubuntu-latest
