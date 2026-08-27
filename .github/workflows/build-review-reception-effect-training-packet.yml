@@ -1,0 +1,65 @@
+name: Build review reception-effect training packet
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-review-reception-effect-training-packet.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build blind packet
+        working-directory: work
+        run: node scripts/build-review-reception-effect-training-packet.mjs
+
+      - name: Verify packet
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const p='data/research/review-reception-profile/training-effect-v1/blind-annotation-packet-v1.json';
+          const a='data/research/review-reception-profile/training-effect-v1/selection-audit-v1.json';
+          const packet=JSON.parse(fs.readFileSync(p,'utf8'));
+          const audit=JSON.parse(fs.readFileSync(a,'utf8'));
+          if(packet.status!=='blind_reception_effect_annotation_packet_v1') throw new Error('bad packet status');
+          if(audit.status!=='reception_effect_training_selection_audit_not_model_input') throw new Error('bad audit status');
+          if(packet.rows.length!==audit.counts.selected_rows) throw new Error('packet/audit row mismatch');
+          if(new Set(audit.rows.map(r=>r.product_id)).size!==audit.rows.length) throw new Error('product duplication in packet');
+          if(audit.counts.parse_errors!==0) throw new Error(`parse errors ${audit.counts.parse_errors}`);
+          console.log(JSON.stringify(audit.counts,null,2));
+          NODE
+
+      - name: Commit packet to private source
+        working-directory: work
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/research/review-reception-profile/training-effect-v1/blind-annotation-packet-v1.json data/research/review-reception-profile/training-effect-v1/selection-audit-v1.json
+          if git diff --cached --quiet; then
+            echo 'No changes.'
+            exit 0
+          fi
+          git commit -m '[CF-Pages-Skip] [skip actions] reviews: build reception-effect blind training packet'
+          git pull --rebase origin main
+          git push origin HEAD:main
