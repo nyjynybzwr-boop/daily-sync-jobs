@@ -1,0 +1,95 @@
+name: Fit review evaluation local classifier
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/fit-review-evaluation-local-classifier.yml'
+      - '.review-evaluation-local-classifier-fit-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-local-classifier-fit
+  cancel-in-progress: false
+
+jobs:
+  fit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download frozen training embeddings from R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc
+          key=review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/training/training-embeddings.jsonl.gz
+          npx --yes wrangler r2 object get "melosignal-data/${key}" --file .tmp/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/training-embeddings.jsonl.gz --remote
+          gzip -dc .tmp/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/training-embeddings.jsonl.gz > .tmp/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/training-embeddings.jsonl
+
+      - name: Verify embedding provenance
+        working-directory: work
+        run: |
+          set -euo pipefail
+          mf=data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/training-embedding-manifest.json
+          test -s "$mf"
+          node - "$mf" .tmp/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/training-embeddings.jsonl.gz <<'NODE'
+          const fs=require('fs'),crypto=require('crypto'); const [mf,gz]=process.argv.slice(2); const m=JSON.parse(fs.readFileSync(mf,'utf8')); const b=fs.readFileSync(gz);
+          const sha=crypto.createHash('sha256').update(b).digest('hex');
+          if(m.status!=='local_training_embeddings_materialized'||m.rows!==2931||m.r2?.compressed_sha256!==sha) throw new Error('training embedding provenance mismatch');
+          if(m.model?.paid_api!==false) throw new Error('paid embedding provider not allowed');
+          console.log({status:m.status,rows:m.rows,dimension:m.vector_dimension,compressed_sha256:sha});
+          NODE
+
+      - name: Fit and internally validate classifier
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/fit-review-evaluation-local-classifier.mjs
+          node scripts/fit-review-evaluation-local-classifier.mjs
+
+      - name: Verify shadow remains sealed
+        working-directory: work
+        run: |
+          set -euo pipefail
+          r=data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/internal-validation-report.json
+          m=data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/local-classifier-model.json
+          node - "$r" "$m" <<'NODE'
+          const fs=require('fs'); const r=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),m=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+          if(r.shadow_v1_opened!==false||m.training?.shadow_used!==false) throw new Error('shadow seal violated');
+          if(r.split?.validation!==421||m.training?.validation_rows!==421) throw new Error('validation split drift');
+          console.log({status:r.status,gates:r.gates,classification:r.validation.classification,target:r.validation.target_end_to_end,mechanism:r.validation.mechanism_end_to_end});
+          NODE
+          if grep -n -E 'shadow-calibration/.*/(human-gold|predictions)|shadow-predictions|human-gold' scripts/fit-review-evaluation-local-classifier.mjs; then
+            echo 'fit script references sealed shadow label assets' >&2; exit 1
+          fi
+
+      - name: Commit compact model and internal validation report
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          root=data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$root/local-classifier-model.json" "$root/internal-validation-report.json"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: fit local classifier and validate internally" || exit 0
+          git pull --rebase origin main
+          git push origin main
