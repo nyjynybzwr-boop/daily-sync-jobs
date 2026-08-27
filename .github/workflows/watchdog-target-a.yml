@@ -1,0 +1,36 @@
+name: Target A freshness watchdog
+
+# Independent of sync-target-a-daily.yml on purpose: that job already fails
+# loudly when it runs and collection genuinely fails, but it cannot detect
+# itself never being invoked at all (Actions quota exhaustion, a scheduler
+# outage, workflow file breakage). This is a dead-man's-switch: it does no
+# real work, just checks that today's checkpoint landed, and fails loudly
+# (triggering GitHub's own scheduled-workflow-failure notification) if not.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '50 14 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check today's Target A daily snapshot exists
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          today=$(TZ=Asia/Tokyo date +%F)
+          status=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: token ${SYNC_TOKEN}" \
+            "https://api.github.com/repos/${SOURCE_REPO}/contents/data/raw/${today}.json")
+          if [ "$status" != "200" ]; then
+            echo "::error::Target A daily snapshot data/raw/${today}.json is missing (HTTP $status). sync-target-a-daily.yml likely never ran today, or ran and failed silently."
+            exit 1
+          fi
+          echo "Target A daily snapshot for ${today} confirmed present."
