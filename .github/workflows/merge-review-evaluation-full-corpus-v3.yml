@@ -141,6 +141,25 @@ jobs:
           if(m.interpretation?.classification_output_enabled!==false||m.interpretation?.polarity_output_enabled!==false||m.interpretation?.mechanism_output_enabled!==false||m.interpretation?.pair_output_enabled!==false) throw new Error('work-detail non-target output drift');
           NODE
 
+      - name: Preflight full production site with target-only v3 payloads
+        working-directory: work
+        run: |
+          set -euo pipefail
+          npm run build:site
+          test -s site/data/review-evaluation/market-summary-v3.json
+          test -s site/data/review-evaluation/manifest.json
+          test "$(find site/data/review-evaluation -maxdepth 1 -name 'works-*.json' | wc -l)" -eq 32
+          grep -q 'id="reviewEvaluationLink"' site/index.html
+          grep -q 'review-evaluation-work-detail.js' site/index.html
+          grep -q 'review-evaluation-work-detail.css' site/index.html
+          grep -q "review_evaluation_target_only_market_summary_v3_ready" site/data/review-evaluation/market-summary-v3.json
+          grep -q "review_evaluation_work_detail_web_payload_v3_ready" site/data/review-evaluation/manifest.json
+          if find site/data/review-evaluation -maxdepth 1 \( -name 'market-summary-v2.json' -o -name '*production-pairs*' \) | grep -q .; then
+            echo 'stale/non-target review payload leaked into production site' >&2
+            exit 1
+          fi
+          echo 'Production-v3 site preflight passed: market navigation live, work-detail shards present, target-only contract preserved.'
+
       - name: Upload merged production-v3 target-only outputs to R2
         working-directory: work
         env:
