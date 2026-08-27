@@ -1,0 +1,206 @@
+name: Build review evaluation training foundation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-review-evaluation-training-foundation.yml'
+      - '.review-evaluation-training-foundation-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-training-foundation
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      R2_BUCKET_NAME: melosignal-data
+      REVIEW_SEGMENT: otome-audio
+      ANALYSIS_VERSION_ID: rev-eval-46255c55e8d1c5dc
+      TRAINING_ROOT: data/research/review-evaluation-training/otome-audio-otome-audio-review-evaluation-training-supplement-v1
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify frozen analysis and new scripts
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/build-review-evaluation-full-corpus-inventory.mjs
+          node --check scripts/build-review-evaluation-training-supplement-cohort-spec.mjs
+          node --check scripts/build-review-evaluation-training-supplement-packet.mjs
+          node --check scripts/build-review-evaluation-cohort-evidence.mjs
+          node - <<'NODE'
+          const fs=require('fs');
+          const r=JSON.parse(fs.readFileSync('data/research/review-evaluation-spec/review-evaluation-full-corpus-rollout-readiness.json','utf8'));
+          const m=JSON.parse(fs.readFileSync(`data/research/review-evaluation-full-corpus/${process.env.ANALYSIS_VERSION_ID}/manifest.json`,'utf8'));
+          if(r.status!=='READY_FOR_FULL_CORPUS_BATCH_ROLLOUT'||r.ready!==true) throw new Error(`rollout gate blocked: ${r.status}`);
+          if(r.analysis_version_id!==process.env.ANALYSIS_VERSION_ID) throw new Error(`unexpected readiness analysis version ${r.analysis_version_id}`);
+          if(m.analysis_version_id!==process.env.ANALYSIS_VERSION_ID) throw new Error(`unexpected full manifest analysis version ${m.analysis_version_id}`);
+          if(Number(m.evidence_candidate_count)!==683824) throw new Error(`unexpected frozen evidence count ${m.evidence_candidate_count}`);
+          console.log({status:r.status,analysis_version_id:m.analysis_version_id,evidence_candidate_count:m.evidence_candidate_count});
+          NODE
+
+      - name: Build representative otome training cohort spec
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node scripts/build-review-evaluation-training-supplement-cohort-spec.mjs
+          node - <<'NODE'
+          const fs=require('fs');
+          const p='data/research/review-evaluation-spec/training-supplement-cohort-v1.json';
+          const s=JSON.parse(fs.readFileSync(p,'utf8'));
+          if(s.segment!=='otome-audio'||s.counts?.works!==45) throw new Error(`unexpected supplement cohort ${s.segment}/${s.counts?.works}`);
+          if(!s.anti_leakage?.excludes_shadow_products) throw new Error('shadow exclusion not frozen');
+          console.log({cohort_id:s.cohort_id,works:s.counts.works,unique_circles:s.counts.unique_circles,diagnostics:s.diagnostics});
+          NODE
+
+      - name: Plan supplement evidence extraction
+        working-directory: work
+        env:
+          REVIEW_EVAL_COHORT: data/research/review-evaluation-spec/training-supplement-cohort-v1.json
+          REVIEW_EVAL_COHORT_PLAN: .tmp/review-training/plan.json
+          REVIEW_EVAL_COHORT_KEYS: .tmp/review-training/chunk-keys.txt
+          REVIEW_EVAL_COHORT_RAW: .tmp/reviews-evaluation/otome-audio
+          REVIEW_EVAL_OUT: data/research/review-evaluation-training
+          REVIEW_EVAL_MAX_EVIDENCE_PER_WORK: '20'
+        run: node scripts/build-review-evaluation-cohort-evidence.mjs --plan
+
+      - name: Download frozen otome-audio review chunks once from R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          dir=".tmp/reviews-evaluation/${REVIEW_SEGMENT}"
+          mkdir -p "$dir"
+          node - <<'NODE' > .tmp/review-eval-all-chunk-keys.txt
+          const fs=require('fs');
+          const segment=process.env.REVIEW_SEGMENT;
+          const m=JSON.parse(fs.readFileSync(`data/reviews/manifests/${segment}.json`,'utf8'));
+          if(Number(m.processed_target_works||0)<Number(m.source_target_works||0)) throw new Error(`${segment}: review crawl incomplete`);
+          const chunks=(m.chunks||[]).filter(c=>c.complete&&!c.stopped_reason).sort((a,b)=>Number(a.index)-Number(b.index));
+          if(!chunks.length||chunks.length!==Number(m.next_chunk||chunks.length)) throw new Error(`${segment}: incomplete chunk sequence ${chunks.length}/${m.next_chunk}`);
+          for(const c of chunks) console.log(c.key);
+          NODE
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            out="$dir/$(basename "$key")"
+            ok=0
+            for attempt in 1 2 3; do
+              echo "download $key (attempt $attempt)"
+              if npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$out" --remote >/dev/null; then ok=1; break; fi
+              sleep $((attempt * 5))
+            done
+            [ "$ok" -eq 1 ] || { echo "failed to download $key" >&2; exit 1; }
+          done < .tmp/review-eval-all-chunk-keys.txt
+
+      - name: Build one-pass full-corpus exact-evidence inventory
+        working-directory: work
+        env:
+          REVIEW_CHUNK_DIR: .tmp/reviews-evaluation/otome-audio
+          REVIEW_FULL_CORPUS_INVENTORY_DIR: .tmp/review-eval-full-inventory
+        run: node scripts/build-review-evaluation-full-corpus-inventory.mjs
+
+      - name: Build representative supplement evidence and annotation packet
+        working-directory: work
+        env:
+          REVIEW_EVAL_COHORT: data/research/review-evaluation-spec/training-supplement-cohort-v1.json
+          REVIEW_EVAL_COHORT_PLAN: .tmp/review-training/plan.json
+          REVIEW_EVAL_COHORT_KEYS: .tmp/review-training/chunk-keys.txt
+          REVIEW_EVAL_COHORT_RAW: .tmp/reviews-evaluation/otome-audio
+          REVIEW_EVAL_OUT: data/research/review-evaluation-training
+          REVIEW_EVAL_MAX_EVIDENCE_PER_WORK: '20'
+        run: |
+          set -euo pipefail
+          node scripts/build-review-evaluation-cohort-evidence.mjs --build
+          test -s "$TRAINING_ROOT/evidence.jsonl"
+          REVIEW_TRAINING_SUPPLEMENT_EVIDENCE_JSONL="$TRAINING_ROOT/evidence.jsonl" \
+          REVIEW_TRAINING_SUPPLEMENT_PACKET_DIR="$TRAINING_ROOT/annotation" \
+          REVIEW_TRAINING_SUPPLEMENT_BATCH_COUNT=8 \
+          node scripts/build-review-evaluation-training-supplement-packet.mjs
+
+      - name: Verify supplement disjointness and packet size
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const spec=JSON.parse(fs.readFileSync('data/research/review-evaluation-spec/training-supplement-cohort-v1.json','utf8'));
+          const shadow=JSON.parse(fs.readFileSync('data/research/review-evaluation-spec/shadow-cohort-v1.json','utf8'));
+          const discovery=JSON.parse(fs.readFileSync('data/research/review-evaluation-spec/pilot-cohort-v1.json','utf8'));
+          const rest75=JSON.parse(fs.readFileSync('data/research/review-evaluation-boundary-pilot/otome-audio-rest75-low-rating-2023-2024-2025-2026.json','utf8'));
+          const rows=fs.readFileSync(`${process.env.TRAINING_ROOT}/evidence.jsonl`,'utf8').trim().split(/\r?\n/).filter(Boolean).map(JSON.parse);
+          const ids=new Set(spec.product_ids);
+          const forbidden=new Set([...(shadow.product_ids||[]),...(discovery.product_ids||[]),...(discovery.comparison_product_ids||[]),...(rest75.reviews||[]).map(x=>x.product_id)].map(x=>String(x).toUpperCase()));
+          const overlap=[...ids].filter(x=>forbidden.has(String(x).toUpperCase()));
+          if(overlap.length) throw new Error(`training supplement leakage: ${overlap.join(',')}`);
+          if(rows.length<600||rows.length>900) throw new Error(`unexpected supplement evidence rows ${rows.length}; expected a representative ~800-row packet`);
+          if(new Set(rows.map(x=>x.evidence_id)).size!==rows.length) throw new Error('duplicate evidence_id in supplement');
+          const idx=JSON.parse(fs.readFileSync(`${process.env.TRAINING_ROOT}/annotation/index.json`,'utf8'));
+          if(idx.counts.evidence_rows!==rows.length||idx.counts.batches!==8) throw new Error('annotation packet count mismatch');
+          console.log({works:spec.counts.works,evidence_rows:rows.length,reviews:new Set(rows.map(x=>x.review_ref).filter(Boolean)).size,batches:idx.counts.batches,overlap:overlap.length});
+          NODE
+
+      - name: Upload large inventory artifacts to R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          prefix="review-evaluation-full-corpus/${ANALYSIS_VERSION_ID}/inventory"
+          for name in unique-evidence.jsonl.gz evidence-fanout.jsonl.gz; do
+            file=".tmp/review-eval-full-inventory/$name"
+            test -s "$file"
+            echo "upload $name"
+            npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/${prefix}/${name}" --file "$file" --remote >/dev/null
+          done
+
+      - name: Verify inventory summary and privacy boundary
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const p=`data/research/review-evaluation-full-corpus/${process.env.ANALYSIS_VERSION_ID}/inventory-summary.json`;
+          const s=JSON.parse(fs.readFileSync(p,'utf8'));
+          if(!s.invariant_check?.exact_match||s.invariant_check.observed_candidate_count!==683824) throw new Error('full-corpus extraction invariant failed');
+          if(!s.dedupe?.unique_evidence_texts||s.dedupe.unique_evidence_texts>s.dedupe.total_occurrences) throw new Error('dedupe summary invalid');
+          if(s.privacy_boundary?.classifier_input_contains_title!==false||s.privacy_boundary?.classifier_input_contains_circle!==false) throw new Error('classifier privacy boundary invalid');
+          console.log({status:s.status,dedupe:s.dedupe,artifacts:s.artifacts});
+          NODE
+          if grep -R -E -n 'https?://|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$TRAINING_ROOT/evidence.jsonl" "$TRAINING_ROOT/annotation"; then
+            echo 'privacy verifier: URL/email-like text leaked into training packet' >&2; exit 1
+          fi
+
+      - name: Commit compact foundation outputs to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            data/research/review-evaluation-spec/training-supplement-cohort-v1.json \
+            "data/research/review-evaluation-full-corpus/${ANALYSIS_VERSION_ID}/inventory-summary.json" \
+            "$TRAINING_ROOT"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: build zero-cost classifier training foundation" || exit 0
+          git pull --rebase origin main
+          git push origin main
