@@ -1,0 +1,84 @@
+name: Build review reception recall annotation batches
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - 'Audit review reception evidence recall'
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build 40-row blind annotation batches from blind packet only
+        working-directory: work
+        env:
+          REVIEW_RECEPTION_RECALL_BATCH_SIZE: '40'
+        run: node scripts/build-review-reception-recall-annotation-batches.mjs
+
+      - name: Verify batch manifest and privacy boundary
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const root='data/research/review-reception-profile/evidence-recall-audit-v1/annotation-batches';
+          const m=JSON.parse(fs.readFileSync(`${root}/manifest.json`,'utf8'));
+          if(m.status!=='blind_full_review_reception_recall_annotation_batches_ready') throw new Error(`bad status ${m.status}`);
+          if(m.packet_rows!==320 || m.batch_size!==40 || m.batch_count!==8) throw new Error(`unexpected batch shape rows=${m.packet_rows} size=${m.batch_size} count=${m.batch_count}`);
+          const expected=['atmosphere_texture','concrete_evaluated_elements','emotional_response','sexual_response','story_relationship'].sort();
+          if(JSON.stringify([...m.canonical_categories].sort())!==JSON.stringify(expected)) throw new Error('canonical category mismatch');
+          if(m.anti_leakage?.inputs_derived_only_from_blind_packet!==true || m.anti_leakage?.extractor_trace_read_by_builder!==false) throw new Error('anti-leakage contract missing');
+          const forbidden=new Set(['product_id','lane','seed_flags','review_seed_flags','survives_existing_candidate_gate','drop_reason','evaluation_cues','reaction_terms','matching_unit_indices']);
+          function scan(v,file){
+            if(!v||typeof v!=='object') return;
+            if(Array.isArray(v)){ for(const x of v) scan(x,file); return; }
+            for(const [k,x] of Object.entries(v)){ if(forbidden.has(k)) throw new Error(`${file} leaks ${k}`); scan(x,file); }
+          }
+          for(const b of m.batches){
+            const input=JSON.parse(fs.readFileSync(path.join(root,b.input_file),'utf8'));
+            const tmpl=JSON.parse(fs.readFileSync(path.join(root,b.decisions_template),'utf8'));
+            if(input.rows?.length!==b.row_count) throw new Error(`${b.input_file}: row count mismatch`);
+            scan(input,b.input_file);
+            if(!tmpl.rows?.every(r=>r.signals===null)) throw new Error(`${b.decisions_template}: template already looks annotated`);
+          }
+          console.log(JSON.stringify({packet_rows:m.packet_rows,batch_count:m.batch_count,batch_size:m.batch_size,categories:m.canonical_categories},null,2));
+          NODE
+
+      - name: Commit annotation batches to private source
+        working-directory: work
+        run: |
+          set -euo pipefail
+          root='data/research/review-reception-profile/evidence-recall-audit-v1/annotation-batches'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$root"
+          if git diff --cached --quiet; then
+            echo 'No annotation batch changes.'
+            exit 0
+          fi
+          git commit -m '[CF-Pages-Skip] [skip actions] reviews: build blind full-review recall annotation batches'
+          git pull --rebase origin main
+          git push origin HEAD:main
