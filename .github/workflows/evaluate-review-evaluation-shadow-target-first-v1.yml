@@ -1,0 +1,113 @@
+name: Evaluate review evaluation frozen target-first Shadow v1
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.review-evaluation-shadow-target-first-v1-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-shadow-target-first-v1
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VERSION: rev-eval-46255c55e8d1c5dc
+      HF_HOME: ${{ github.workspace }}/.cache/huggingface-shadow-target-first-v1
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Verify immutable target-first freeze and fixed evaluator gates
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs'),V='rev-eval-46255c55e8d1c5dc';
+          const f=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-freeze-v1.json`,'utf8'));
+          if(f.status!=='review_evaluation_production_v1_frozen_before_shadow'||f.analysis_version_id!==V||f.production_scope!=='target_first'||f.shadow_v1_opened!==false||f.immutable_after_shadow_open!==true||f.mechanisms?.standalone_output!==false||(f.pairs?.selected_pair_keys||[]).length) throw new Error('production freeze drift');
+          const py=fs.readFileSync('scripts/evaluate-review-evaluation-shadow-target-first-v1.py','utf8');
+          for(const s of ["'target_micro_precision_min':0.80","'target_predicted_assignments_min':20","'target_distinct_predicted_labels_min':3","'classification_precision_when_predicted_min':0.85","'evaluative_precision_min':0.85","'polarity_end_to_end_precision_when_predicted_min':0.85"]) if(!py.includes(s)) throw new Error(`fixed gate missing: ${s}`);
+          console.log({freeze_status:f.status,freeze_payload_sha256:f.freeze_payload_sha256,scope:f.production_scope});
+          NODE
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: work/package-lock.json
+
+      - name: Install Node dependencies
+        working-directory: work
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Materialize Shadow E5 embeddings from evidence text only
+        working-directory: work
+        run: node scripts/materialize-review-evaluation-shadow-target-first-embeddings-v1.mjs
+
+      - name: Download frozen v2 base embeddings
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          d=.tmp/review-evaluation-classifier/${VERSION}/v2; mkdir -p "$d"
+          key=review-evaluation-classifier/${VERSION}/training-v2/training-embeddings-v2.jsonl.gz
+          npx --yes wrangler@latest r2 object get "melosignal-data/${key}" --file "$d/training-embeddings-v2.jsonl.gz" --remote >/dev/null
+          gzip -dc "$d/training-embeddings-v2.jsonl.gz" > "$d/training-embeddings-v2.jsonl"
+          node - <<'NODE'
+          const fs=require('fs'),crypto=require('crypto'),V='rev-eval-46255c55e8d1c5dc';
+          const m=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/training-embedding-manifest-v2.json`,'utf8'));
+          const f=`.tmp/review-evaluation-classifier/${V}/v2/training-embeddings-v2.jsonl.gz`;
+          const sha=crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+          if(m.rows!==3528||m.vector_dimension!==384||m.r2?.compressed_sha256!==sha||m.model?.paid_api!==false) throw new Error('base embedding provenance mismatch');
+          NODE
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install classifier dependencies
+        run: python -m pip install --disable-pip-version-check numpy scikit-learn
+
+      - name: Score exact frozen target-first model against Shadow gold
+        working-directory: work
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/evaluate-review-evaluation-shadow-target-first-v1.py
+          python scripts/evaluate-review-evaluation-shadow-target-first-v1.py
+          r=data/research/review-evaluation-classifier/${VERSION}/shadow-target-first-evaluation-report-v1.json
+          node - "$r" <<'NODE'
+          const fs=require('fs'),r=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          console.log(JSON.stringify({status:r.status,checks:r.checks,classification:r.metrics.classification,polarity:r.metrics.polarity_end_to_end,targets:{active:r.metrics.targets.active_labels,distinct_predicted:r.metrics.targets.distinct_predicted_labels,gold:r.metrics.targets.gold_assignments,predicted:r.metrics.targets.predicted_assignments,tp:r.metrics.targets.tp,fp:r.metrics.targets.fp,fn:r.metrics.targets.fn,precision:r.metrics.targets.micro_precision,recall:r.metrics.targets.micro_recall,f1:r.metrics.targets.micro_f1}},null,2));
+          NODE
+
+      - name: Commit immutable Shadow result and authorization if passed
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          report=data/research/review-evaluation-classifier/${VERSION}/shadow-target-first-evaluation-report-v1.json
+          auth=data/research/review-evaluation-classifier/${VERSION}/production-authorization-v1.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$report"
+          test ! -f "$auth" || git add "$auth"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: score frozen target-first model on Shadow v1" || exit 0
+          git reset --hard HEAD
+          git pull --rebase origin main
+          git push origin main
