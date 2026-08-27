@@ -1,4 +1,4 @@
-name: Merge and aggregate review evaluation full corpus v1
+name: Merge and aggregate review evaluation full corpus target-first v2
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: review-evaluation-full-corpus-v1-merge
+  group: review-evaluation-full-corpus-v2-merge
   cancel-in-progress: false
 
 jobs:
@@ -40,20 +40,22 @@ jobs:
         working-directory: work
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Verify frozen target-first production authorization
+      - name: Verify fresh Shadow-v2 production authorization
         working-directory: work
         run: |
           set -euo pipefail
           node - <<'NODE'
           const fs=require('fs'),V='rev-eval-46255c55e8d1c5dc';
-          const f=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-freeze-v1.json`,'utf8'));
-          const a=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-authorization-v1.json`,'utf8'));
-          if(f.production_scope!=='target_first'||f.mechanisms?.standalone_output!==false||(f.pairs?.selected_pair_keys||[]).length) throw new Error('target-first freeze drift');
-          if(a.status!=='review_evaluation_production_v1_authorized_after_frozen_shadow_evaluation'||a.shadow_evaluation_passed!==true||a.strict_blind_claim!==false||a.no_post_shadow_tuning!==true||a.mechanism_output_enabled!==false||a.freeze_payload_sha256!==f.freeze_payload_sha256) throw new Error('production authorization/freeze mismatch');
-          console.log({freeze:f.freeze_payload_sha256,authorization:a.status,strict_blind_claim:a.strict_blind_claim});
+          const expected=['acting_performance','breath_vocalization','dialogue_writing','voice_quality'];
+          const f=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-freeze-v2.json`,'utf8'));
+          const a=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-authorization-v2.json`,'utf8'));
+          if(f.status!=='review_evaluation_production_v2_frozen_before_new_disjoint_holdout'||f.production_scope!=='target_first_conservative'||f.mechanisms?.standalone_output!==false||(f.pairs?.selected_pair_keys||[]).length) throw new Error('target-first production-v2 freeze drift');
+          if(JSON.stringify(f.targets?.selected_target_keys)!==JSON.stringify(expected)) throw new Error('target allowlist drift');
+          if(a.status!=='review_evaluation_production_v2_authorized_after_fresh_disjoint_shadow_v2'||a.fresh_shadow_v2_passed!==true||a.strict_blind_claim!==true||a.no_post_holdout_tuning!==true||a.mechanism_output_enabled!==false||a.freeze_payload_sha256!==f.freeze_payload_sha256) throw new Error('production-v2 authorization/freeze mismatch');
+          console.log({freeze:f.freeze_payload_sha256,authorization:a.status,targets:expected});
           NODE
 
-      - name: Download all 32 prediction shards and canonical inventory
+      - name: Download all 32 production-v2 prediction shards and canonical inventory
         working-directory: work
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -63,7 +65,7 @@ jobs:
           shdir=.tmp/review-evaluation-full-corpus/${VERSION}/shards
           inv=.tmp/review-evaluation-inventory/${VERSION}
           mkdir -p "$shdir" "$inv"
-          base=review-evaluation-full-corpus/${VERSION}/production-v1/shards
+          base=review-evaluation-full-corpus/${VERSION}/production-v2/shards
           for i in $(seq 0 31); do
             tag=$(printf '%02d' "$i")
             npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${base}/shard-${tag}-predictions.jsonl.gz" --file "$shdir/shard-${tag}-predictions.jsonl.gz" --remote >/dev/null
@@ -98,7 +100,7 @@ jobs:
           node --check scripts/aggregate-review-evaluation-full-corpus-v1.mjs
           node scripts/aggregate-review-evaluation-full-corpus-v1.mjs
 
-      - name: Upload merged predictions and work aggregates to R2
+      - name: Upload merged production-v2 predictions and work aggregates to R2
         working-directory: work
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -106,9 +108,9 @@ jobs:
         run: |
           set -euo pipefail
           dir=.tmp/review-evaluation-full-corpus/${VERSION}
-          key=review-evaluation-full-corpus/${VERSION}/production-v1
-          npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/${key}/unique-predictions-v1.jsonl.gz" --file "$dir/unique-predictions.jsonl.gz" --remote >/dev/null
-          npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/${key}/work-aggregates-v1.jsonl.gz" --file "$dir/work-aggregates-v1.jsonl.gz" --remote >/dev/null
+          key=review-evaluation-full-corpus/${VERSION}/production-v2
+          npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/${key}/unique-predictions-v2.jsonl.gz" --file "$dir/unique-predictions.jsonl.gz" --remote >/dev/null
+          npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/${key}/work-aggregates-v2.jsonl.gz" --file "$dir/work-aggregates-v1.jsonl.gz" --remote >/dev/null
 
       - name: Commit compact production manifests to private source
         working-directory: work
@@ -120,7 +122,7 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add "$prod/prediction-merge-manifest-v1.json" "$prod/work-aggregate-manifest-v1.json"
-          git commit -m "[CF-Pages-Skip] [skip actions] reviews: merge and aggregate full-corpus production v1" || exit 0
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: merge and aggregate full-corpus production v2" || exit 0
           git reset --hard HEAD
           git pull --rebase origin main
           git push origin main
