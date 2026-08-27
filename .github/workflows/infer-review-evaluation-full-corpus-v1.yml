@@ -7,7 +7,7 @@ on:
       - '.review-evaluation-full-corpus-v1-trigger'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: review-evaluation-full-corpus-v2
@@ -121,22 +121,3 @@ jobs:
           npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/${key}/shard-${tag}-predictions.jsonl.gz" --file "$dir/shard-${tag}-predictions.jsonl.gz" --remote >/dev/null
           npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/${key}/shard-${tag}-prediction-manifest.json" --file "$dir/shard-${tag}-prediction-manifest.json" --remote >/dev/null
           echo "uploaded production-v2 shard ${tag}"
-
-  trigger-merge:
-    name: Trigger merge after all 32 shards succeed
-    needs: infer-shard
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout public runner
-        uses: actions/checkout@v4
-
-      - name: Trigger production-v2 merge and work aggregation
-        run: |
-          set -euo pipefail
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git pull --rebase origin main
-          printf 'triggered_at=%s\nscope=target-first-v2-all-shards-complete\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .review-evaluation-full-corpus-v1-merge-trigger
-          git add .review-evaluation-full-corpus-v1-merge-trigger
-          git commit -m "reviews: trigger production-v2 merge after all shards"
-          git push
