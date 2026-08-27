@@ -31,3 +31,5 @@ jobs:
       - name: Validate frozen rollup semantics against canonical taxonomies and gold
         working-directory: work
         run: node scripts/validate-review-reception-rollup-contract.mjs
+
+# rerun marker: validator false-positive fix 2026-08-28
