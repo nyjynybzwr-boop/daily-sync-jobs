@@ -1,0 +1,172 @@
+name: Prepare fresh Shadow-v3 target-only before human gold
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.review-evaluation-shadow-v3-prepare-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-shadow-v3-target-only-prepare
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      VERSION: rev-eval-46255c55e8d1c5dc
+      HF_HOME: ${{ github.workspace }}/.cache/huggingface-shadow-v3-target-only
+      R2_BUCKET_NAME: melosignal-data
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Verify v2 is consumed and v3 has not started
+        working-directory: work
+        run: |
+          set -euo pipefail
+          base=data/research/review-evaluation-classifier/${VERSION}
+          test -s "$base/shadow-v2-target-first-evaluation-report-v2.json"
+          test ! -e "$base/production-authorization-v2.json"
+          test ! -e "$base/production-freeze-v3.json"
+          test ! -e "$base/shadow-v3-target-only-predictions-v3.jsonl"
+          test ! -d data/research/review-evaluation-calibration/otome-audio-otome-audio-review-evaluation-shadow-v3-target-only
+          node - <<'NODE'
+          const fs=require('fs'),V='rev-eval-46255c55e8d1c5dc';
+          const r=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/shadow-v2-target-first-evaluation-report-v2.json`,'utf8'));
+          if(r.status!=='review_evaluation_target_first_v2_fresh_shadow_failed'||r.decision?.passed!==false||r.strict_blind_claim!==true) throw new Error('Shadow-v2 terminal state drift');
+          console.log({v2:r.status,passed:r.decision.passed});
+          NODE
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: work/package-lock.json
+
+      - name: Install Node dependencies
+        working-directory: work
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Freeze target-only production-v3 before new holdout
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/freeze-review-evaluation-target-only-production-v3.mjs
+          node scripts/freeze-review-evaluation-target-only-production-v3.mjs
+          node - <<'NODE'
+          const fs=require('fs'),V='rev-eval-46255c55e8d1c5dc';
+          const f=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-freeze-v3.json`,'utf8'));
+          const expected=['acting_performance','breath_vocalization','dialogue_writing','voice_quality'];
+          const gates={target_micro_precision_min:0.8,target_predicted_assignments_min:20,target_distinct_predicted_labels_min:3};
+          if(f.status!=='review_evaluation_production_v3_target_only_frozen_before_fresh_disjoint_holdout'||f.production_scope!=='target_only_conservative'||JSON.stringify(f.targets?.selected_target_keys)!==JSON.stringify(expected)||JSON.stringify(f.authorization_gate?.fixed_before_holdout_scoring)!==JSON.stringify(gates)) throw new Error('v3 freeze validation failed');
+          if(f.classification?.production_output_enabled!==false||f.polarity?.production_output_enabled!==false||f.mechanisms?.standalone_output!==false||(f.pairs?.selected_pair_keys||[]).length) throw new Error('v3 non-target output drift');
+          console.log({freeze:f.freeze_payload_sha256,gates});
+          NODE
+
+      - name: Build fresh product-disjoint Shadow-v3 cohort
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/build-review-evaluation-shadow-v3-cohort-spec.mjs
+          node scripts/build-review-evaluation-shadow-v3-cohort-spec.mjs
+          test -s data/research/review-evaluation-spec/shadow-cohort-v3-target-only.json
+
+      - name: Download frozen full-corpus evidence inventory
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          inv=.tmp/review-evaluation-inventory/${VERSION};mkdir -p "$inv"
+          npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/review-evaluation-full-corpus/${VERSION}/inventory/unique-evidence.jsonl.gz" --file "$inv/unique-evidence.jsonl.gz" --remote >/dev/null
+          npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/review-evaluation-full-corpus/${VERSION}/inventory/evidence-occurrences.jsonl.gz" --file "$inv/evidence-occurrences.jsonl.gz" --remote >/dev/null
+
+      - name: Select Shadow-v3 evidence from frozen inventory
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/build-review-evaluation-shadow-v3-evidence-from-inventory.mjs
+          node scripts/build-review-evaluation-shadow-v3-evidence-from-inventory.mjs
+
+      - name: Build evidence-text-only target gold packets
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/build-review-evaluation-shadow-v3-target-only-gold-packet.mjs
+          node scripts/build-review-evaluation-shadow-v3-target-only-gold-packet.mjs
+          dir=data/research/review-evaluation-calibration/otome-audio-otome-audio-review-evaluation-shadow-v3-target-only/human-gold
+          test -s "$dir/shadow-v3-target-gold-packet.jsonl"
+          test "$(find "$dir" -maxdepth 1 -name 'shadow-v3-target-gold-batch-*.json' | wc -l)" -eq 4
+          if find "$dir" -maxdepth 1 -type f -name 'shadow-v3-target-gold-decisions-batch-*.json' ! -name '*.template.json' | grep -q .; then echo 'human decision file unexpectedly exists before predictions' >&2; exit 1; fi
+
+      - name: Materialize Shadow-v3 evidence-only embeddings
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/materialize-review-evaluation-shadow-v3-target-only-embeddings.mjs
+          node scripts/materialize-review-evaluation-shadow-v3-target-only-embeddings.mjs
+
+      - name: Download frozen base v2 embeddings
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          d=.tmp/review-evaluation-classifier/${VERSION}/v2;mkdir -p "$d"
+          key=review-evaluation-classifier/${VERSION}/training-v2/training-embeddings-v2.jsonl.gz
+          npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${key}" --file "$d/training-embeddings-v2.jsonl.gz" --remote >/dev/null
+          gzip -dc "$d/training-embeddings-v2.jsonl.gz" > "$d/training-embeddings-v2.jsonl"
+          node - <<'NODE'
+          const fs=require('fs'),crypto=require('crypto'),V='rev-eval-46255c55e8d1c5dc';
+          const m=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/training-embedding-manifest-v2.json`,'utf8'));
+          const f=`.tmp/review-evaluation-classifier/${V}/v2/training-embeddings-v2.jsonl.gz`;const sha=crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+          if(m.rows!==3528||m.vector_dimension!==384||m.r2?.compressed_sha256!==sha||m.model?.paid_api!==false) throw new Error('base embedding provenance mismatch');
+          NODE
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install classifier dependencies
+        run: python -m pip install --disable-pip-version-check numpy scikit-learn
+
+      - name: Freeze Shadow-v3 target predictions before human gold
+        working-directory: work
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/predict-review-evaluation-shadow-v3-target-only.py
+          python scripts/predict-review-evaluation-shadow-v3-target-only.py
+          base=data/research/review-evaluation-classifier/${VERSION}
+          test -s "$base/shadow-v3-target-only-predictions-v3.jsonl"
+          test -s "$base/shadow-v3-target-only-prediction-manifest-v3.json"
+          dir=data/research/review-evaluation-calibration/otome-audio-otome-audio-review-evaluation-shadow-v3-target-only/human-gold
+          if find "$dir" -maxdepth 1 -type f -name 'shadow-v3-target-gold-decisions-batch-*.json' ! -name '*.template.json' | grep -q .; then echo 'human decisions appeared before pre-gold commit' >&2; exit 1; fi
+
+      - name: Commit v3 freeze, fresh holdout packets, and predictions before annotation
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          base=data/research/review-evaluation-classifier/${VERSION}
+          shadow=data/research/review-evaluation-calibration/otome-audio-otome-audio-review-evaluation-shadow-v3-target-only
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$base/production-freeze-v3.json" "$base/shadow-v3-target-only-predictions-v3.jsonl" "$base/shadow-v3-target-only-prediction-manifest-v3.json" data/research/review-evaluation-spec/shadow-cohort-v3-target-only.json "$shadow"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: freeze target-only v3 and fresh Shadow-v3 predictions before gold"
+          git reset --hard HEAD
+          for attempt in 1 2 3 4 5 6; do git fetch origin main; git rebase origin/main; if git push origin HEAD:main; then exit 0; fi; sleep $((attempt * 3)); done
+          exit 1
