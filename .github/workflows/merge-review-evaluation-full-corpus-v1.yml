@@ -2,6 +2,11 @@ name: Merge and aggregate review evaluation full corpus target-first v2
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows:
+      - 'Infer review evaluation full corpus target-first v2 shards'
+    types:
+      - completed
   push:
     paths:
       - '.review-evaluation-full-corpus-v1-merge-trigger'
@@ -15,6 +20,7 @@ concurrency:
 
 jobs:
   merge-and-aggregate:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
