@@ -1,0 +1,78 @@
+name: Preflight review evaluation local classifier
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/preflight-review-evaluation-local-classifier.yml'
+      - '.review-evaluation-local-classifier-preflight-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-local-classifier-preflight
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build current training pool preflight
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/build-review-evaluation-classifier-training-pool.mjs
+          node --check scripts/plan-review-evaluation-local-classifier.mjs
+          node scripts/build-review-evaluation-classifier-training-pool.mjs --preflight
+          node scripts/plan-review-evaluation-local-classifier.mjs
+
+      - name: Verify shadow seal and model-input boundary
+        working-directory: work
+        run: |
+          set -euo pipefail
+          root="data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc"
+          test -s "$root/training-pool.jsonl"
+          test -s "$root/training-pool-manifest.json"
+          test -s "$root/classifier-plan.json"
+          node - "$root/training-pool-manifest.json" "$root/classifier-plan.json" <<'NODE'
+          const fs=require('fs');
+          const m=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          const p=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+          if(m.analysis_version_id!=='rev-eval-46255c55e8d1c5dc') throw new Error('analysis version drift');
+          if(m.policy.shadow_usage!=='product_id exclusion list only; no shadow gold or predictions are read') throw new Error('shadow seal policy missing');
+          if(JSON.stringify(m.policy.model_input_fields)!==JSON.stringify(['evidence_text'])) throw new Error('model input boundary changed');
+          if(p.embedding.model!=='Xenova/multilingual-e5-small'||p.embedding.paid_api!==false) throw new Error('unexpected embedding plan');
+          if(p.split.shadow_used_for_split_or_threshold!==false) throw new Error('shadow used in split');
+          console.log({training_pool:m.status,counts:m.counts,classification:m.support.classification,target_labels:Object.keys(m.support.target||{}).length,mechanism_labels:Object.keys(m.support.mechanism||{}).length,plan:p.status,split:p.split});
+          NODE
+          if grep -R -E -n 'shadow-calibration/.*/(human-gold|predictions)|shadow-predictions|human-gold' scripts/build-review-evaluation-classifier-training-pool.mjs scripts/plan-review-evaluation-local-classifier.mjs; then
+            echo 'classifier preflight references sealed shadow label assets' >&2; exit 1
+          fi
+
+      - name: Commit preflight outputs to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          root="data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$root/training-pool.jsonl" "$root/training-pool-manifest.json" "$root/classifier-plan.json"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: preflight local classifier training pool" || exit 0
+          git pull --rebase origin main
+          git push origin main
