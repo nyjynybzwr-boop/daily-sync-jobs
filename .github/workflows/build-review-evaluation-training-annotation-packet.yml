@@ -1,0 +1,81 @@
+name: Build review evaluation training annotation packet
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-review-evaluation-training-annotation-packet.yml'
+      - '.review-evaluation-training-annotation-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-training-annotation
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build evidence-only blind annotation packet
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/build-review-evaluation-training-supplement-packet.mjs
+          node --check scripts/validate-review-evaluation-training-supplement-decisions.mjs
+          node scripts/build-review-evaluation-training-supplement-packet.mjs
+
+      - name: Verify packet blindness and partition
+        working-directory: work
+        run: |
+          set -euo pipefail
+          dir="data/research/review-evaluation-training/rev-eval-46255c55e8d1c5dc/representative-supplement-v1/annotation"
+          test -s "$dir/training-supplement-gold-packet.json"
+          test -s "$dir/index.json"
+          node - "$dir/training-supplement-gold-packet.json" "$dir/index.json" <<'NODE'
+          const fs=require('fs');
+          const p=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          const i=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+          if(p.status!=='blank_representative_training_supplement_gold_packet') throw new Error(`bad status ${p.status}`);
+          if(p.analysis_version_id!=='rev-eval-46255c55e8d1c5dc') throw new Error(`bad analysis version ${p.analysis_version_id}`);
+          if(p.anti_leakage?.model_input_is_evidence_text_only!==true) throw new Error('not evidence-only');
+          if(p.rows.length!==800) throw new Error(`row count ${p.rows.length}`);
+          if(i.batches.length!==8||i.batches.some(x=>x.row_count!==100)) throw new Error(`bad batch partition ${JSON.stringify(i.batches)}`);
+          const forbidden=['product_id','review_ref','title','circle','review_count_band','rating','heuristic_polarity','source_polarity_hint','facets','raw_target_hint','evaluation_cues','reaction_terms'];
+          for(const r of p.rows) for(const k of forbidden) if(k in r) throw new Error(`${r.row_id}: leaked ${k}`);
+          console.log({rows:p.rows.length,batches:i.batches,blind:p.anti_leakage});
+          NODE
+          count=$(find "$dir" -maxdepth 1 -name 'training-supplement-gold-batch-*.json' | wc -l)
+          templates=$(find "$dir" -maxdepth 1 -name 'training-supplement-gold-decisions-batch-*.template.json' | wc -l)
+          [ "$count" -eq 8 ] && [ "$templates" -eq 8 ]
+          if grep -R -E -n '"(product_id|review_ref|title|circle|review_count_band|rating|source_polarity_hint|heuristic_polarity|facets|raw_target_hint|evaluation_cues|reaction_terms)"[[:space:]]*:' "$dir/training-supplement-gold-packet.json" "$dir"/training-supplement-gold-batch-*.json; then
+            echo 'blindness verifier: forbidden metadata leaked' >&2; exit 1
+          fi
+
+      - name: Commit annotation packet to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          dir="data/research/review-evaluation-training/rev-eval-46255c55e8d1c5dc/representative-supplement-v1/annotation"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$dir"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: build blind training annotation packet" || exit 0
+          git pull --rebase origin main
+          git push origin main
