@@ -1,0 +1,169 @@
+name: Merge and publish review evaluation full corpus target-only v3
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - 'Infer review evaluation full corpus target-only v3 shards'
+    types:
+      - completed
+  push:
+    paths:
+      - '.review-evaluation-full-corpus-v3-merge-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-evaluation-full-corpus-v3-merge
+  cancel-in-progress: false
+
+jobs:
+  merge-and-publish:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VERSION: rev-eval-46255c55e8d1c5dc
+      REVIEW_EVAL_SHARD_COUNT: '32'
+      REVIEW_EVAL_FULL_CORPUS_SHARD_TMP: .tmp/review-evaluation-full-corpus/rev-eval-46255c55e8d1c5dc/shards-v3
+      R2_BUCKET_NAME: melosignal-data
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: work/package-lock.json
+
+      - name: Install Node dependencies
+        working-directory: work
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify fresh Shadow-v3 target-only production authorization
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs'),V='rev-eval-46255c55e8d1c5dc';
+          const expected=['acting_performance','breath_vocalization','dialogue_writing','voice_quality'];
+          const f=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-freeze-v3.json`,'utf8'));
+          const a=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-authorization-v3.json`,'utf8'));
+          const c=JSON.parse(fs.readFileSync('data/research/review-evaluation-spec/review-evaluation-production-output-contract-v3.json','utf8'));
+          if(f.status!=='review_evaluation_production_v3_target_only_frozen_before_fresh_disjoint_holdout'||f.production_scope!=='target_only_conservative'||f.immutable_after_shadow_v3_open!==true) throw new Error('target-only production-v3 freeze drift');
+          if(JSON.stringify(f.targets?.selected_target_keys)!==JSON.stringify(expected)) throw new Error('target allowlist drift');
+          if(f.classification?.production_output_enabled!==false||f.polarity?.production_output_enabled!==false||f.mechanisms?.standalone_output!==false||(f.pairs?.selected_pair_keys||[]).length) throw new Error('non-target output enabled in freeze');
+          if(a.status!=='review_evaluation_production_v3_authorized_after_fresh_disjoint_shadow_v3_target_only'||a.fresh_shadow_v3_passed!==true||a.strict_blind_claim!==true||a.no_post_holdout_tuning!==true||a.freeze_payload_sha256!==f.freeze_payload_sha256) throw new Error('production-v3 authorization/freeze mismatch');
+          if(a.classification_output_enabled!==false||a.polarity_output_enabled!==false||a.mechanism_output_enabled!==false||a.pair_output_enabled!==false) throw new Error('non-target output enabled in authorization');
+          if(c.status!=='production_target_only_output_contract_v3_frozen_before_full_corpus_inference'||JSON.stringify(c.active_target_keys)!==JSON.stringify(expected)) throw new Error('v3 output contract drift');
+          console.log({freeze:f.freeze_payload_sha256,authorization:a.status,targets:expected});
+          NODE
+
+      - name: Download all 32 production-v3 shards and canonical inventory
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          shdir=.tmp/review-evaluation-full-corpus/${VERSION}/shards-v3
+          inv=.tmp/review-evaluation-inventory/${VERSION}
+          mkdir -p "$shdir" "$inv"
+          base=review-evaluation-full-corpus/${VERSION}/production-v3/shards
+          for i in $(seq 0 31); do
+            tag=$(printf '%02d' "$i")
+            npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${base}/shard-${tag}-predictions-v3.jsonl.gz" --file "$shdir/shard-${tag}-predictions-v3.jsonl.gz" --remote >/dev/null
+            npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/${base}/shard-${tag}-prediction-manifest-v3.json" --file "$shdir/shard-${tag}-prediction-manifest-v3.json" --remote >/dev/null
+          done
+          npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/review-evaluation-full-corpus/${VERSION}/inventory/unique-evidence.jsonl.gz" --file "$inv/unique-evidence.jsonl.gz" --remote >/dev/null
+          npx --yes wrangler@latest r2 object get "${R2_BUCKET_NAME}/review-evaluation-full-corpus/${VERSION}/inventory/evidence-occurrences.jsonl.gz" --file "$inv/evidence-occurrences.jsonl.gz" --remote >/dev/null
+
+      - name: Verify inventory provenance
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs'),crypto=require('crypto'),V='rev-eval-46255c55e8d1c5dc';
+          const m=JSON.parse(fs.readFileSync(`data/research/review-evaluation-full-corpus/${V}/inventory/inventory-manifest.json`,'utf8'));
+          const sha=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+          if(sha(`.tmp/review-evaluation-inventory/${V}/unique-evidence.jsonl.gz`)!==m.artifacts.unique_evidence.sha256) throw new Error('unique evidence SHA drift');
+          if(sha(`.tmp/review-evaluation-inventory/${V}/evidence-occurrences.jsonl.gz`)!==m.artifacts.evidence_occurrences.sha256) throw new Error('occurrence SHA drift');
+          NODE
+
+      - name: Merge and validate target-only unique predictions
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/merge-review-evaluation-full-corpus-shards-v3.mjs
+          node scripts/merge-review-evaluation-full-corpus-shards-v3.mjs
+
+      - name: Expand occurrence map and aggregate target-only by work
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/aggregate-review-evaluation-full-corpus-v3.mjs
+          node scripts/aggregate-review-evaluation-full-corpus-v3.mjs
+
+      - name: Build target-only market summary
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/build-review-evaluation-market-summary-v3.mjs
+          node scripts/build-review-evaluation-market-summary-v3.mjs
+          test -s web/data/review-evaluation/market-summary-v3.json
+          node - <<'NODE'
+          const fs=require('fs');
+          const p=JSON.parse(fs.readFileSync('web/data/review-evaluation/market-summary-v3.json','utf8'));
+          if(p.status!=='review_evaluation_target_only_market_summary_v3_ready'||p.production_scope!=='target_only_conservative'||p.targets?.length!==4) throw new Error('target-only market summary validation failed');
+          if(p.interpretation?.classification_output_enabled!==false||p.interpretation?.polarity_output_enabled!==false||p.interpretation?.mechanism_output_enabled!==false||p.interpretation?.pair_output_enabled!==false) throw new Error('market summary non-target output drift');
+          console.log({status:p.status,counts:p.counts,targets:p.targets.map(x=>x.target_key)});
+          NODE
+
+      - name: Publish target-only work-detail web payload shards
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/publish-review-evaluation-work-details-v3.mjs
+          node scripts/publish-review-evaluation-work-details-v3.mjs
+          test -s web/data/review-evaluation/manifest.json
+          test "$(find web/data/review-evaluation -maxdepth 1 -name 'works-*.json' | wc -l)" -eq 32
+          node - <<'NODE'
+          const fs=require('fs');
+          const m=JSON.parse(fs.readFileSync('web/data/review-evaluation/manifest.json','utf8'));
+          if(m.status!=='review_evaluation_work_detail_web_payload_v3_ready'||m.production_scope!=='target_only_conservative'||m.production?.version!==3) throw new Error('work-detail v3 manifest drift');
+          if(m.interpretation?.classification_output_enabled!==false||m.interpretation?.polarity_output_enabled!==false||m.interpretation?.mechanism_output_enabled!==false||m.interpretation?.pair_output_enabled!==false) throw new Error('work-detail non-target output drift');
+          NODE
+
+      - name: Upload merged production-v3 target-only outputs to R2
+        working-directory: work
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          dir=.tmp/review-evaluation-full-corpus/${VERSION}
+          key=review-evaluation-full-corpus/${VERSION}/production-v3
+          npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/${key}/unique-predictions-v3.jsonl.gz" --file "$dir/unique-predictions-v3.jsonl.gz" --remote >/dev/null
+          npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/${key}/work-aggregates-v3.jsonl.gz" --file "$dir/work-aggregates-v3.jsonl.gz" --remote >/dev/null
+
+      - name: Commit production-v3 manifests and web payloads to private source
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          prod=data/research/review-evaluation-full-corpus/${VERSION}/production-v3
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$prod/prediction-merge-manifest-v3.json" "$prod/work-aggregate-manifest-v3.json" web/data/review-evaluation
+          git commit -m "[skip actions] reviews: merge aggregate and publish full-corpus production v3 target-only" || exit 0
+          git reset --hard HEAD
+          git pull --rebase origin main
+          git push origin main
