@@ -1,4 +1,4 @@
-name: Infer review evaluation full corpus v1 shards
+name: Infer review evaluation full corpus target-first v2 shards
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: review-evaluation-full-corpus-v1
+  group: review-evaluation-full-corpus-v2
   cancel-in-progress: false
 
 jobs:
@@ -36,18 +36,20 @@ jobs:
           GIT_LFS_SKIP_SMUDGE: '1'
         run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
 
-      - name: Verify frozen target-first authorization and freeze
+      - name: Verify fresh Shadow-v2 authorization and conservative freeze
         working-directory: work
         run: |
           set -euo pipefail
           node - <<'NODE'
           const fs=require('fs'),V='rev-eval-46255c55e8d1c5dc';
-          const f=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-freeze-v1.json`,'utf8'));
-          const a=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-authorization-v1.json`,'utf8'));
-          if(f.status!=='review_evaluation_production_v1_frozen_before_shadow'||f.production_scope!=='target_first'||f.immutable_after_shadow_open!==true||f.mechanisms?.standalone_output!==false||(f.pairs?.selected_pair_keys||[]).length) throw new Error('target-first production freeze drift');
-          if(a.status!=='review_evaluation_production_v1_authorized_after_frozen_shadow_evaluation'||a.shadow_evaluation_passed!==true||a.strict_blind_claim!==false||a.no_post_shadow_tuning!==true||a.mechanism_output_enabled!==false) throw new Error('production not authorized by frozen Shadow evaluation');
+          const expected=['acting_performance','breath_vocalization','dialogue_writing','voice_quality'];
+          const f=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-freeze-v2.json`,'utf8'));
+          const a=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-authorization-v2.json`,'utf8'));
+          if(f.status!=='review_evaluation_production_v2_frozen_before_new_disjoint_holdout'||f.production_scope!=='target_first_conservative'||f.immutable_after_new_holdout_open!==true||f.mechanisms?.standalone_output!==false||(f.pairs?.selected_pair_keys||[]).length) throw new Error('target-first production-v2 freeze drift');
+          if(JSON.stringify(f.targets?.selected_target_keys)!==JSON.stringify(expected)) throw new Error('target allowlist drift');
+          if(a.status!=='review_evaluation_production_v2_authorized_after_fresh_disjoint_shadow_v2'||a.fresh_shadow_v2_passed!==true||a.strict_blind_claim!==true||a.no_post_holdout_tuning!==true||a.mechanism_output_enabled!==false) throw new Error('production-v2 not authorized by fresh Shadow-v2');
           if(a.freeze_payload_sha256!==f.freeze_payload_sha256) throw new Error('freeze/authorization mismatch');
-          console.log({freeze:f.freeze_payload_sha256,authorization:a.status,strict_blind_claim:a.strict_blind_claim});
+          console.log({freeze:f.freeze_payload_sha256,authorization:a.status,targets:expected});
           NODE
 
       - name: Setup Node
@@ -97,7 +99,7 @@ jobs:
       - name: Install classifier dependencies
         run: python -m pip install --disable-pip-version-check numpy scikit-learn
 
-      - name: Run authorized frozen target-first shard inference
+      - name: Run authorized frozen target-first v2 shard inference
         working-directory: work
         run: |
           set -euo pipefail
@@ -113,9 +115,9 @@ jobs:
           set -euo pipefail
           tag=$(printf '%02d' "${REVIEW_EVAL_SHARD_INDEX}")
           dir=.tmp/review-evaluation-full-corpus/${VERSION}/shards
-          key=review-evaluation-full-corpus/${VERSION}/production-v1/shards
+          key=review-evaluation-full-corpus/${VERSION}/production-v2/shards
           test -s "$dir/shard-${tag}-predictions.jsonl.gz"
           test -s "$dir/shard-${tag}-prediction-manifest.json"
           npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/${key}/shard-${tag}-predictions.jsonl.gz" --file "$dir/shard-${tag}-predictions.jsonl.gz" --remote >/dev/null
           npx --yes wrangler@latest r2 object put "${R2_BUCKET_NAME}/${key}/shard-${tag}-prediction-manifest.json" --file "$dir/shard-${tag}-prediction-manifest.json" --remote >/dev/null
-          echo "uploaded shard ${tag}"
+          echo "uploaded production-v2 shard ${tag}"
