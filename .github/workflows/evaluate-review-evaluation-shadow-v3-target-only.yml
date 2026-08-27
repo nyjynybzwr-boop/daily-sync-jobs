@@ -1,0 +1,124 @@
+name: Evaluate frozen target-only v3 on fresh Shadow-v3 gold
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/15 * * * *'
+  push:
+    paths:
+      - '.review-evaluation-shadow-v3-evaluate-trigger'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: review-evaluation-shadow-v3-target-only-evaluate
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VERSION: rev-eval-46255c55e8d1c5dc
+    steps:
+      - name: Checkout public runner
+        uses: actions/checkout@v4
+
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Decide whether fresh Shadow-v3 gold is ready and unscored
+        id: gate
+        run: |
+          set -euo pipefail
+          base=work/data/research/review-evaluation-classifier/${VERSION}
+          gold=work/data/research/review-evaluation-calibration/otome-audio-otome-audio-review-evaluation-shadow-v3-target-only/human-gold
+          report="$base/shadow-v3-target-only-evaluation-report-v3.json"
+          if [ -s "$report" ]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "reason=already_scored" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          for n in 001 002 003 004; do
+            if [ ! -s "$gold/shadow-v3-target-gold-decisions-batch-${n}.json" ]; then
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              echo "reason=gold_incomplete" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          echo "reason=ready" >> "$GITHUB_OUTPUT"
+
+      - name: Report no-op state
+        if: steps.gate.outputs.should_run != 'true'
+        run: echo "Shadow-v3 evaluation skipped: ${{ steps.gate.outputs.reason }}"
+
+      - name: Validate fresh Shadow-v3 target-only gold
+        if: steps.gate.outputs.should_run == 'true'
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node --check scripts/validate-review-evaluation-shadow-v3-target-only-gold-decisions.mjs
+          node scripts/validate-review-evaluation-shadow-v3-target-only-gold-decisions.mjs
+
+      - name: Verify frozen prediction provenance and fixed v3 gates
+        if: steps.gate.outputs.should_run == 'true'
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs'),V='rev-eval-46255c55e8d1c5dc';
+          const f=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/production-freeze-v3.json`,'utf8'));
+          const p=JSON.parse(fs.readFileSync(`data/research/review-evaluation-classifier/${V}/shadow-v3-target-only-prediction-manifest-v3.json`,'utf8'));
+          const expectedTargets=['acting_performance','breath_vocalization','dialogue_writing','voice_quality'];
+          const expectedGates={target_micro_precision_min:0.8,target_predicted_assignments_min:20,target_distinct_predicted_labels_min:3};
+          if(f.status!=='review_evaluation_production_v3_target_only_frozen_before_fresh_disjoint_holdout'||f.production_scope!=='target_only_conservative') throw new Error('production-v3 freeze drift');
+          if(JSON.stringify(f.targets?.selected_target_keys)!==JSON.stringify(expectedTargets)||JSON.stringify(f.authorization_gate?.fixed_before_holdout_scoring)!==JSON.stringify(expectedGates)) throw new Error('target/gate drift');
+          if(f.classification?.production_output_enabled!==false||f.polarity?.production_output_enabled!==false||f.mechanisms?.standalone_output!==false||(f.pairs?.selected_pair_keys||[]).length) throw new Error('v3 non-target output drift');
+          if(p.status!=='shadow_v3_target_only_predictions_frozen_before_human_gold'||p.inputs?.freeze_payload_sha256!==f.freeze_payload_sha256) throw new Error('freeze/prediction provenance drift');
+          if(p.strict_blind_sequence?.human_gold_decisions_read!==false||p.strict_blind_sequence?.predictions_must_be_committed_before_human_gold_annotation_starts!==true) throw new Error('blind sequence drift');
+          console.log({freeze:f.freeze_payload_sha256,predictions:p.outputs?.predictions_sha256,gates:expectedGates});
+          NODE
+
+      - name: Score frozen target-only predictions exactly once
+        if: steps.gate.outputs.should_run == 'true'
+        working-directory: work
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/evaluate-review-evaluation-shadow-v3-target-only.py
+          python scripts/evaluate-review-evaluation-shadow-v3-target-only.py
+
+      - name: Commit immutable Shadow-v3 evaluation result and authorization if passed
+        if: steps.gate.outputs.should_run == 'true'
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          base=data/research/review-evaluation-classifier/${VERSION}
+          gold=data/research/review-evaluation-calibration/otome-audio-otome-audio-review-evaluation-shadow-v3-target-only/human-gold
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$gold/shadow-v3-target-gold-decisions.jsonl" "$gold/shadow-v3-target-gold-validation-summary.json" "$base/shadow-v3-target-only-evaluation-report-v3.json"
+          test ! -f "$base/production-authorization-v3.json" || git add "$base/production-authorization-v3.json"
+          git commit -m "[CF-Pages-Skip] [skip actions] reviews: score frozen target-only v3 on fresh Shadow-v3"
+          git reset --hard HEAD
+          for attempt in 1 2 3 4 5 6; do git fetch origin main; git rebase origin/main; if git push origin HEAD:main; then exit 0; fi; sleep $((attempt * 3)); done
+          exit 1
+
+      - name: Report fixed authorization decision
+        if: steps.gate.outputs.should_run == 'true'
+        working-directory: work
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, pathlib
+          p=pathlib.Path('data/research/review-evaluation-classifier/rev-eval-46255c55e8d1c5dc/shadow-v3-target-only-evaluation-report-v3.json')
+          r=json.loads(p.read_text())
+          print(json.dumps({'passed':r.get('decision',{}).get('passed'),'checks':r.get('checks'),'metrics':r.get('metrics')},ensure_ascii=False))
+          PY
