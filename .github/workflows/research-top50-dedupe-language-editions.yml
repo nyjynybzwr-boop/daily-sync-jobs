@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/research-top50-dedupe-language-editions.yml'
+      - 'scripts/research-patch-top50-dedupe.py'
+      - 'scripts/research-validate-top50-dedupe.py'
   workflow_dispatch:
 
 permissions:
@@ -25,8 +27,6 @@ jobs:
         run: git clone --quiet --depth=1 "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" "$RUNNER_TEMP/source"
 
       - name: Patch and persist collector
-        env:
-          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
         run: |
           cd "$RUNNER_TEMP/source"
           python "$GITHUB_WORKSPACE/scripts/research-patch-top50-dedupe.py"
