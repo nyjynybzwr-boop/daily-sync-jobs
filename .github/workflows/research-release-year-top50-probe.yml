@@ -59,6 +59,8 @@ jobs:
           MAX_RANKING_PAGES: '10'
           DETAIL_DELAY_MS: '800'
           PAGE_DELAY_MS: '1000'
+          DETAIL_MAX_ATTEMPTS: '4'
+          DETAIL_RETRY_DELAY_MS: '1500'
           AS_OF_DATE: '2026-08-29'
           DATA_ROOT: ${{ runner.temp }}/release-year-top50
         run: node scripts/backfill-release-year-sales-top50.mjs
