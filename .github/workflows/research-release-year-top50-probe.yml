@@ -1,0 +1,77 @@
+name: Research release-year Top50 probe
+
+on:
+  push:
+    branches:
+      - 'research/release-year-top50-runner-20260829'
+    paths:
+      - '.github/workflows/research-release-year-top50-probe.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: research-release-year-top50-probe
+  cancel-in-progress: false
+
+jobs:
+  collect-2023:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout runner repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Clone research source
+        run: git clone --depth 1 https://github.com/nyjynybzwr-boop/dlsite-trend-radar.git "$RUNNER_TEMP/dlsite-trend-radar"
+
+      - name: Install collector dependencies
+        working-directory: ${{ runner.temp }}/dlsite-trend-radar
+        run: |
+          npm install --no-save playwright devalue
+          npx playwright install --with-deps chromium
+
+      - name: Syntax check collector
+        working-directory: ${{ runner.temp }}/dlsite-trend-radar
+        run: node --check scripts/backfill-release-year-sales-top50.mjs
+
+      - name: Collect 2023 release-year sales Top50
+        id: collect
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/dlsite-trend-radar
+        env:
+          YEARS: '2023'
+          TARGET_COUNT: '50'
+          RANKING_SCAN_LIMIT: '200'
+          MAX_RANKING_PAGES: '10'
+          DETAIL_DELAY_MS: '800'
+          PAGE_DELAY_MS: '1000'
+          AS_OF_DATE: '2026-08-29'
+          DATA_ROOT: ${{ github.workspace }}/scratch/release-year-top50
+        run: node scripts/backfill-release-year-sales-top50.mjs
+
+      - name: Preserve result or partial audit
+        if: always()
+        run: |
+          if [ -z "$(git status --porcelain -- scratch/release-year-top50)" ]; then
+            echo 'No research output was produced.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scratch/release-year-top50
+          git commit -m 'research: capture 2023 release-year Top50 probe'
+          git pull --rebase origin "$GITHUB_REF_NAME"
+          git push origin "HEAD:$GITHUB_REF_NAME"
+
+      - name: Fail if collector was incomplete
+        if: steps.collect.outcome != 'success'
+        run: |
+          echo 'Collector did not complete; partial audit was preserved when available.'
+          exit 1
