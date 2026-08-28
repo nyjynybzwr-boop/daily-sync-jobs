@@ -1,4 +1,4 @@
-name: Research Top50 language-edition dedupe
+name: Research Top50 language dedupe
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  patch-rerun-persist:
+  correct-2026:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -24,105 +24,31 @@ jobs:
           GIT_LFS_SKIP_SMUDGE: '1'
         run: git clone --quiet --depth=1 "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" "$RUNNER_TEMP/source"
 
-      - name: Patch collector to dedupe language editions
-        working-directory: ${{ runner.temp }}/source
+      - name: Patch and persist collector
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          p=Path('scripts/backfill-release-year-sales-top50.mjs')
-          s=p.read_text()
-          old="""  const items = [];
-          const audit = [];
-          let stoppedReason = null;
-"""
-          new="""  const items = [];
-          const audit = [];
-          const selectedLanguageEditionIds = new Set();
-          let stoppedReason = null;
-"""
-          if old not in s:
-              raise SystemExit('collector anchor 1 not found')
-          s=s.replace(old,new,1)
-
-          old="""      } else {
-        const releaseYearRank = items.length + 1;
-        items.push({
-"""
-          new="""      } else {
-        const languageEditionIds = new Set([
-          candidate.product_id,
-          ...(detail.language_editions || [])
-            .map((entry) => String(entry?.workno || '').toUpperCase())
-            .filter(Boolean),
-        ]);
-        const duplicateLanguageEditionOf =
-          [...languageEditionIds].find((id) => selectedLanguageEditionIds.has(id)) || null;
-
-        if (duplicateLanguageEditionOf) {
-          audit.push({
-            product_id: candidate.product_id,
-            source_ranking_rank: candidate.source_ranking_rank,
-            decision: 'excluded_language_edition_duplicate',
-            detail_fetch_attempts: attempts,
-            duplicate_of_product_id: duplicateLanguageEditionOf,
-            language_edition_ids: [...languageEditionIds].sort(),
-            release_year: releaseYear,
-            release_date_text: detail.release_date_text || null,
-          });
-          console.log(
-            `[${year}] excluded language-edition duplicate: source rank ${candidate.source_ranking_rank} ${candidate.product_id} -> ${duplicateLanguageEditionOf}`,
-          );
-          await sleep(detailDelayMs);
-          continue;
-        }
-
-        const releaseYearRank = items.length + 1;
-        items.push({
-"""
-          if old not in s:
-              raise SystemExit('collector anchor 2 not found')
-          s=s.replace(old,new,1)
-
-          old="""          release_year_rank: releaseYearRank,
-        });
-        audit.push({
-"""
-          new="""          release_year_rank: releaseYearRank,
-        });
-        for (const id of languageEditionIds) selectedLanguageEditionIds.add(id);
-        audit.push({
-"""
-          if old not in s:
-              raise SystemExit('collector anchor 3 not found')
-          s=s.replace(old,new,1)
-          s=s.replace('schema_version: 2,','schema_version: 3,',1)
-          s=s.replace(
-            "definition: 'DLsite yearly sales ranking traversed from the top; only works released in the same calendar year are retained, preserving the source ranking order.',",
-            "definition: 'DLsite yearly sales ranking traversed from the top; only works released in the same calendar year are retained, preserving source ranking order; language editions of the same underlying work are counted once.',",
-            1,
-          )
-          p.write_text(s)
-          PY
+          cd "$RUNNER_TEMP/source"
+          python "$GITHUB_WORKSPACE/scripts/research-patch-top50-dedupe.py"
           node --check scripts/backfill-release-year-sales-top50.mjs
           git config user.name research-sync-bot
           git config user.email research-sync-bot@users.noreply.github.com
           git add scripts/backfill-release-year-sales-top50.mjs
-          git commit -m 'research: dedupe language editions in release-year Top50' || true
+          git commit -m "research: dedupe language editions in release-year Top50" || true
           git push origin main
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Install collector dependencies
-        working-directory: ${{ runner.temp }}/source
+      - name: Install dependencies
         run: |
+          cd "$RUNNER_TEMP/source"
           npm ci
           npm install --no-save playwright devalue
           npx playwright install --with-deps chromium
 
-      - name: Recollect corrected 2026 cohort
-        working-directory: ${{ runner.temp }}/source
+      - name: Recollect 2026
         env:
           YEARS: '2026'
           TARGET_COUNT: '50'
@@ -134,35 +60,17 @@ jobs:
           DETAIL_MAX_ATTEMPTS: '4'
           DETAIL_RETRY_DELAY_MS: '1500'
           AS_OF_DATE: '2026-08-29'
-          DATA_ROOT: ${{ runner.temp }}/corrected
-        run: node scripts/backfill-release-year-sales-top50.mjs
-
-      - name: Validate work-level dedupe and persist corrected raw
-        working-directory: ${{ runner.temp }}/source
         run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          src=Path('${{ runner.temp }}/corrected/raw/2026-current.json')
-          d=json.loads(src.read_text())
-          assert d['complete'] is True and d['item_count']==50
-          seen=set()
-          for i,x in enumerate(d['items'],1):
-              assert x['release_year']==2026 and x['release_year_rank']==i
-              group={x['product_id']}
-              group.update(str(e.get('workno','')).upper() for e in (x.get('language_editions') or []) if e.get('workno'))
-              assert not (seen & group), (i,x['product_id'],seen & group)
-              seen.update(group)
-          audits=[a for a in d['selection_audit'] if a.get('decision')=='excluded_language_edition_duplicate']
-          assert any(a.get('product_id')=='RJ01618847' and a.get('duplicate_of_product_id')=='RJ01622357' for a in audits)
-          out=Path('data/research/otome-audio-release-year-sales-top50/raw/2026-current.json')
-          out.parent.mkdir(parents=True,exist_ok=True)
-          out.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
-          print('corrected cutoff',d['items'][-1]['source_ranking_rank'],d['items'][-1]['product_id'])
-          print('language-edition exclusions',len(audits))
-          PY
+          cd "$RUNNER_TEMP/source"
+          DATA_ROOT="$RUNNER_TEMP/corrected" node scripts/backfill-release-year-sales-top50.mjs
+
+      - name: Validate and persist corrected 2026 raw
+        run: |
+          cd "$RUNNER_TEMP/source"
+          CORRECTED="$RUNNER_TEMP/corrected/raw/2026-current.json" python "$GITHUB_WORKSPACE/scripts/research-validate-top50-dedupe.py"
+          cp "$RUNNER_TEMP/corrected/raw/2026-current.json" data/research/otome-audio-release-year-sales-top50/raw/2026-current.json
           git add data/research/otome-audio-release-year-sales-top50/raw/2026-current.json
-          git commit -m 'research: correct 2026 Top50 to work-level cohort'
+          git commit -m "research: correct 2026 Top50 to work-level cohort"
           git push origin main
 
       - name: Upload corrected cohort
