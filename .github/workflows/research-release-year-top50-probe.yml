@@ -11,10 +11,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: research-release-year-top50-probe
+  cancel-in-progress: false
+
 jobs:
-  probe-ranking-dom:
+  collect-all-years:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Checkout runner repository
@@ -33,95 +37,46 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install browser dependencies
+      - name: Install collector dependencies
         working-directory: ${{ runner.temp }}/dlsite-trend-radar
         run: |
           npm ci
-          npm install --no-save playwright
+          npm install --no-save playwright devalue
           npx playwright install --with-deps chromium
 
-      - name: Probe 2023 yearly ranking DOM without titles
+      - name: Syntax check collector
         working-directory: ${{ runner.temp }}/dlsite-trend-radar
-        run: |
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs/promises';
-          import { chromium, devices } from 'playwright';
+        run: node --check scripts/backfill-release-year-sales-top50.mjs
 
-          const browser = await chromium.launch({ headless: true });
-          const context = await browser.newContext({ ...devices['iPhone 15'], locale: 'ja-JP', timezoneId: 'Asia/Tokyo' });
-          await context.route('**/*', (route) => ['image', 'media', 'font'].includes(route.request().resourceType()) ? route.abort() : route.continue());
-          const page = await context.newPage();
-          const url = 'https://www.dlsite.com/girls-touch/ranking/year?category=voice&year=2023';
-          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-          await page.waitForLoadState('load', { timeout: 15000 }).catch(() => {});
-          await page.waitForTimeout(4000);
+      - name: Collect release-year sales Top50 cohorts
+        id: collect
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/dlsite-trend-radar
+        env:
+          YEARS: '2023,2024,2025,2026'
+          TARGET_COUNT: '50'
+          RANKING_SCAN_LIMIT: '200'
+          MAX_RANKING_PAGES: '10'
+          RANKING_MAX_ATTEMPTS: '4'
+          DETAIL_DELAY_MS: '800'
+          PAGE_DELAY_MS: '1000'
+          DETAIL_MAX_ATTEMPTS: '4'
+          DETAIL_RETRY_DELAY_MS: '1500'
+          AS_OF_DATE: '2026-08-29'
+          DATA_ROOT: ${{ runner.temp }}/release-year-top50
+        run: node scripts/backfill-release-year-sales-top50.mjs
 
-          const result = await page.evaluate(() => {
-            const anchors = [...document.querySelectorAll('a[href*="/work/=/product_id/"]')];
-            const seen = new Set();
-            const rows = [];
-            const sig = (el) => {
-              if (!el) return null;
-              const cls = [...el.classList].join('.');
-              return `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${cls ? `.${cls}` : ''}`;
-            };
-            const rankSignal = (el) => {
-              const text = String(el?.innerText || '');
-              const matches = [...text.matchAll(/(?:^|\n|\s)(\d{1,3})\s*位(?:\s|$)/g)].map((m) => Number(m[1]));
-              return [...new Set(matches)].slice(0, 10);
-            };
-
-            for (const a of anchors) {
-              const m = String(a.href || '').match(/product_id\/(RJ\d+|VJ\d+|BJ\d+|AJ\d+)/i);
-              if (!m) continue;
-              const productId = m[1].toUpperCase();
-              if (seen.has(productId)) continue;
-              seen.add(productId);
-
-              const ancestors = [];
-              let node = a;
-              for (let depth = 0; node && depth < 9; depth += 1, node = node.parentElement) {
-                ancestors.push({
-                  depth,
-                  signature: sig(node),
-                  rank_signals: rankSignal(node),
-                  data_attrs: [...node.attributes]
-                    .filter((attr) => attr.name.startsWith('data-'))
-                    .map((attr) => [attr.name, String(attr.value).slice(0, 120)]),
-                });
-              }
-              rows.push({ order: rows.length + 1, product_id: productId, ancestors });
-              if (rows.length >= 120) break;
-            }
-
-            const classHistogram = {};
-            for (const el of document.querySelectorAll('[class]')) {
-              for (const cls of el.classList) {
-                if (!/(rank|work|product|item|list)/i.test(cls)) continue;
-                classHistogram[cls] = (classHistogram[cls] || 0) + 1;
-              }
-            }
-
-            return {
-              final_url: location.href,
-              unique_product_links: rows.length,
-              rows,
-              class_histogram: Object.entries(classHistogram).sort((a, b) => b[1] - a[1]).slice(0, 120),
-            };
-          });
-
-          const out = `${process.env.RUNNER_TEMP}/ranking-dom-2023.json`;
-          await fs.writeFile(out, JSON.stringify(result, null, 2));
-          console.log(`final_url=${result.final_url}`);
-          console.log(`unique_product_links=${result.unique_product_links}`);
-          console.log('first_20_product_ids=' + result.rows.slice(0, 20).map((x) => x.product_id).join(','));
-          console.log('class_histogram=' + JSON.stringify(result.class_histogram.slice(0, 40)));
-          await browser.close();
-          NODE
-
-      - name: Upload DOM probe
+      - name: Upload complete or partial cohort audit
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: yearly-ranking-dom-2023
-          path: ${{ runner.temp }}/ranking-dom-2023.json
+          name: release-year-top50-2023-2026
+          path: ${{ runner.temp }}/release-year-top50
+          if-no-files-found: warn
           retention-days: 3
+
+      - name: Fail if any cohort was incomplete
+        if: steps.collect.outcome != 'success'
+        run: |
+          echo 'At least one cohort was incomplete; inspect the preserved artifact.'
+          exit 1
