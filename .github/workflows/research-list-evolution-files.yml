@@ -1,0 +1,26 @@
+name: Research list evolution filenames
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/research-list-evolution-files.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  list-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout private research source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --depth=1 "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" "$RUNNER_TEMP/source"
+      - name: List research filenames only
+        run: |
+          find "$RUNNER_TEMP/source/data/research/otome-audio-ranking-evolution-2023-2026" -maxdepth 1 -type f -printf '%f\n' | sort
