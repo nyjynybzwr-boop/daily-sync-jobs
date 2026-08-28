@@ -15,12 +15,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout private research source
+      - name: List private research filenames via API only
         env:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
-          GIT_LFS_SKIP_SMUDGE: '1'
-        run: git clone --quiet --depth=1 "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" "$RUNNER_TEMP/source"
-      - name: List research filenames only
         run: |
-          find "$RUNNER_TEMP/source/data/research/otome-audio-ranking-evolution-2023-2026" -maxdepth 1 -type f -printf '%f\n' | sort
+          curl -fsSL \
+            -H "Authorization: Bearer ${SYNC_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${SOURCE_REPO}/contents/data/research/otome-audio-ranking-evolution-2023-2026" \
+            | jq -r '.[] | select(.type=="file") | .name' \
+            | sort
