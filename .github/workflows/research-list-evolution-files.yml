@@ -1,4 +1,4 @@
-name: Research list evolution filenames
+name: Research export legacy coding
 
 on:
   push:
@@ -11,18 +11,30 @@ permissions:
   contents: read
 
 jobs:
-  list-files:
+  export-legacy-coding:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: List private research filenames via API only
+      - name: Fetch selected legacy coding files privately
         env:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
         run: |
-          curl -fsSL \
-            -H "Authorization: Bearer ${SYNC_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${SOURCE_REPO}/contents/data/research/otome-audio-ranking-evolution-2023-2026" \
-            | jq -r '.[] | select(.type=="file") | .name' \
-            | sort
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/legacy"
+          for f in top30-manual-coding-v1.csv top30-mechanism-shift-coding-v1.csv heroine-evolution-manual-audit-v1.csv transition-codebook-v2.md; do
+            curl -fsSL \
+              -H "Authorization: Bearer ${SYNC_TOKEN}" \
+              -H "Accept: application/vnd.github.raw+json" \
+              "https://api.github.com/repos/${SOURCE_REPO}/contents/data/research/otome-audio-ranking-evolution-2023-2026/${f}" \
+              -o "$RUNNER_TEMP/legacy/$f"
+          done
+          test "$(wc -l < "$RUNNER_TEMP/legacy/top30-manual-coding-v1.csv")" -ge 121
+          test "$(wc -l < "$RUNNER_TEMP/legacy/top30-mechanism-shift-coding-v1.csv")" -ge 121
+          test "$(wc -l < "$RUNNER_TEMP/legacy/heroine-evolution-manual-audit-v1.csv")" -ge 121
+      - name: Upload legacy coding artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-top30-coding
+          path: ${{ runner.temp }}/legacy
+          retention-days: 1
