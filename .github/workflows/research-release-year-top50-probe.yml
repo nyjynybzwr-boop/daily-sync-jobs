@@ -24,17 +24,23 @@ jobs:
       - name: Checkout runner repository
         uses: actions/checkout@v4
 
+      - name: Checkout private research source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" "$RUNNER_TEMP/dlsite-trend-radar"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Clone research source
-        run: git clone --depth 1 https://github.com/nyjynybzwr-boop/dlsite-trend-radar.git "$RUNNER_TEMP/dlsite-trend-radar"
-
       - name: Install collector dependencies
         working-directory: ${{ runner.temp }}/dlsite-trend-radar
         run: |
+          npm ci
           npm install --no-save playwright devalue
           npx playwright install --with-deps chromium
 
