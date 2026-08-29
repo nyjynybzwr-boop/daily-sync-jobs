@@ -1,0 +1,83 @@
+name: Research sales dynamics work trajectory once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/research-sales-dynamics-work-trajectory-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-persist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone private source repo without bulk LFS smudge
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --depth=1 "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" "$RUNNER_TEMP/source"
+
+      - name: Pull only work identity LFS object if needed
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          git lfs install --local
+          git lfs pull --include='data/research/otome-audio-sales-dynamics/work-edition-map-v1.json' --exclude=''
+          test -s data/research/otome-audio-sales-dynamics/work-edition-map-v1.json
+          if grep -q '^version https://git-lfs.github.com/spec/v1' data/research/otome-audio-sales-dynamics/work-edition-map-v1.json; then
+            echo 'work-edition-map LFS object did not smudge' >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate work trajectory builder syntax
+        working-directory: ${{ runner.temp }}/source
+        run: node --check scripts/build-otome-sales-dynamics-work-trajectories-v1.mjs
+
+      - name: Build work-level trajectories and empirical distribution audit
+        working-directory: ${{ runner.temp }}/source
+        run: node scripts/build-otome-sales-dynamics-work-trajectories-v1.mjs
+
+      - name: Validate work-level outputs
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = 'data/research/otome-audio-sales-dynamics/';
+          const prod = JSON.parse(fs.readFileSync(p+'daily-top30-trajectories-v0.json','utf8'));
+          const work = JSON.parse(fs.readFileSync(p+'daily-top30-work-trajectories-v1.json','utf8'));
+          const audit = JSON.parse(fs.readFileSync(p+'trajectory-distribution-audit-v0.json','utf8'));
+          const rows = work.rows || work.works || work.trajectories || [];
+          if (!Array.isArray(rows) || rows.length < 1) throw new Error('no work trajectory rows');
+          const productCount = prod.work_product_count ?? (prod.rows || []).length;
+          if (productCount && rows.length > productCount) throw new Error(`work rows ${rows.length} exceed product rows ${productCount}`);
+          if (!audit || typeof audit !== 'object') throw new Error('missing distribution audit');
+          const text = JSON.stringify(audit);
+          if (!/retention|observed|quantile|distribution/i.test(text)) throw new Error('distribution audit lacks expected metrics');
+          console.log(JSON.stringify({product_rows: productCount, work_rows: rows.length, audit}, null, 2));
+          NODE
+
+      - name: Persist validated work-level outputs
+        working-directory: ${{ runner.temp }}/source
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+        run: |
+          git config user.name research-sync-bot
+          git config user.email research-sync-bot@users.noreply.github.com
+          git add \
+            data/research/otome-audio-sales-dynamics/daily-top30-work-trajectories-v1.json \
+            data/research/otome-audio-sales-dynamics/daily-top30-work-trajectories-v1.csv \
+            data/research/otome-audio-sales-dynamics/trajectory-distribution-audit-v0.json
+          git commit -m '[skip actions] [CF-Pages-Skip] research: materialize work-level sales trajectories' || exit 0
+          git push origin main
