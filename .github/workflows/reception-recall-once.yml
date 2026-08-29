@@ -37,9 +37,22 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Self-test frozen-packet gate replay
+      - name: Correct and persist stale replay self-test
         working-directory: work
-        run: node scripts/replay-review-reception-recall-from-frozen-packet.mjs --self-test
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/replay-review-reception-recall-from-frozen-packet.mjs')
+          s = p.read_text()
+          old = """  assert(units.length === 2, 'newline/period split mismatch');\n  assert(units[0].survives_existing_candidate_gate === false && units[0].drop_reason === 'short_lt6', 'short gate mismatch');\n  assert(units[1].survives_existing_candidate_gate === true, 'positive cue gate mismatch');"""
+          new = """  assert(units.length === 3, 'newline/period split mismatch');\n  assert(units[0].survives_existing_candidate_gate === false && units[0].drop_reason === 'short_lt6', 'short gate mismatch');\n  assert(units[1].survives_existing_candidate_gate === false && units[1].drop_reason === 'short_lt6' && units[2].survives_existing_candidate_gate === true, 'period/newline boundary gate mismatch');"""
+          if old not in s:
+              raise SystemExit('stale self-test block not found exactly; refusing broad edit')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          node scripts/replay-review-reception-recall-from-frozen-packet.mjs --self-test
+          bash scripts/ci/push.sh "scripts/replay-review-reception-recall-from-frozen-packet.mjs" "[skip actions] [CF-Pages-Skip] research: align recall replay self-test with frozen splitter"
 
       - name: Run frozen-packet gate replay
         working-directory: work
