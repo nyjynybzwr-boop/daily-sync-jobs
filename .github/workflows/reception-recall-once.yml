@@ -46,13 +46,6 @@ jobs:
           p = Path('scripts/replay-review-reception-recall-from-frozen-packet.mjs')
           s = p.read_text()
 
-          old_test = """  assert(units.length === 2, 'newline/period split mismatch');\n  assert(units[0].survives_existing_candidate_gate === false && units[0].drop_reason === 'short_lt6', 'short gate mismatch');\n  assert(units[1].survives_existing_candidate_gate === true, 'positive cue gate mismatch');"""
-          new_test = """  assert(units.length === 3, 'newline/period split mismatch');\n  assert(units[0].survives_existing_candidate_gate === false && units[0].drop_reason === 'short_lt6', 'short gate mismatch');\n  assert(units[1].survives_existing_candidate_gate === false && units[1].drop_reason === 'short_lt6' && units[2].survives_existing_candidate_gate === true, 'period/newline boundary gate mismatch');"""
-          if old_test in s:
-              s = s.replace(old_test, new_test, 1)
-          elif new_test not in s:
-              raise SystemExit('self-test block is neither known-old nor known-current')
-
           old_span = "  const span = normalize(spanText);"
           new_span = "  const span = normalize(sanitizeText(spanText).replace(/\\n+/g, '。'));"
           if old_span in s:
@@ -73,6 +66,13 @@ jobs:
               s = s.replace(old_err, new_err, 1)
           elif new_err not in s:
               raise SystemExit('unmapped-span error site is neither known-old nor known-current')
+
+          old_cross = "  assert(mapped && mapped.mode === 'strip_intermediate_terminal_period' && mapped.units.length === 2, 'adjacent newline recovery mismatch');"
+          new_cross = "  assert(mapped && mapped.mode === 'exact_concat' && mapped.units.length === 2, 'adjacent newline recovery mismatch');"
+          if old_cross in s:
+              s = s.replace(old_cross, new_cross, 1)
+          elif new_cross not in s:
+              raise SystemExit('newline recovery assertion is neither known-old nor known-current')
 
           marker = "  const cross = buildUnits('聴いているこちらも\\n我慢の限界になりました。');"
           regression = """  const newlineSpanUnits = buildUnits('途中から形勢逆転。\\n彼氏くんに襲われてしまうヒロインちゃんです。');\n  assert(mapSignal(newlineSpanUnits, '途中から形勢逆転。\\n彼氏くんに襲われてしまうヒロインちゃんです。'), 'newline-bearing gold span mapping mismatch');\n  const longSpanText = 'しかし、そのあとのやっていることは普通にやばい。怖い。入籍までしますか?普通。怖いです。怖かった。それが良いのですが。';\n  assert(mapSignal(buildUnits(longSpanText), longSpanText), 'long multi-unit gold span mapping mismatch');\n"""
