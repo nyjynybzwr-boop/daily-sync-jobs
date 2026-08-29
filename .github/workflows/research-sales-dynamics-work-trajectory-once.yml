@@ -25,7 +25,7 @@ jobs:
         run: |
           git clone --quiet --depth=1 "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" "$RUNNER_TEMP/source"
 
-      - name: Pull only work identity LFS object if needed
+      - name: Pull only existing work identity LFS object
         working-directory: ${{ runner.temp }}/source
         run: |
           git lfs install --local
@@ -40,13 +40,13 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Validate work trajectory builder syntax
+      - name: Validate work trajectory v2 builder syntax
         working-directory: ${{ runner.temp }}/source
-        run: node --check scripts/build-otome-sales-dynamics-work-trajectories-v1.mjs
+        run: node --check scripts/build-otome-sales-dynamics-work-trajectories-v2.mjs
 
-      - name: Build work-level trajectories and empirical distribution audit
+      - name: Build work-level trajectories with stored daily identity augmentation
         working-directory: ${{ runner.temp }}/source
-        run: node scripts/build-otome-sales-dynamics-work-trajectories-v1.mjs
+        run: node scripts/build-otome-sales-dynamics-work-trajectories-v2.mjs
 
       - name: Validate work-level outputs
         working-directory: ${{ runner.temp }}/source
@@ -55,16 +55,27 @@ jobs:
           const fs = require('fs');
           const p = 'data/research/otome-audio-sales-dynamics/';
           const prod = JSON.parse(fs.readFileSync(p+'daily-top30-trajectories-v0.json','utf8'));
-          const work = JSON.parse(fs.readFileSync(p+'daily-top30-work-trajectories-v1.json','utf8'));
-          const audit = JSON.parse(fs.readFileSync(p+'trajectory-distribution-audit-v0.json','utf8'));
-          const rows = work.rows || work.works || work.trajectories || [];
-          if (!Array.isArray(rows) || rows.length < 1) throw new Error('no work trajectory rows');
+          const work = JSON.parse(fs.readFileSync(p+'daily-top30-work-trajectories-v2.json','utf8'));
+          const audit = JSON.parse(fs.readFileSync(p+'trajectory-distribution-audit-v1.json','utf8'));
+          const rows = work.rows || [];
           const productCount = prod.work_product_count ?? (prod.rows || []).length;
-          if (productCount && rows.length > productCount) throw new Error(`work rows ${rows.length} exceed product rows ${productCount}`);
-          if (!audit || typeof audit !== 'object') throw new Error('missing distribution audit');
-          const text = JSON.stringify(audit);
-          if (!/retention|observed|quantile|distribution/i.test(text)) throw new Error('distribution audit lacks expected metrics');
-          console.log(JSON.stringify({product_rows: productCount, work_rows: rows.length, audit}, null, 2));
+          if (!Array.isArray(rows) || rows.length < 1) throw new Error('no work trajectory rows');
+          if (rows.length > productCount) throw new Error(`work rows ${rows.length} exceed product rows ${productCount}`);
+          if (audit.product_trajectory_rows !== productCount) throw new Error('audit product count mismatch');
+          if (audit.work_trajectory_rows !== rows.length) throw new Error('audit work count mismatch');
+          if (!audit.identity_rule.includes('stored in daily ranking snapshots')) throw new Error('identity provenance missing');
+          if (!audit.retention?.third_observed_snapshot || !audit.retention?.seventh_observed_snapshot) throw new Error('retention audit missing');
+          console.log(JSON.stringify({
+            product_rows: productCount,
+            work_rows: rows.length,
+            absent_from_existing_map: audit.trajectory_products_absent_from_existing_map,
+            resolved_multi_product_from_daily: audit.trajectory_products_resolved_into_multi_product_group_by_daily_metadata,
+            daily_identity_edges: audit.stored_daily_language_identity_edges,
+            collisions: audit.same_date_multi_edition_collision_count,
+            distributions: audit.distributions,
+            retention: audit.retention,
+            pilot_shape_counts: audit.pilot_shape_counts,
+          }, null, 2));
           NODE
 
       - name: Persist validated work-level outputs
@@ -76,8 +87,8 @@ jobs:
           git config user.name research-sync-bot
           git config user.email research-sync-bot@users.noreply.github.com
           git add \
-            data/research/otome-audio-sales-dynamics/daily-top30-work-trajectories-v1.json \
-            data/research/otome-audio-sales-dynamics/daily-top30-work-trajectories-v1.csv \
-            data/research/otome-audio-sales-dynamics/trajectory-distribution-audit-v0.json
-          git commit -m '[skip actions] [CF-Pages-Skip] research: materialize work-level sales trajectories' || exit 0
+            data/research/otome-audio-sales-dynamics/daily-top30-work-trajectories-v2.json \
+            data/research/otome-audio-sales-dynamics/daily-top30-work-trajectories-v2.csv \
+            data/research/otome-audio-sales-dynamics/trajectory-distribution-audit-v1.json
+          git commit -m '[skip actions] [CF-Pages-Skip] research: materialize daily-augmented work trajectories' || exit 0
           git push origin main
