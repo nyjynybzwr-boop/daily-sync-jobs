@@ -45,6 +45,11 @@ jobs:
         run: |
           node --check scripts/build-otome-sales-dynamics-trajectory.mjs
           node --check scripts/build-otome-sales-dynamics-selection-base-v1.mjs
+          node --check scripts/audit-otome-sales-dynamics-top50-denominator-join.mjs
+
+      - name: Audit Top50 denominator join
+        working-directory: ${{ runner.temp }}/source
+        run: node scripts/audit-otome-sales-dynamics-top50-denominator-join.mjs
 
       - name: Build stored-data trajectory and selection bases
         working-directory: ${{ runner.temp }}/source
@@ -85,9 +90,6 @@ jobs:
 
       - name: Persist research outputs to private source repo
         working-directory: ${{ runner.temp }}/source
-        env:
-          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
-          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
         run: |
           git config user.name research-sync-bot
           git config user.email research-sync-bot@users.noreply.github.com
