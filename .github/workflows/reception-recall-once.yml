@@ -47,16 +47,33 @@ jobs:
           s = p.read_text()
           old = """  assert(units.length === 2, 'newline/period split mismatch');\n  assert(units[0].survives_existing_candidate_gate === false && units[0].drop_reason === 'short_lt6', 'short gate mismatch');\n  assert(units[1].survives_existing_candidate_gate === true, 'positive cue gate mismatch');"""
           new = """  assert(units.length === 3, 'newline/period split mismatch');\n  assert(units[0].survives_existing_candidate_gate === false && units[0].drop_reason === 'short_lt6', 'short gate mismatch');\n  assert(units[1].survives_existing_candidate_gate === false && units[1].drop_reason === 'short_lt6' && units[2].survives_existing_candidate_gate === true, 'period/newline boundary gate mismatch');"""
-          if old not in s:
-              raise SystemExit('stale self-test block not found exactly; refusing broad edit')
-          p.write_text(s.replace(old, new, 1))
+          if old in s:
+              p.write_text(s.replace(old, new, 1))
+              print('patched stale self-test')
+          elif new in s:
+              print('self-test already current')
+          else:
+              raise SystemExit('self-test block is neither known-old nor known-current; refusing broad edit')
           PY
           node scripts/replay-review-reception-recall-from-frozen-packet.mjs --self-test
-          bash scripts/ci/push.sh "scripts/replay-review-reception-recall-from-frozen-packet.mjs" "[skip actions] [CF-Pages-Skip] research: align recall replay self-test with frozen splitter"
+          if ! git diff --quiet -- scripts/replay-review-reception-recall-from-frozen-packet.mjs; then
+            bash scripts/ci/push.sh "scripts/replay-review-reception-recall-from-frozen-packet.mjs" "[skip actions] [CF-Pages-Skip] research: align recall replay self-test with frozen splitter"
+          fi
 
       - name: Run frozen-packet gate replay
         working-directory: work
-        run: node scripts/replay-review-reception-recall-from-frozen-packet.mjs
+        run: |
+          set -o pipefail
+          node scripts/replay-review-reception-recall-from-frozen-packet.mjs 2>&1 | tee ../reception-replay.log
+
+      - name: Upload replay diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reception-replay-diagnostic
+          path: reception-replay.log
+          if-no-files-found: ignore
+          retention-days: 1
 
       - name: Validate replay structure and arithmetic
         working-directory: work
