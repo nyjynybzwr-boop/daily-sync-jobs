@@ -34,6 +34,17 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Ensure frozen 320-row decisions are materialized
+        working-directory: work
+        run: |
+          set -euo pipefail
+          DECISIONS="data/research/review-reception-profile/evidence-recall-audit-v1/blind-full-review-annotation-decisions-v1.json"
+          if [ ! -f "$DECISIONS" ]; then
+            git show 37b7715d8bc351a911adfa0cf506563a8cd01cc2:"$DECISIONS" > "$DECISIONS"
+          fi
+          test -s "$DECISIONS"
+          node scripts/validate-review-reception-recall-complete.mjs
+
       - name: Run frozen-packet gate replay
         working-directory: work
         run: node scripts/replay-review-reception-recall-from-frozen-packet.mjs
