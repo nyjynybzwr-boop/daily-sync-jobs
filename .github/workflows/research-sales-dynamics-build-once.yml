@@ -1,0 +1,103 @@
+name: Research sales dynamics stored-data build once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/research-sales-dynamics-build-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-persist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone private source repo with LFS metadata
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          git clone --quiet --depth=1 "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" "$RUNNER_TEMP/source"
+
+      - name: Pull only the stored otome catalog LFS object
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          git lfs install --local
+          git lfs pull --include='data/catalog/full/details.json' --exclude=''
+          test -s data/catalog/full/details.json
+          if grep -q '^version https://git-lfs.github.com/spec/v1' data/catalog/full/details.json; then
+            echo 'catalog LFS object did not smudge' >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate builder syntax
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          node --check scripts/build-otome-sales-dynamics-trajectory.mjs
+          node --check scripts/build-otome-sales-dynamics-selection-base-v1.mjs
+
+      - name: Build stored-data trajectory and selection bases
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          node scripts/build-otome-sales-dynamics-trajectory.mjs
+          node scripts/build-otome-sales-dynamics-selection-base-v1.mjs
+
+      - name: Validate generated outputs
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = 'data/research/otome-audio-sales-dynamics/';
+          const inventory = JSON.parse(fs.readFileSync(p+'data-inventory-v1.json','utf8'));
+          const trajectory = JSON.parse(fs.readFileSync(p+'daily-top30-trajectories-v0.json','utf8'));
+          const editions = JSON.parse(fs.readFileSync(p+'work-edition-map-v1.json','utf8'));
+          const denominator = JSON.parse(fs.readFileSync(p+'all-release-denominator-v0.json','utf8'));
+          const selection = JSON.parse(fs.readFileSync(p+'top50-selection-base-v0.json','utf8'));
+          const missing = JSON.parse(fs.readFileSync(p+'covariate-missingness-v0.json','utf8'));
+          if (inventory.snapshot_count < 1) throw new Error('no daily snapshots');
+          if (trajectory.work_product_count < 1) throw new Error('no trajectory rows');
+          if (editions.component_count < 1) throw new Error('no edition components');
+          if (denominator.rows.length < 200) throw new Error('denominator unexpectedly small');
+          for (const y of [2023,2024,2025,2026]) {
+            const s = denominator.year_summary.find(x=>x.year===y);
+            if (!s || s.top50_joined !== 50 || !s.complete_top50_join) throw new Error('incomplete Top50 join '+y+': '+JSON.stringify(s));
+          }
+          if (selection.rows.length !== denominator.rows.length) throw new Error('selection/denominator row mismatch');
+          if (missing.denominator_rows !== denominator.rows.length) throw new Error('missingness denominator mismatch');
+          console.log(JSON.stringify({
+            snapshots: inventory.snapshot_count,
+            trajectory_products: trajectory.work_product_count,
+            edition_components: editions.component_count,
+            denominator_rows: denominator.rows.length,
+            year_summary: denominator.year_summary,
+          }, null, 2));
+          NODE
+
+      - name: Persist research outputs to private source repo
+        working-directory: ${{ runner.temp }}/source
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+        run: |
+          git config user.name research-sync-bot
+          git config user.email research-sync-bot@users.noreply.github.com
+          git add \
+            data/research/otome-audio-sales-dynamics/data-inventory-v1.json \
+            data/research/otome-audio-sales-dynamics/daily-top30-trajectories-v0.json \
+            data/research/otome-audio-sales-dynamics/daily-top30-trajectories-v0.csv \
+            data/research/otome-audio-sales-dynamics/work-edition-map-v1.json \
+            data/research/otome-audio-sales-dynamics/all-release-denominator-v0.json \
+            data/research/otome-audio-sales-dynamics/top50-selection-base-v0.json \
+            data/research/otome-audio-sales-dynamics/covariate-missingness-v0.json
+          git commit -m '[skip actions] [CF-Pages-Skip] research: materialize sales dynamics base datasets' || exit 0
+          git push origin main
