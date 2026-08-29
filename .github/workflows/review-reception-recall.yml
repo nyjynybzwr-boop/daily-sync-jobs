@@ -1,0 +1,69 @@
+name: Review reception recall audit
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/review-reception-recall.yml'
+
+concurrency:
+  group: review-reception-recall-audit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          if ! git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work >/tmp/checkout.log 2>&1; then
+            echo 'Source checkout failed.'
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci >/tmp/npm-ci.log 2>&1 || (echo 'Dependency installation failed.'; exit 1)
+
+      - name: Reconstruct frozen extractor trace
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node scripts/reconstruct-review-reception-recall-trace-from-frozen-packet.mjs >/tmp/recall-audit.log 2>&1 || (echo 'Frozen trace reconstruction failed.'; exit 1)
+          echo 'Frozen trace reconstructed and original selection-summary counts matched.'
+
+      - name: Run frozen five-axis recall audit
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node scripts/run-review-reception-recall-audit-v3.mjs >>/tmp/recall-audit.log 2>&1 || (echo 'Five-axis recall audit failed.'; exit 1)
+          echo 'Five-axis recall audit completed.'
+
+      - name: Run adjacent-unit sensitivity and acceptance guard
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node scripts/analyze-review-reception-recall-adjacent-unit-sensitivity.mjs >>/tmp/recall-audit.log 2>&1 || (echo 'Adjacent-unit sensitivity analysis failed.'; exit 1)
+          node scripts/validate-review-reception-recall-acceptance.mjs >>/tmp/recall-audit.log 2>&1 || (echo 'Recall acceptance validation failed.'; exit 1)
+          echo 'Recall sensitivity and denominator acceptance validated.'
+
+      - name: Push private audit results
+        working-directory: work
+        run: |
+          set -euo pipefail
+          bash scripts/ci/push.sh "data/research/review-reception-profile/evidence-recall-audit-v1" "[skip actions] [CF-Pages-Skip] reviews: run frozen five-axis recall audit" >/tmp/push.log 2>&1 || (echo 'Private audit result push failed.'; exit 1)
+          echo 'Private audit results pushed.'
