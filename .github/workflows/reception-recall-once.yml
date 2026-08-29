@@ -60,6 +60,22 @@ jobs:
             bash scripts/ci/push.sh "scripts/replay-review-reception-recall-from-frozen-packet.mjs" "[skip actions] [CF-Pages-Skip] research: align recall replay self-test with frozen splitter"
           fi
 
+      - name: Instrument unmapped-span diagnostics
+        working-directory: work
+        run: |
+          set -euo pipefail
+          cp scripts/replay-review-reception-recall-from-frozen-packet.mjs ../replay-script.clean.mjs
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/replay-review-reception-recall-from-frozen-packet.mjs')
+          s = p.read_text()
+          old = "errors.push(`${id} signal ${signalIndex + 1}: span cannot be mapped by direct or adjacent-unit replay`);"
+          new = "errors.push(`${id} signal ${signalIndex + 1}: span cannot be mapped by direct or adjacent-unit replay: ${JSON.stringify(spanText)}`);"
+          if old not in s:
+              raise SystemExit('unmapped-span error site not found exactly')
+          p.write_text(s.replace(old, new, 1))
+          PY
+
       - name: Run frozen-packet gate replay
         working-directory: work
         run: |
@@ -74,6 +90,13 @@ jobs:
           path: reception-replay.log
           if-no-files-found: ignore
           retention-days: 1
+
+      - name: Restore clean replay script
+        if: always()
+        run: |
+          if [ -f replay-script.clean.mjs ]; then
+            cp replay-script.clean.mjs work/scripts/replay-review-reception-recall-from-frozen-packet.mjs
+          fi
 
       - name: Validate replay structure and arithmetic
         working-directory: work
