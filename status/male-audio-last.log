@@ -1,75 +1,15 @@
-day: 30 source works | https://www.dlsite.com/maniax/ranking/day?category=voice | 同人 ボイス・ASMRランキング (24時間) | DLsite 同人 - R18
-week: 30 source works | https://www.dlsite.com/maniax/ranking/week?category=voice | 同人 ボイス・ASMRランキング (7日間) | DLsite 同人 - R18
-month: 30 source works | https://www.dlsite.com/maniax/ranking/month?category=voice | 同人 ボイス・ASMRランキング (30日間) | DLsite 同人 - R18
-Enrich 1/61: RJ01675439
-Enrich 2/61: RJ01682626
-Enrich 3/61: RJ01639627
-Enrich 4/61: RJ01639630
-Enrich 5/61: RJ01683551
-Enrich 6/61: RJ01700826
-Enrich 7/61: RJ01697882
-Enrich 8/61: RJ01675023
-Enrich 9/61: RJ01700554
-Enrich 10/61: RJ01692757
-Enrich 11/61: RJ01700446
-Enrich 12/61: RJ01698228
-Enrich 13/61: RJ01694928
-Enrich 14/61: RJ01691274
-Enrich 15/61: RJ01690975
-Enrich 16/61: RJ01704144
-Enrich 17/61: RJ01701383
-Enrich 18/61: RJ01673201
-Enrich 19/61: RJ01693033
-Enrich 20/61: RJ01696644
-Enrich 21/61: RJ01698835
-Enrich 22/61: RJ01688539
-Enrich 23/61: RJ01690720
-Enrich 24/61: RJ01694722
-Enrich 25/61: RJ01682178
-Enrich 26/61: RJ01692094
-Enrich 27/61: RJ01687466
-Enrich 28/61: RJ01653899
-Enrich 29/61: RJ01650239
-Enrich 30/61: RJ01687128
-Enrich 31/61: RJ01698658
-Enrich 32/61: RJ01702067
-Enrich 33/61: RJ01681929
-Enrich 34/61: RJ01678178
-Enrich 35/61: RJ01697283
-Enrich 36/61: RJ01688728
-Enrich 37/61: RJ01693856
-Enrich 38/61: RJ01692978
-Enrich 39/61: RJ01691463
-Enrich 40/61: RJ01696339
-Enrich 41/61: RJ01678210
-Enrich 42/61: RJ01675771
-Enrich 43/61: RJ01648555
-Enrich 44/61: RJ01688479
-Enrich 45/61: RJ01673629
-Enrich 46/61: RJ01673453
-Enrich 47/61: RJ01650181
-Enrich 48/61: RJ01665656
-Enrich 49/61: RJ01676679
-Enrich 50/61: RJ01673437
-Enrich 51/61: RJ01680262
-Enrich 52/61: RJ01244814
-Enrich 53/61: RJ01679028
-Enrich 54/61: RJ01673722
-Enrich 55/61: RJ01676898
-Enrich 56/61: RJ01635577
-Enrich 57/61: RJ01673508
-Enrich 58/61: RJ01676747
-Enrich 59/61: RJ01683436
-Enrich 60/61: RJ01682378
-Enrich 61/61: RJ01681691
-Saved male day 30 works to data/male/raw/2026-08-29.json
-Saved male week 30 works to data/male/windows/week/raw/2026-08-29.json
-Saved male month 30 works to data/male/windows/month/raw/2026-08-29.json
-Analyzed 11 day(s). Latest: 2026-08-29, 30 works.
-Analyzed week: 11 snapshot(s), latest 2026-08-29.
-Analyzed month: 11 snapshot(s), latest 2026-08-29.
+file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/scripts/collect-male-rankings-plain.mjs:89
+    throw new Error(`Unexpected male ${period} ranking title: ${title}`);
+          ^
+
+Error: Unexpected male day ranking title: 
+    at fetchRanking (file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/scripts/collect-male-rankings-plain.mjs:89:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/scripts/collect-male-rankings-plain.mjs:105:58
+
+Node.js v22.23.2
 
 ---
-finished_at=2026-08-29T00:56:20Z
-source_head=bfeee0a4108865e9913b403ed98193d8f1a38649
-job_status=success
+finished_at=2026-08-29T19:38:37Z
+source_head=f2d6345667b25cb7c9ab5cfb6fa423461f52f1af
+job_status=failure
