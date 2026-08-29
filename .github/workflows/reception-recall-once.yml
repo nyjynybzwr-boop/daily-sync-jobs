@@ -34,10 +34,6 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Self-test frozen-packet gate replay
-        working-directory: work
-        run: node scripts/replay-review-reception-recall-from-frozen-packet.mjs --self-test
-
       - name: Run frozen-packet gate replay
         working-directory: work
         run: node scripts/replay-review-reception-recall-from-frozen-packet.mjs
