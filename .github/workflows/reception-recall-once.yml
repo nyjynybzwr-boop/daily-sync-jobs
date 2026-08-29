@@ -29,6 +29,7 @@ jobs:
           git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/nyjynybzwr-boop/dlsite-trend-radar.git" work
           cd work
           printf 'source_head=%s\n' "$(git rev-parse HEAD)"
+          test -f data/research/review-reception-profile/evidence-recall-audit-v1/blind-full-review-annotation-packet-v1.json
           test -f data/research/review-reception-profile/evidence-recall-audit-v1/blind-full-review-annotation-decisions-v1.json
 
       - name: Setup Node
@@ -36,13 +37,24 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Validate frozen 320-row decisions
+      - name: Self-test frozen-packet gate replay
         working-directory: work
-        run: node scripts/validate-review-reception-recall-complete.mjs
+        run: node scripts/replay-review-reception-recall-from-frozen-packet.mjs --self-test
 
       - name: Run frozen-packet gate replay
         working-directory: work
         run: node scripts/replay-review-reception-recall-from-frozen-packet.mjs
+
+      - name: Validate replay structure and arithmetic
+        working-directory: work
+        run: |
+          set -euo pipefail
+          node scripts/validate-review-reception-recall-gate-replay.mjs --self-test
+          node scripts/validate-review-reception-recall-gate-replay.mjs
+
+      - name: Bind replay to frozen 320-row gold
+        working-directory: work
+        run: node scripts/validate-review-reception-recall-gate-replay-source-binding.mjs
 
       - name: Push replay result to private source
         working-directory: work
