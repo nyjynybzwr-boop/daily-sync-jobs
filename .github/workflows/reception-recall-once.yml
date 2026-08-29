@@ -37,7 +37,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Correct and persist stale replay self-test
+      - name: Repair and persist replay harness
         working-directory: work
         run: |
           set -euo pipefail
@@ -45,36 +45,49 @@ jobs:
           from pathlib import Path
           p = Path('scripts/replay-review-reception-recall-from-frozen-packet.mjs')
           s = p.read_text()
-          old = """  assert(units.length === 2, 'newline/period split mismatch');\n  assert(units[0].survives_existing_candidate_gate === false && units[0].drop_reason === 'short_lt6', 'short gate mismatch');\n  assert(units[1].survives_existing_candidate_gate === true, 'positive cue gate mismatch');"""
-          new = """  assert(units.length === 3, 'newline/period split mismatch');\n  assert(units[0].survives_existing_candidate_gate === false && units[0].drop_reason === 'short_lt6', 'short gate mismatch');\n  assert(units[1].survives_existing_candidate_gate === false && units[1].drop_reason === 'short_lt6' && units[2].survives_existing_candidate_gate === true, 'period/newline boundary gate mismatch');"""
-          if old in s:
-              p.write_text(s.replace(old, new, 1))
-              print('patched stale self-test')
-          elif new in s:
-              print('self-test already current')
-          else:
-              raise SystemExit('self-test block is neither known-old nor known-current; refusing broad edit')
+
+          old_test = """  assert(units.length === 2, 'newline/period split mismatch');\n  assert(units[0].survives_existing_candidate_gate === false && units[0].drop_reason === 'short_lt6', 'short gate mismatch');\n  assert(units[1].survives_existing_candidate_gate === true, 'positive cue gate mismatch');"""
+          new_test = """  assert(units.length === 3, 'newline/period split mismatch');\n  assert(units[0].survives_existing_candidate_gate === false && units[0].drop_reason === 'short_lt6', 'short gate mismatch');\n  assert(units[1].survives_existing_candidate_gate === false && units[1].drop_reason === 'short_lt6' && units[2].survives_existing_candidate_gate === true, 'period/newline boundary gate mismatch');"""
+          if old_test in s:
+              s = s.replace(old_test, new_test, 1)
+          elif new_test not in s:
+              raise SystemExit('self-test block is neither known-old nor known-current')
+
+          old_span = "  const span = normalize(spanText);"
+          new_span = "  const span = normalize(sanitizeText(spanText).replace(/\\n+/g, '。'));"
+          if old_span in s:
+              s = s.replace(old_span, new_span, 1)
+          elif new_span not in s:
+              raise SystemExit('span normalization site is neither known-old nor known-current')
+
+          old_width = "  for (let width = 2; width <= MAX_ADJACENT_UNITS; width += 1) {"
+          new_width = "  for (let width = 2; width <= units.length; width += 1) {"
+          if old_width in s:
+              s = s.replace(old_width, new_width, 1)
+          elif new_width not in s:
+              raise SystemExit('adjacent-window site is neither known-old nor known-current')
+
+          old_err = "errors.push(`${id} signal ${signalIndex + 1}: span cannot be mapped by direct or adjacent-unit replay`);"
+          new_err = "errors.push(`${id} signal ${signalIndex + 1}: span cannot be mapped by direct or adjacent-unit replay: ${JSON.stringify(spanText)}`);"
+          if old_err in s:
+              s = s.replace(old_err, new_err, 1)
+          elif new_err not in s:
+              raise SystemExit('unmapped-span error site is neither known-old nor known-current')
+
+          marker = "  const cross = buildUnits('聴いているこちらも\\n我慢の限界になりました。');"
+          regression = """  const newlineSpanUnits = buildUnits('途中から形勢逆転。\\n彼氏くんに襲われてしまうヒロインちゃんです。');\n  assert(mapSignal(newlineSpanUnits, '途中から形勢逆転。\\n彼氏くんに襲われてしまうヒロインちゃんです。'), 'newline-bearing gold span mapping mismatch');\n  const longSpanText = 'しかし、そのあとのやっていることは普通にやばい。怖い。入籍までしますか?普通。怖いです。怖かった。それが良いのですが。';\n  assert(mapSignal(buildUnits(longSpanText), longSpanText), 'long multi-unit gold span mapping mismatch');\n"""
+          if 'newline-bearing gold span mapping mismatch' not in s:
+              if marker not in s:
+                  raise SystemExit('self-test insertion marker missing')
+              s = s.replace(marker, regression + marker, 1)
+
+          p.write_text(s)
           PY
+          node --check scripts/replay-review-reception-recall-from-frozen-packet.mjs
           node scripts/replay-review-reception-recall-from-frozen-packet.mjs --self-test
           if ! git diff --quiet -- scripts/replay-review-reception-recall-from-frozen-packet.mjs; then
-            bash scripts/ci/push.sh "scripts/replay-review-reception-recall-from-frozen-packet.mjs" "[skip actions] [CF-Pages-Skip] research: align recall replay self-test with frozen splitter"
+            bash scripts/ci/push.sh "scripts/replay-review-reception-recall-from-frozen-packet.mjs" "[skip actions] [CF-Pages-Skip] research: repair frozen-span recall replay mapping"
           fi
-
-      - name: Instrument unmapped-span diagnostics
-        working-directory: work
-        run: |
-          set -euo pipefail
-          cp scripts/replay-review-reception-recall-from-frozen-packet.mjs ../replay-script.clean.mjs
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('scripts/replay-review-reception-recall-from-frozen-packet.mjs')
-          s = p.read_text()
-          old = "errors.push(`${id} signal ${signalIndex + 1}: span cannot be mapped by direct or adjacent-unit replay`);"
-          new = "errors.push(`${id} signal ${signalIndex + 1}: span cannot be mapped by direct or adjacent-unit replay: ${JSON.stringify(spanText)}`);"
-          if old not in s:
-              raise SystemExit('unmapped-span error site not found exactly')
-          p.write_text(s.replace(old, new, 1))
-          PY
 
       - name: Run frozen-packet gate replay
         working-directory: work
@@ -90,13 +103,6 @@ jobs:
           path: reception-replay.log
           if-no-files-found: ignore
           retention-days: 1
-
-      - name: Restore clean replay script
-        if: always()
-        run: |
-          if [ -f replay-script.clean.mjs ]; then
-            cp replay-script.clean.mjs work/scripts/replay-review-reception-recall-from-frozen-packet.mjs
-          fi
 
       - name: Validate replay structure and arithmetic
         working-directory: work
