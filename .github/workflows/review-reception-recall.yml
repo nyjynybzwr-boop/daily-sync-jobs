@@ -25,7 +25,7 @@ jobs:
           GIT_LFS_SKIP_SMUDGE: '1'
         run: |
           set -euo pipefail
-          if ! git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work >/tmp/checkout.log 2>&1; then
+          if ! git clone --quiet --depth 1 --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work >/tmp/checkout.log 2>&1; then
             echo 'Source checkout failed.'
             exit 1
           fi
@@ -62,8 +62,9 @@ jobs:
           echo 'Recall sensitivity and denominator acceptance validated.'
 
       - name: Push private audit results
+        if: always()
         working-directory: work
         run: |
           set -euo pipefail
-          bash scripts/ci/push.sh "data/research/review-reception-profile/evidence-recall-audit-v1" "[skip actions] [CF-Pages-Skip] reviews: run frozen five-axis recall audit" >/tmp/push.log 2>&1 || (echo 'Private audit result push failed.'; exit 1)
+          bash scripts/ci/push.sh "data/research/review-reception-profile/evidence-recall-audit-v1" "[skip actions] [CF-Pages-Skip] reviews: persist frozen five-axis recall audit attempt" >/tmp/push.log 2>&1 || (echo 'Private audit result push failed.'; exit 1)
           echo 'Private audit results pushed.'
