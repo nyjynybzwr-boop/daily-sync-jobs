@@ -1,0 +1,173 @@
+name: One-off otome audio vs manga market comparison
+
+on:
+  push:
+    paths:
+      - '.github/workflows/market-compare-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Clone source repository
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Materialize source catalogs
+        working-directory: work
+        run: |
+          set -euo pipefail
+          git lfs pull --include='data/catalog/full/details.json,data/manga/catalog/full/details.json'
+
+      - name: Build comparison metrics
+        working-directory: work
+        run: |
+          set -euo pipefail
+          mkdir -p data/research
+          node <<'NODE'
+          const fs = require('fs');
+
+          const AS_OF = new Date('2026-08-30T00:00:00+09:00');
+          const YEARS = [2021, 2022, 2023, 2024, 2025, 2026];
+          const sources = {
+            audio: 'data/catalog/full/details.json',
+            manga: 'data/manga/catalog/full/details.json',
+          };
+
+          function num(v) {
+            if (v === null || v === undefined || v === '') return null;
+            const n = Number(v);
+            return Number.isFinite(n) ? n : null;
+          }
+          function dateOf(item) {
+            const s = String(item.release_date_text || item.release_date || '');
+            let m = s.match(/((?:19|20)\d{2})[年\/-](\d{1,2})[月\/-](\d{1,2})/);
+            if (!m) m = s.match(/((?:19|20)\d{2})-(\d{1,2})-(\d{1,2})/);
+            if (!m) return null;
+            return new Date(`${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}T00:00:00+09:00`);
+          }
+          function median(arr) {
+            if (!arr.length) return null;
+            const a = [...arr].sort((x,y)=>x-y);
+            const m = Math.floor(a.length/2);
+            return a.length % 2 ? a[m] : (a[m-1]+a[m])/2;
+          }
+          function mean(arr) {
+            return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
+          }
+          function percentileNearestRank(arr, p) {
+            if (!arr.length) return null;
+            const a = [...arr].sort((x,y)=>x-y);
+            const idx = Math.max(0, Math.ceil(p * a.length) - 1);
+            return a[idx];
+          }
+          function gini(arr) {
+            const a = arr.filter(x => Number.isFinite(x) && x >= 0).sort((x,y)=>x-y);
+            const n = a.length;
+            const sum = a.reduce((x,y)=>x+y,0);
+            if (!n || sum === 0) return null;
+            let weighted = 0;
+            for (let i=0;i<n;i++) weighted += (i+1)*a[i];
+            return (2*weighted)/(n*sum) - (n+1)/n;
+          }
+          function round(v, d=3) {
+            if (!Number.isFinite(v)) return null;
+            const p = 10**d;
+            return Math.round(v*p)/p;
+          }
+          function summarize(items, year) {
+            const rows = items.filter(x => x.year === year && x.sales !== null && x.sales >= 0);
+            const sales = rows.map(x => x.sales);
+            const desc = [...sales].sort((a,b)=>b-a);
+            const total = sales.reduce((a,b)=>a+b,0);
+            const topN = (n) => desc.slice(0, Math.min(n, desc.length)).reduce((a,b)=>a+b,0);
+            const topPctN = Math.ceil(desc.length * 0.10);
+            const topPct = topN(topPctN);
+            const p90 = percentileNearestRank(sales, 0.90);
+            const med = median(sales);
+            const velocities = rows.map(x => x.velocity).filter(Number.isFinite);
+            const priceEq = rows.reduce((sum,x) => sum + (x.price !== null && x.price >= 0 ? x.sales*x.price : 0), 0);
+            return {
+              year,
+              works: rows.length,
+              sales_total_current_cumulative: total,
+              sales_mean_current_cumulative: round(mean(sales), 2),
+              sales_median_current_cumulative: med,
+              sales_p90_threshold: p90,
+              p90_to_median_ratio: med > 0 ? round(p90/med, 2) : null,
+              top10_sales: topN(10),
+              top10_share: total > 0 ? round(topN(10)/total, 4) : null,
+              top50_sales: topN(50),
+              top50_share: total > 0 ? round(topN(50)/total, 4) : null,
+              top10pct_n: topPctN,
+              top10pct_sales: topPct,
+              top10pct_share: total > 0 ? round(topPct/total, 4) : null,
+              gini: round(gini(sales), 4),
+              lifetime_avg_velocity_mean_dl_per_day: round(mean(velocities), 4),
+              lifetime_avg_velocity_median_dl_per_day: round(median(velocities), 4),
+              current_price_equivalent_gross_yen: priceEq,
+            };
+          }
+
+          const out = {
+            generated_at: new Date().toISOString(),
+            as_of_jst: '2026-08-30',
+            methodology: {
+              sales_count: 'Current cumulative DLsite sales_count snapshot grouped by release year; NOT calendar-year sales.',
+              typical_sales: 'Both arithmetic mean and median are reported. Median is safer for the typical-work comparison because sales are heavily skewed.',
+              concentration: 'Top10/top50/top10% shares are shares of each release-year cohort current cumulative sales. p90 threshold uses nearest-rank percentile.',
+              velocity: 'sales_count divided by days since exact release date as of 2026-08-30; this is lifetime-average velocity and still has lifecycle bias.',
+              price_equivalent: 'sales_count multiplied by current listed price; not historical realized revenue and not used as the primary conclusion.',
+            },
+            markets: {},
+          };
+
+          for (const [market, file] of Object.entries(sources)) {
+            const payload = JSON.parse(fs.readFileSync(file, 'utf8'));
+            const raw = Array.isArray(payload) ? payload : Object.values(payload || {});
+            const items = raw.map(item => {
+              const d = dateOf(item);
+              const sales = num(item.sales_count);
+              const ageDays = d ? Math.max(1, Math.floor((AS_OF - d) / 86400000)) : null;
+              return {
+                year: d ? d.getFullYear() : Number(String(item.release_date_text || item.release_date || '').match(/((?:19|20)\d{2})/)?.[1]) || null,
+                sales,
+                price: num(item.price_yen),
+                velocity: sales !== null && ageDays ? sales/ageDays : null,
+              };
+            });
+            out.markets[market] = {
+              source_file: file,
+              source_works: raw.length,
+              yearly: YEARS.map(y => summarize(items, y)),
+            };
+          }
+
+          fs.writeFileSync('data/research/interview-market-compare-2026-08-30.json', JSON.stringify(out, null, 2) + '\n');
+          console.log(JSON.stringify(out, null, 2));
+          NODE
+
+      - name: Push compact result to source repository
+        working-directory: work
+        run: |
+          set -euo pipefail
+          TARGET='data/research/interview-market-compare-2026-08-30.json'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$TARGET"
+          if git diff --cached --quiet; then
+            echo 'No comparison changes.'
+            exit 0
+          fi
+          git commit -m '[skip actions] [CF-Pages-Skip] research: add interview audio vs manga market metrics'
+          git pull --rebase origin main
+          git push origin HEAD:main
