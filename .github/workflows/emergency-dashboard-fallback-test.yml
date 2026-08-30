@@ -1,0 +1,68 @@
+name: Emergency dashboard fallback test
+
+on:
+  push:
+    paths:
+      - '.github/workflows/emergency-dashboard-fallback-test.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --depth 1 --branch main "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Build current site
+        working-directory: work
+        run: npm run build:site
+
+      - name: Measure safe static fallback candidates
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const src='site/data/dashboard.json';
+          const d=JSON.parse(fs.readFileSync(src,'utf8'));
+          const stat=(name,obj)=>{
+            const s=JSON.stringify(obj);
+            console.log(`${name}_BYTES=${Buffer.byteLength(s)}`);
+            console.log(`${name}_MIB=${(Buffer.byteLength(s)/1024/1024).toFixed(2)}`);
+          };
+          console.log(`FULL_BYTES=${fs.statSync(src).size}`);
+          console.log(`FULL_MIB=${(fs.statSync(src).size/1024/1024).toFixed(2)}`);
+          const slimMarket=(m={})=>({
+            windows:m.windows||{week:null,month:null},
+            narrative:m.narrative||null,
+            annual:{years:m.annual?.years||[],reports:m.annual?.reports||[],works_by_year:{}},
+            daily:m.daily||null,
+            history:{dates:m.history?.dates||[],days:[]},
+          });
+          const fallback={
+            schema_version:d.schema_version,
+            generated_at:d.generated_at,
+            product:{...d.product,active_media:'audio',available_media:(d.product?.available_media||[]).map(x=>x.id==='audio'?{...x,enabled:true}:{...x,enabled:false})},
+            markets:Object.fromEntries(Object.entries(d.markets||{}).map(([k,v])=>[k,slimMarket(v)])),
+            semantic_v53:d.semantic_v53||null,
+          };
+          stat('FALLBACK_AUDIO',fallback);
+          const fallbackOtome={...fallback,product:{...fallback.product,active_market:'otome',available_markets:(fallback.product?.available_markets||[]).map(x=>({...x,enabled:x.id==='otome'}))},markets:{otome:slimMarket(d.markets?.otome)}};
+          stat('FALLBACK_OTOME',fallbackOtome);
+          NODE
