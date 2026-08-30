@@ -1,0 +1,214 @@
+name: Audit otome audio vs manga market scale
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/audit-otome-audio-vs-manga-market-scale.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout private source and LFS catalogs
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+          cd work
+          git lfs pull --include='data/catalog/full/details.json,data/manga/catalog/full/details.json'
+          test -s data/catalog/full/details.json
+          test -s data/manga/catalog/full/details.json
+
+      - name: Compute comparable market statistics
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const AS_OF = new Date('2026-08-30T18:00:00+09:00');
+          const YEARS = [2019,2020,2021,2022,2023,2024,2025,2026];
+
+          function quantile(values,p){
+            if(!values.length)return null;
+            const s=[...values].sort((a,b)=>a-b);
+            const i=(s.length-1)*p, lo=Math.floor(i), hi=Math.ceil(i);
+            return lo===hi?s[lo]:s[lo]+(s[hi]-s[lo])*(i-lo);
+          }
+          const median=a=>quantile(a,.5);
+          function gini(values){
+            const a=values.filter(v=>Number.isFinite(v)&&v>=0).sort((x,y)=>x-y);
+            if(!a.length)return null;
+            const sum=a.reduce((x,y)=>x+y,0); if(sum===0)return 0;
+            let weighted=0;
+            for(let i=0;i<a.length;i++)weighted+=(i+1)*a[i];
+            return (2*weighted)/(a.length*sum)-(a.length+1)/a.length;
+          }
+          function parseDate(x){
+            const raw=x.release_date||x.release_date_text||x.release_at||x.regist_date||'';
+            let d=new Date(raw);
+            if(Number.isFinite(d.getTime()))return d;
+            const m=String(raw).match(/(20\d{2})年(\d{1,2})月(\d{1,2})日/);
+            if(m)return new Date(`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}T00:00:00+09:00`);
+            return null;
+          }
+          function extractWorks(raw){
+            const works=[]; const seen=new Set();
+            function walk(v,depth=0){
+              if(v==null||depth>7)return;
+              if(Array.isArray(v)){for(const x of v)walk(x,depth+1);return;}
+              if(typeof v!=='object')return;
+              const hasSales=('sales_count' in v)||('sales_count_current' in v)||('dl_count' in v);
+              const hasId=('product_id' in v)||('workno' in v)||('id' in v)||('title' in v);
+              const hasDate=('release_date_text' in v)||('release_date' in v)||('release_year' in v)||('regist_date' in v);
+              if(hasSales&&hasId&&hasDate){
+                const id=String(v.product_id||v.workno||v.id||v.url||v.title||works.length);
+                if(!seen.has(id)){seen.add(id);works.push({...v,__id:id});}
+                return;
+              }
+              for(const x of Object.values(v))walk(x,depth+1);
+            }
+            walk(raw); return works;
+          }
+          function languageIds(x){
+            const out=[]; const v=x.language_editions;
+            if(Array.isArray(v)){
+              for(const item of v){
+                if(typeof item==='string')out.push(item);
+                else if(item&&typeof item==='object'){
+                  const id=item.product_id||item.workno||item.id||item.rj_code;
+                  if(id)out.push(String(id));
+                }
+              }
+            } else if(v&&typeof v==='object'){
+              for(const [k,item] of Object.entries(v)){
+                if(/^RJ\d+/i.test(k))out.push(k);
+                if(typeof item==='string'&&/^RJ\d+/i.test(item))out.push(item);
+                else if(item&&typeof item==='object'){
+                  const id=item.product_id||item.workno||item.id||item.rj_code;
+                  if(id)out.push(String(id));
+                }
+              }
+            }
+            return [...new Set(out)];
+          }
+          function normalizeRows(raw){
+            const works=extractWorks(raw);
+            const rows=[];
+            for(const x of works){
+              const d=parseDate(x);
+              const year=d?d.getFullYear():Number(x.release_year);
+              const sales=Number(x.sales_count_current ?? x.sales_count ?? x.dl_count);
+              if(!Number.isFinite(year)||!Number.isFinite(sales)||sales<0)continue;
+              rows.push({
+                id:x.__id,
+                year,
+                sales,
+                circle:String(x.circle||x.maker_name||x.circle_name||x.maker||'').trim()||'(unknown)',
+                release_date:d?d.toISOString().slice(0,10):null,
+                age_days:d?Math.max(1,(AS_OF-d)/86400000):null,
+                language_ids:languageIds(x)
+              });
+            }
+            return {works,rows};
+          }
+          function makeGroups(rows){
+            // Union explicit language-edition links only. Unknown products remain singleton.
+            const byId=new Map(rows.map(r=>[r.id,r]));
+            const parent=new Map(rows.map(r=>[r.id,r.id]));
+            const find=a=>{let p=parent.get(a); if(p!==a){p=find(p);parent.set(a,p);} return p;};
+            const union=(a,b)=>{if(!parent.has(a)||!parent.has(b))return; a=find(a);b=find(b);if(a===b)return; if(a<b)parent.set(b,a);else parent.set(a,b);};
+            for(const r of rows)for(const id of r.language_ids)union(r.id,id);
+            const groups=new Map();
+            for(const r of rows){const root=find(r.id);if(!groups.has(root))groups.set(root,[]);groups.get(root).push(r);}
+            return [...groups.entries()].map(([root,members])=>{
+              const years=[...new Set(members.map(m=>m.year))];
+              // If editions cross calendar years, attribute the work to earliest release year and preserve audit count.
+              const year=Math.min(...years);
+              const dates=members.map(m=>m.release_date).filter(Boolean).sort();
+              return {id:root,year,sales:members.reduce((a,b)=>a+b.sales,0),circle:members[0].circle,release_date:dates[0]||null,edition_count:members.length,cross_year:years.length>1};
+            });
+          }
+          function summarize(groups){
+            const years={};
+            for(const year of YEARS){
+              const r=groups.filter(x=>x.year===year); if(!r.length)continue;
+              const sales=r.map(x=>x.sales).sort((a,b)=>b-a);
+              const total=sales.reduce((a,b)=>a+b,0);
+              const shareTopN=n=>total?sales.slice(0,Math.min(n,sales.length)).reduce((a,b)=>a+b,0)/total:null;
+              const shareTopPct=p=>shareTopN(Math.max(1,Math.ceil(r.length*p)));
+              const byCircle=new Map();
+              for(const x of r)byCircle.set(x.circle,(byCircle.get(x.circle)||0)+x.sales);
+              const cs=[...byCircle.entries()].sort((a,b)=>b[1]-a[1]);
+              years[year]={
+                works:r.length,
+                circles:byCircle.size,
+                sales_total_current_cumulative:total,
+                sales_mean_current_cumulative:total/r.length,
+                sales_median_current_cumulative:median(sales),
+                sales_p25:quantile(sales,.25),
+                sales_p75:quantile(sales,.75),
+                sales_p90:quantile(sales,.9),
+                top1_work_share:shareTopN(1),
+                top10_work_share:shareTopN(10),
+                top1pct_work_share:shareTopPct(.01),
+                top10pct_work_share:shareTopPct(.10),
+                gini_work_sales:gini(sales),
+                top1_circle_share:total&&cs.length?cs[0][1]/total:null,
+                top10_circle_share:total?cs.slice(0,10).reduce((a,b)=>a+b[1],0)/total:null,
+                share_works_le_100:sales.filter(v=>v<=100).length/r.length,
+                share_works_le_300:sales.filter(v=>v<=300).length/r.length
+              };
+            }
+            return years;
+          }
+          function load(label,file){
+            const raw=JSON.parse(fs.readFileSync(file,'utf8'));
+            const norm=normalizeRows(raw);
+            if(norm.rows.length<1000)throw new Error(`${label}: too few usable rows ${norm.rows.length}/${norm.works.length}`);
+            const groups=makeGroups(norm.rows);
+            return {
+              label,
+              file,
+              discovered_records:norm.works.length,
+              usable_product_rows:norm.rows.length,
+              underlying_work_groups:groups.length,
+              language_edition_reduction:norm.rows.length-groups.length,
+              cross_year_language_groups:groups.filter(x=>x.cross_year).length,
+              years:summarize(groups)
+            };
+          }
+          const audio=load('otome_audio','work/data/catalog/full/details.json');
+          const manga=load('otome_manga','work/data/manga/catalog/full/details.json');
+          const out={
+            schema_version:1,
+            generated_at:new Date().toISOString(),
+            as_of_jst:'2026-08-30',
+            scope:'DLsite girls-touch stored full catalogs; underlying work groups via explicit language_editions only',
+            critical_caveat:'sales_count is CURRENT CUMULATIVE units observed in the stored catalogs, not historical annual sales. Release-year cohorts have unequal exposure. A newer cohort exceeding an older one despite less exposure is strong directional evidence; a lower newer value does not prove market contraction. 2026 is YTD and incomplete.',
+            metrics_note:'Market-scale proxy = summed current cumulative unit sales by release-year cohort. Per-work = mean and median current cumulative units per underlying work. Concentration = work Top1/Top10/Top1%/Top10% shares and Gini.',
+            audio,manga
+          };
+          fs.mkdirSync('status',{recursive:true});
+          fs.writeFileSync('status/otome-audio-vs-manga-market-scale.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out,null,2));
+          NODE
+
+      - name: Persist audit result
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add status/otome-audio-vs-manga-market-scale.json
+          git commit -m 'status: add otome audio vs manga market scale audit'
+          git push
