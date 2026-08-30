@@ -1,4 +1,4 @@
-name: Audit permitted reception training inventory
+name: Materialize permitted reception rollup training
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
           git clone --quiet --filter=blob:none --depth=1 --no-checkout --branch main --single-branch "$AUTH_URL" work
           cd work
           git sparse-checkout init --no-cone
-          git sparse-checkout set '/scripts/' '/data/research/review-reception-profile/'
+          git sparse-checkout set '/scripts/' '/data/research/review-reception-profile/' '/data/research/review-evaluation-training/rev-eval-46255c55e8d1c5dc/' '/data/research/review-evaluation-spec/effective-target-mapping-vocabulary-v1.json'
           git checkout --quiet main
 
       - name: Setup Node
@@ -32,21 +32,21 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Audit permitted training inventory
+      - name: Materialize permitted rollup rows
         working-directory: work
         run: |
           set -euo pipefail
-          node --check scripts/audit-review-reception-permitted-training-inventory.mjs
-          node scripts/audit-review-reception-permitted-training-inventory.mjs
+          node --check scripts/materialize-review-reception-permitted-rollup-training-rows.mjs
+          node scripts/materialize-review-reception-permitted-rollup-training-rows.mjs
 
-      - name: Push inventory artifact
+      - name: Push materialized rows
         working-directory: work
         run: |
           set -euo pipefail
           git config user.name 'ChatGPT external runner'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/research/review-reception-profile/permitted-training-inventory-v1.json
-          git commit -m "[skip actions] [CF-Pages-Skip] research: materialize permitted reception training inventory"
+          git add data/research/review-reception-profile/permitted-rollup-training-rows-v1.json
+          git commit -m "[skip actions] [CF-Pages-Skip] research: materialize permitted reception rollup training rows"
           git fetch --quiet origin main
           git rebase origin/main
           git push origin HEAD:main
