@@ -25,18 +25,7 @@ jobs:
             fallback_status=$(curl -sS -o /tmp/fallback.json -w '%{http_code}' --max-time 60 "$base/data/dashboard-fallback.json")
             echo "LOADING_STATUS=$loading_status FALLBACK_STATUS=$fallback_status"
             if [ "$loading_status" = "200" ] && [ "$fallback_status" = "200" ] && grep -q 'forcing static fallback' /tmp/loading.js; then
-              python - <<'PY'
-import json
-p='/tmp/fallback.json'
-d=json.load(open(p,'rb'))
-ot=(d.get('markets') or {}).get('otome') or {}
-print('JSON_OK=1')
-print('generated_at=',d.get('generated_at'))
-print('daily_date=',(ot.get('daily') or {}).get('date'))
-print('daily_works=',len((ot.get('daily') or {}).get('works') or []))
-print('week_works=',len(((ot.get('windows') or {}).get('week') or {}).get('works') or []))
-print('month_works=',len(((ot.get('windows') or {}).get('month') or {}).get('works') or []))
-PY
+              node -e "const fs=require('fs'); const d=JSON.parse(fs.readFileSync('/tmp/fallback.json','utf8')); const ot=d.markets?.otome||{}; console.log('JSON_OK=1'); console.log('generated_at=',d.generated_at); console.log('daily_date=',ot.daily?.date); console.log('daily_works=',ot.daily?.works?.length||0); console.log('week_works=',ot.windows?.week?.works?.length||0); console.log('month_works=',ot.windows?.month?.works?.length||0);"
               echo 'PRODUCTION_LOADING_FALLBACK_READY=1'
               exit 0
             fi
