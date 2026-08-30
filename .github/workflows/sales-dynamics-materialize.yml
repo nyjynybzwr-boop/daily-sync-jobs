@@ -1,0 +1,45 @@
+name: Otome sales dynamics materialize
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: otome-sales-dynamics-materialize
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Materialize sales dynamics analyses
+        working-directory: work
+        run: bash scripts/ci/run-n.sh
+
+      - name: Push validated research outputs
+        working-directory: work
+        run: |
+          bash scripts/ci/push.sh \
+            "data/research/otome-audio-sales-dynamics/trajectory-taxonomy-sensitivity-v1.json data/research/otome-audio-sales-dynamics/top50-selection-enrichment-v1.json data/research/otome-audio-sales-dynamics/trajectory-inflection-metrics-v1.json" \
+            "[skip actions] [CF-Pages-Skip] research: materialize sales dynamics analyses"
