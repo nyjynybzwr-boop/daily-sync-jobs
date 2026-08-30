@@ -1,0 +1,55 @@
+name: Diagnose Pages dashboard
+
+on:
+  push:
+    paths:
+      - '.github/workflows/diagnose-pages-dashboard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe production dashboard endpoint
+        shell: bash
+        run: |
+          set -uo pipefail
+          url='https://dlsite-trend-radar.pages.dev/data/dashboard.json'
+          echo "== HEADERS =="
+          curl -sS -D /tmp/headers.txt -o /tmp/dashboard.json --max-time 120 "$url" || echo "CURL_EXIT=$?"
+          cat /tmp/headers.txt || true
+          echo "== FILE =="
+          ls -lh /tmp/dashboard.json || true
+          if [ -f /tmp/dashboard.json ]; then
+            echo "BYTES=$(wc -c < /tmp/dashboard.json)"
+            echo "SHA256=$(sha256sum /tmp/dashboard.json | awk '{print $1}')"
+            echo "FIRST_200_BYTES:"
+            head -c 200 /tmp/dashboard.json || true
+            echo
+            echo "== JSON PARSE =="
+            python - <<'PY'
+import json
+p='/tmp/dashboard.json'
+try:
+    with open(p,'rb') as f:
+        obj=json.load(f)
+    print('JSON_OK=1')
+    print('schema_version=',obj.get('schema_version'))
+    print('generated_at=',obj.get('generated_at'))
+    print('top_keys=',sorted(obj.keys()))
+    print('markets=',sorted((obj.get('markets') or {}).keys()))
+    ot=(obj.get('markets') or {}).get('otome') or {}
+    print('otome_daily_date=',((ot.get('daily') or {}).get('date')))
+    print('otome_daily_works=',len((ot.get('daily') or {}).get('works') or []))
+    print('otome_week_date=',(((ot.get('windows') or {}).get('week') or {}).get('date')))
+    print('otome_week_works=',len((((ot.get('windows') or {}).get('week') or {}).get('works')) or []))
+    print('otome_month_date=',(((ot.get('windows') or {}).get('month') or {}).get('date')))
+    print('otome_month_works=',len((((ot.get('windows') or {}).get('month') or {}).get('works')) or []))
+except Exception as e:
+    print('JSON_OK=0')
+    print(type(e).__name__, str(e))
+PY
+          fi
