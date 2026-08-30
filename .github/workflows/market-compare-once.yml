@@ -36,7 +36,10 @@ jobs:
           node <<'NODE'
           const fs = require('fs');
 
-          const AS_OF = new Date('2026-08-30T00:00:00+09:00');
+          // Use UTC calendar arithmetic with explicit year/month/day parts.
+          // Never call getFullYear() on a Date created with +09:00: on Jan 1 JST
+          // that instant is Dec 31 UTC and would incorrectly assign the prior year.
+          const AS_OF_UTC_MS = Date.UTC(2026, 7, 30); // 2026-08-30 JST calendar date
           const YEARS = [2021, 2022, 2023, 2024, 2025, 2026];
           const sources = {
             audio: 'data/catalog/full/details.json',
@@ -48,12 +51,15 @@ jobs:
             const n = Number(v);
             return Number.isFinite(n) ? n : null;
           }
-          function dateOf(item) {
+          function releaseParts(item) {
             const s = String(item.release_date_text || item.release_date || '');
-            let m = s.match(/((?:19|20)\d{2})[年\/-](\d{1,2})[月\/-](\d{1,2})/);
+            let m = s.match(/((?:19|20)\d{2})\s*[年\/-]\s*(\d{1,2})\s*[月\/-]\s*(\d{1,2})/);
             if (!m) m = s.match(/((?:19|20)\d{2})-(\d{1,2})-(\d{1,2})/);
-            if (!m) return null;
-            return new Date(`${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}T00:00:00+09:00`);
+            if (!m) {
+              const y = s.match(/((?:19|20)\d{2})/);
+              return y ? { year: Number(y[1]), month: null, day: null } : null;
+            }
+            return { year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) };
           }
           function median(arr) {
             if (!arr.length) return null;
@@ -85,7 +91,8 @@ jobs:
             return Math.round(v*p)/p;
           }
           function summarize(items, year) {
-            const rows = items.filter(x => x.year === year && x.sales !== null && x.sales >= 0);
+            const cohort = items.filter(x => x.year === year);
+            const rows = cohort.filter(x => x.sales !== null && x.sales >= 0);
             const sales = rows.map(x => x.sales);
             const desc = [...sales].sort((a,b)=>b-a);
             const total = sales.reduce((a,b)=>a+b,0);
@@ -98,7 +105,9 @@ jobs:
             const priceEq = rows.reduce((sum,x) => sum + (x.price !== null && x.price >= 0 ? x.sales*x.price : 0), 0);
             return {
               year,
-              works: rows.length,
+              cohort_works: cohort.length,
+              works_with_sales: rows.length,
+              works_with_exact_date_for_velocity: velocities.length,
               sales_total_current_cumulative: total,
               sales_mean_current_cumulative: round(mean(sales), 2),
               sales_median_current_cumulative: med,
@@ -123,9 +132,11 @@ jobs:
             as_of_jst: '2026-08-30',
             methodology: {
               sales_count: 'Current cumulative DLsite sales_count snapshot grouped by release year; NOT calendar-year sales.',
+              release_year: 'Release year is read directly from release_date_text/release_date calendar text, avoiding timezone conversion.',
               typical_sales: 'Both arithmetic mean and median are reported. Median is safer for the typical-work comparison because sales are heavily skewed.',
               concentration: 'Top10/top50/top10% shares are shares of each release-year cohort current cumulative sales. p90 threshold uses nearest-rank percentile.',
-              velocity: 'sales_count divided by days since exact release date as of 2026-08-30; this is lifetime-average velocity and still has lifecycle bias.',
+              velocity: 'sales_count divided by calendar days since exact release date as of 2026-08-30; lifetime-average velocity still has lifecycle/front-loading bias and is NOT same-age cohort sales.',
+              market_size_warning: 'A current cumulative snapshot cannot reconstruct exact historical calendar-year market sales/revenue. Cohort totals and current-price-equivalent gross are supporting indicators only.',
               price_equivalent: 'sales_count multiplied by current listed price; not historical realized revenue and not used as the primary conclusion.',
             },
             markets: {},
@@ -135,11 +146,15 @@ jobs:
             const payload = JSON.parse(fs.readFileSync(file, 'utf8'));
             const raw = Array.isArray(payload) ? payload : Object.values(payload || {});
             const items = raw.map(item => {
-              const d = dateOf(item);
+              const p = releaseParts(item);
               const sales = num(item.sales_count);
-              const ageDays = d ? Math.max(1, Math.floor((AS_OF - d) / 86400000)) : null;
+              let ageDays = null;
+              if (p && p.month && p.day) {
+                const releaseMs = Date.UTC(p.year, p.month - 1, p.day);
+                ageDays = Math.max(1, Math.floor((AS_OF_UTC_MS - releaseMs) / 86400000));
+              }
               return {
-                year: d ? d.getFullYear() : Number(String(item.release_date_text || item.release_date || '').match(/((?:19|20)\d{2})/)?.[1]) || null,
+                year: p?.year ?? null,
                 sales,
                 price: num(item.price_yen),
                 velocity: sales !== null && ageDays ? sales/ageDays : null,
@@ -148,6 +163,8 @@ jobs:
             out.markets[market] = {
               source_file: file,
               source_works: raw.length,
+              source_works_with_release_year: items.filter(x => x.year !== null).length,
+              source_works_with_sales: items.filter(x => x.sales !== null && x.sales >= 0).length,
               yearly: YEARS.map(y => summarize(items, y)),
             };
           }
@@ -168,6 +185,6 @@ jobs:
             echo 'No comparison changes.'
             exit 0
           fi
-          git commit -m '[skip actions] [CF-Pages-Skip] research: add interview audio vs manga market metrics'
+          git commit -m '[skip actions] [CF-Pages-Skip] research: fix timezone-safe interview market metrics'
           git pull --rebase origin main
           git push origin HEAD:main
