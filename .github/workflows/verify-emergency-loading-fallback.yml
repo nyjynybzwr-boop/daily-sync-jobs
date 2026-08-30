@@ -1,0 +1,46 @@
+name: Verify emergency loading fallback
+
+on:
+  push:
+    paths:
+      - '.github/workflows/verify-emergency-loading-fallback.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Wait for production loading fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://dlsite-trend-radar.pages.dev'
+          for i in $(seq 1 36); do
+            echo "ATTEMPT=$i"
+            loading_status=$(curl -sS -o /tmp/loading.js -w '%{http_code}' --max-time 60 "$base/loading.js")
+            fallback_status=$(curl -sS -o /tmp/fallback.json -w '%{http_code}' --max-time 60 "$base/data/dashboard-fallback.json")
+            echo "LOADING_STATUS=$loading_status FALLBACK_STATUS=$fallback_status"
+            if [ "$loading_status" = "200" ] && [ "$fallback_status" = "200" ] && grep -q 'forcing static fallback' /tmp/loading.js; then
+              python - <<'PY'
+import json
+p='/tmp/fallback.json'
+d=json.load(open(p,'rb'))
+ot=(d.get('markets') or {}).get('otome') or {}
+print('JSON_OK=1')
+print('generated_at=',d.get('generated_at'))
+print('daily_date=',(ot.get('daily') or {}).get('date'))
+print('daily_works=',len((ot.get('daily') or {}).get('works') or []))
+print('week_works=',len(((ot.get('windows') or {}).get('week') or {}).get('works') or []))
+print('month_works=',len(((ot.get('windows') or {}).get('month') or {}).get('works') or []))
+PY
+              echo 'PRODUCTION_LOADING_FALLBACK_READY=1'
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'PRODUCTION_LOADING_FALLBACK_READY=0'
+          exit 1
