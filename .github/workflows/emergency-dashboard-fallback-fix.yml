@@ -1,0 +1,142 @@
+name: Emergency dashboard fallback fix
+
+on:
+  push:
+    paths:
+      - '.github/workflows/emergency-dashboard-fallback-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --depth 1 --branch main "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Install R2-independent dashboard fallback
+        working-directory: work
+        shell: bash
+        run: |
+          cat > scripts/build-dashboard-static-fallback.mjs <<'EOF'
+          import fs from 'node:fs/promises';
+          import path from 'node:path';
+
+          const ROOT = process.cwd();
+          const SOURCE = path.join(ROOT, 'site', 'data', 'dashboard.json');
+          const OUTPUT = path.join(ROOT, 'site', 'data', 'dashboard-fallback.json');
+          const MAX_BYTES = 24 * 1024 * 1024;
+
+          const keep = (value) => value === undefined ? undefined : value;
+          function slimWork(work = {}) {
+            return {
+              rank: keep(work.rank), product_id: keep(work.product_id), title: keep(work.title), url: keep(work.url),
+              circle: keep(work.circle), voice_actors: work.voice_actors || [], tags: work.tags || [], labels: work.labels || [],
+              release_date_text: keep(work.release_date_text), price_yen: keep(work.price_yen), sales_count: keep(work.sales_count),
+              rating: keep(work.rating), review_count: keep(work.review_count), total_duration_seconds: keep(work.total_duration_seconds),
+              erotic_ratio_score: keep(work.erotic_ratio_score), play_intensity_score: keep(work.play_intensity_score), story_score: keep(work.story_score),
+            };
+          }
+          function slimWindow(window) {
+            if (!window) return null;
+            return { period: window.period, date: window.date, works: (window.works || []).map(slimWork), report: window.report || null };
+          }
+          function slimMarket(market = {}) {
+            return {
+              windows: { week: slimWindow(market.windows?.week), month: slimWindow(market.windows?.month) },
+              narrative: market.narrative || null,
+              annual: { years: market.annual?.years || [], reports: market.annual?.reports || [], works_by_year: {} },
+              daily: slimWindow(market.daily),
+              history: { dates: market.history?.dates || [], days: [] },
+            };
+          }
+          function slimMarketMap(map = {}) {
+            return Object.fromEntries(Object.entries(map || {}).map(([id, market]) => [id, slimMarket(market)]));
+          }
+
+          const dashboard = JSON.parse(await fs.readFile(SOURCE, 'utf8'));
+          const fallback = {
+            schema_version: dashboard.schema_version,
+            generated_at: dashboard.generated_at,
+            product: dashboard.product,
+            markets: slimMarketMap(dashboard.markets),
+            media: dashboard.media ? {
+              audio: slimMarketMap(dashboard.media.audio),
+              comic: slimMarketMap(dashboard.media.comic),
+            } : undefined,
+            semantic_v53: dashboard.semantic_v53 || null,
+          };
+          const json = JSON.stringify(fallback);
+          const bytes = Buffer.byteLength(json);
+          if (bytes > MAX_BYTES) throw new Error(`dashboard-fallback.json is ${(bytes / 1024 / 1024).toFixed(2)} MiB; refusing to exceed 24 MiB safety ceiling.`);
+          await fs.writeFile(OUTPUT, json, 'utf8');
+          console.log(`Static dashboard fallback built: ${(bytes / 1024 / 1024).toFixed(2)} MiB.`);
+          EOF
+
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          pkg = Path('package.json')
+          s = pkg.read_text()
+          old = 'node scripts/wire-review-evaluation-work-detail.mjs && node scripts/check-web-syntax.mjs --site'
+          new = 'node scripts/wire-review-evaluation-work-detail.mjs && node scripts/build-dashboard-static-fallback.mjs && node scripts/check-web-syntax.mjs --site'
+          if old not in s:
+              raise SystemExit('package.json build insertion point not found')
+          pkg.write_text(s.replace(old, new, 1))
+
+          old_loader = "globalThis.__meloDashboardPromise=fetch('./data/dashboard.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json();});"
+          new_loader = "globalThis.__meloDashboardPromise=fetch('./data/dashboard.json',{cache:'no-store'}).then(async r=>{if(r.ok)return r.json();console.warn(`dashboard R2 endpoint failed: HTTP ${r.status}; using static fallback`);const fallback=await fetch('./data/dashboard-fallback.json',{cache:'no-store'});if(!fallback.ok)throw new Error(`dashboard HTTP ${r.status}; fallback HTTP ${fallback.status}`);return fallback.json();});"
+          for name in ['web/app-v3.js','web/narrative.js']:
+              p=Path(name); t=p.read_text()
+              if old_loader not in t:
+                  raise SystemExit(f'{name}: dashboard loader insertion point not found')
+              p.write_text(t.replace(old_loader,new_loader,1))
+
+          p=Path('web/media-switch.js'); t=p.read_text()
+          old="return /(?:^|\\/)data\\/dashboard\\.json(?:[?#]|$)/.test(url);"
+          new="return /(?:^|\\/)data\\/dashboard(?:-fallback)?\\.json(?:[?#]|$)/.test(url);"
+          if old not in t:
+              raise SystemExit('web/media-switch.js: dashboard URL matcher not found')
+          p.write_text(t.replace(old,new,1))
+          PY
+
+      - name: Validate patched source and build
+        working-directory: work
+        run: |
+          node --check scripts/build-dashboard-static-fallback.mjs
+          node --check web/app-v3.js
+          node --check web/narrative.js
+          node --check web/media-switch.js
+          npm run build:site
+          test -s site/data/dashboard-fallback.json
+          node -e "const fs=require('fs');const p='site/data/dashboard-fallback.json';const n=fs.statSync(p).size;JSON.parse(fs.readFileSync(p,'utf8'));console.log('FALLBACK_BYTES='+n);console.log('FALLBACK_MIB='+(n/1024/1024).toFixed(2));if(n>24*1024*1024)process.exit(1)"
+
+      - name: Commit and push private source fix
+        working-directory: work
+        env:
+          GIT_AUTHOR_NAME: ChatGPT Emergency Fix
+          GIT_AUTHOR_EMAIL: actions@users.noreply.github.com
+          GIT_COMMITTER_NAME: ChatGPT Emergency Fix
+          GIT_COMMITTER_EMAIL: actions@users.noreply.github.com
+        run: |
+          git add package.json scripts/build-dashboard-static-fallback.mjs web/app-v3.js web/narrative.js web/media-switch.js
+          git commit -m "fix: add static dashboard fallback when R2 is unavailable"
+          git pull --rebase origin main
+          git push origin HEAD:main
