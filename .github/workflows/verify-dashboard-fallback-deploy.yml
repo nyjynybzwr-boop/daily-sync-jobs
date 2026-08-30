@@ -1,0 +1,39 @@
+name: Verify dashboard fallback deploy
+
+on:
+  push:
+    paths:
+      - '.github/workflows/verify-dashboard-fallback-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Wait for production fallback deploy
+        shell: bash
+        run: |
+          set -u
+          base='https://dlsite-trend-radar.pages.dev'
+          for i in $(seq 1 40); do
+            echo "ATTEMPT=$i"
+            fallback_status=$(curl -sS -o /tmp/fallback.json -w '%{http_code}' --max-time 90 "$base/data/dashboard-fallback.json" || echo 000)
+            js_status=$(curl -sS -o /tmp/app.js -w '%{http_code}' --max-time 90 "$base/app-v3.js" || echo 000)
+            echo "FALLBACK_STATUS=$fallback_status JS_STATUS=$js_status"
+            if [ "$fallback_status" = "200" ] && [ "$js_status" = "200" ] && grep -q 'dashboard-fallback.json' /tmp/app.js; then
+              bytes=$(wc -c < /tmp/fallback.json)
+              echo "FALLBACK_BYTES=$bytes"
+              python -c "import json; d=json.load(open('/tmp/fallback.json','rb')); print('JSON_OK=1'); print('generated_at=',d.get('generated_at')); print('markets=',sorted((d.get('markets') or {}).keys())); ot=(d.get('markets') or {}).get('otome') or {}; print('daily_date=',(ot.get('daily') or {}).get('date')); print('daily_works=',len((ot.get('daily') or {}).get('works') or [])); print('week_works=',len(((ot.get('windows') or {}).get('week') or {}).get('works') or [])); print('month_works=',len(((ot.get('windows') or {}).get('month') or {}).get('works') or []))"
+              primary_status=$(curl -sS -o /tmp/primary -w '%{http_code}' --max-time 90 "$base/data/dashboard.json" || echo 000)
+              echo "PRIMARY_STATUS=$primary_status"
+              echo 'DEPLOY_VERIFIED=1'
+              exit 0
+            fi
+            sleep 15
+          done
+          echo 'DEPLOY_VERIFIED=0'
+          exit 1
