@@ -1,4 +1,4 @@
-name: Evaluate threshold-free reception baseline
+name: Compare E5 reception baseline
 
 on:
   push:
@@ -27,29 +27,45 @@ jobs:
           git sparse-checkout set '/scripts/' '/data/research/review-reception-profile/'
           git checkout --quiet main
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Install baseline dependency
-        run: python -m pip install --quiet scikit-learn==1.7.2
-
-      - name: Evaluate development baseline
+      - name: Install development dependencies
         working-directory: work
         run: |
-          set -euo pipefail
-          python -m py_compile scripts/evaluate-review-reception-char-ngram-baseline.py
-          python scripts/evaluate-review-reception-char-ngram-baseline.py
+          npm install --no-save @huggingface/transformers@3.8.1 >/tmp/npm.log 2>&1 || (cat /tmp/npm.log; exit 1)
+          python -m pip install --quiet scikit-learn==1.7.2
 
-      - name: Push development report
+      - name: Build transient E5 embeddings and evaluate
+        working-directory: work
+        env:
+          REVIEW_RECEPTION_E5_EMBEDDINGS_JSON: /tmp/review-reception-e5-embeddings.json
+          REVIEW_RECEPTION_E5_BATCH: '32'
+        run: |
+          set -euo pipefail
+          node --check scripts/build-review-reception-e5-dev-embeddings.mjs
+          python -m py_compile scripts/evaluate-review-reception-e5-logistic-baseline.py
+          node scripts/build-review-reception-e5-dev-embeddings.mjs
+          python scripts/evaluate-review-reception-e5-logistic-baseline.py
+          rm -f /tmp/review-reception-e5-embeddings.json
+
+      - name: Push E5 development report
         working-directory: work
         run: |
           set -euo pipefail
           git config user.name 'ChatGPT external runner'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/research/review-reception-profile/char-ngram-baseline-dev-report-v1.json
-          git commit -m "[skip actions] [CF-Pages-Skip] research: evaluate five-axis char-ngram dev baseline"
+          git restore package.json package-lock.json 2>/dev/null || true
+          rm -rf node_modules
+          git add data/research/review-reception-profile/e5-logistic-baseline-dev-report-v1.json
+          git commit -m "[skip actions] [CF-Pages-Skip] research: evaluate five-axis E5 logistic dev baseline"
           git fetch --quiet origin main
           git rebase origin/main
           git push origin HEAD:main
