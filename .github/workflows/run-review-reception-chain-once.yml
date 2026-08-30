@@ -37,6 +37,9 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/analyze-review-reception-unknown-concrete-recall-bounds.mjs
+          # replayGate's legacy module currently rewrites its canonical replay when imported.
+          # The bounds analysis is the only intended artifact from this disposable run.
+          git restore data/research/review-reception-profile/evidence-recall-audit-v1/recall-gate-replay-v1.json
 
       - name: Push bounds result
         working-directory: work
