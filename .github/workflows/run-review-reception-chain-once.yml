@@ -1,4 +1,4 @@
-name: Fix review reception replay import side effect
+name: Audit permitted reception training inventory
 
 on:
   push:
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Clone only review-reception inputs
+      - name: Clone training-only reception inputs
         env:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
@@ -24,7 +24,7 @@ jobs:
           git clone --quiet --filter=blob:none --depth=1 --no-checkout --branch main --single-branch "$AUTH_URL" work
           cd work
           git sparse-checkout init --no-cone
-          git sparse-checkout set '/scripts/' '/data/research/review-reception-profile/evidence-recall-audit-v1/'
+          git sparse-checkout set '/scripts/' '/data/research/review-reception-profile/'
           git checkout --quiet main
 
       - name: Setup Node
@@ -32,41 +32,21 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Patch direct-run guard and validate
+      - name: Audit permitted training inventory
         working-directory: work
         run: |
           set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('scripts/replay-review-reception-recall-from-frozen-packet.mjs')
-          s = p.read_text(encoding='utf-8')
-          if "import { pathToFileURL } from 'node:url';" not in s:
-              s = s.replace("import crypto from 'node:crypto';\n", "import crypto from 'node:crypto';\nimport { pathToFileURL } from 'node:url';\n", 1)
-          old = "if (process.argv.includes('--self-test')) {\n  await selfTest();\n} else {"
-          new = "const isDirectRun = Boolean(process.argv[1]) && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;\n\nif (isDirectRun && process.argv.includes('--self-test')) {\n  await selfTest();\n} else if (isDirectRun) {"
-          if old not in s:
-              raise SystemExit('expected direct-run block not found')
-          s = s.replace(old, new, 1)
-          p.write_text(s, encoding='utf-8')
-          PY
+          node --check scripts/audit-review-reception-permitted-training-inventory.mjs
+          node scripts/audit-review-reception-permitted-training-inventory.mjs
 
-          node --check scripts/replay-review-reception-recall-from-frozen-packet.mjs
-          node scripts/replay-review-reception-recall-from-frozen-packet.mjs --self-test
-
-          TARGET=data/research/review-reception-profile/evidence-recall-audit-v1/recall-gate-replay-v1.json
-          BEFORE="$(sha256sum "$TARGET" | awk '{print $1}')"
-          node --input-type=module -e "await import('./scripts/replay-review-reception-recall-from-frozen-packet.mjs'); console.log('import completed without direct execution')"
-          AFTER="$(sha256sum "$TARGET" | awk '{print $1}')"
-          test "$BEFORE" = "$AFTER"
-
-      - name: Push private fix
+      - name: Push inventory artifact
         working-directory: work
         run: |
           set -euo pipefail
           git config user.name 'ChatGPT external runner'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add scripts/replay-review-reception-recall-from-frozen-packet.mjs
-          git commit -m "[skip actions] [CF-Pages-Skip] reviews: prevent replay import side effects"
+          git add data/research/review-reception-profile/permitted-training-inventory-v1.json
+          git commit -m "[skip actions] [CF-Pages-Skip] research: materialize permitted reception training inventory"
           git fetch --quiet origin main
           git rebase origin/main
           git push origin HEAD:main
