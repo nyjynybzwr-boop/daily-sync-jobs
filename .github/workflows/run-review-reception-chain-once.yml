@@ -1,4 +1,4 @@
-name: Run review reception uncertainty bounds once
+name: Fix review reception replay import side effect
 
 on:
   push:
@@ -32,27 +32,41 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Enumerate all 256 unknown-polarity assignments
+      - name: Patch direct-run guard and validate
         working-directory: work
         run: |
           set -euo pipefail
-          node scripts/analyze-review-reception-unknown-concrete-recall-bounds.mjs
-          # replayGate's legacy module currently rewrites its canonical replay when imported.
-          # The bounds analysis is the only intended artifact from this disposable run.
-          git restore data/research/review-reception-profile/evidence-recall-audit-v1/recall-gate-replay-v1.json || true
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/replay-review-reception-recall-from-frozen-packet.mjs')
+          s = p.read_text(encoding='utf-8')
+          if "import { pathToFileURL } from 'node:url';" not in s:
+              s = s.replace("import crypto from 'node:crypto';\n", "import crypto from 'node:crypto';\nimport { pathToFileURL } from 'node:url';\n", 1)
+          old = "if (process.argv.includes('--self-test')) {\n  await selfTest();\n} else {"
+          new = "const isDirectRun = Boolean(process.argv[1]) && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;\n\nif (isDirectRun && process.argv.includes('--self-test')) {\n  await selfTest();\n} else if (isDirectRun) {"
+          if old not in s:
+              raise SystemExit('expected direct-run block not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
 
-      - name: Push bounds result
+          node --check scripts/replay-review-reception-recall-from-frozen-packet.mjs
+          node scripts/replay-review-reception-recall-from-frozen-packet.mjs --self-test
+
+          TARGET=data/research/review-reception-profile/evidence-recall-audit-v1/recall-gate-replay-v1.json
+          BEFORE="$(sha256sum "$TARGET" | awk '{print $1}')"
+          node --input-type=module -e "await import('./scripts/replay-review-reception-recall-from-frozen-packet.mjs'); console.log('import completed without direct execution')"
+          AFTER="$(sha256sum "$TARGET" | awk '{print $1}')"
+          test "$BEFORE" = "$AFTER"
+
+      - name: Push private fix
         working-directory: work
         run: |
           set -euo pipefail
           git config user.name 'ChatGPT external runner'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/research/review-reception-profile/evidence-recall-audit-v1/unknown-concrete-recall-bounds-v1.json
-          git commit -m "[skip actions] [CF-Pages-Skip] research: materialize unknown-polarity recall bounds"
-          # Preserve the committed bounds artifact while discarding any unintended
-          # unstaged side effects from imported replay modules before rebasing.
-          git reset --hard HEAD
-          git clean -fd
+          git add scripts/replay-review-reception-recall-from-frozen-packet.mjs
+          git commit -m "[skip actions] [CF-Pages-Skip] reviews: prevent replay import side effects"
           git fetch --quiet origin main
           git rebase origin/main
           git push origin HEAD:main
