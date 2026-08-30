@@ -13,22 +13,19 @@ jobs:
   diagnose:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe production dashboard endpoint
+      - name: Probe production endpoints
         shell: bash
         run: |
           set -uo pipefail
-          url='https://dlsite-trend-radar.pages.dev/data/dashboard.json'
-          echo "== HEADERS =="
-          curl -sS -D /tmp/headers.txt -o /tmp/dashboard.json --max-time 120 "$url" || echo "CURL_EXIT=$?"
-          cat /tmp/headers.txt || true
-          echo "== FILE =="
-          ls -lh /tmp/dashboard.json || true
-          if [ -f /tmp/dashboard.json ]; then
-            echo "BYTES=$(wc -c < /tmp/dashboard.json)"
-            echo "SHA256=$(sha256sum /tmp/dashboard.json | awk '{print $1}')"
+          for path in / /data/dashboard.json /data/catalog/search-index.json /data/catalog/summary.json; do
+            url="https://dlsite-trend-radar.pages.dev${path}"
+            safe=$(echo "$path" | tr '/.' '__')
+            [ "$path" = "/" ] && safe=root
+            echo "===== $path ====="
+            curl -sS -D "/tmp/${safe}.headers" -o "/tmp/${safe}.body" --max-time 120 "$url" || echo "CURL_EXIT=$?"
+            head -n 30 "/tmp/${safe}.headers" || true
+            echo "BYTES=$(wc -c < /tmp/${safe}.body 2>/dev/null || echo 0)"
             echo "FIRST_200_BYTES:"
-            head -c 200 /tmp/dashboard.json || true
+            head -c 200 "/tmp/${safe}.body" 2>/dev/null || true
             echo
-            echo "== JSON PARSE =="
-            python -c "import json; p='/tmp/dashboard.json'; obj=json.load(open(p,'rb')); print('JSON_OK=1'); print('schema_version=',obj.get('schema_version')); print('generated_at=',obj.get('generated_at')); print('top_keys=',sorted(obj.keys())); print('markets=',sorted((obj.get('markets') or {}).keys())); ot=(obj.get('markets') or {}).get('otome') or {}; print('otome_daily_date=',(ot.get('daily') or {}).get('date')); print('otome_daily_works=',len((ot.get('daily') or {}).get('works') or [])); print('otome_week_date=',((ot.get('windows') or {}).get('week') or {}).get('date')); print('otome_week_works=',len(((ot.get('windows') or {}).get('week') or {}).get('works') or [])); print('otome_month_date=',((ot.get('windows') or {}).get('month') or {}).get('date')); print('otome_month_works=',len(((ot.get('windows') or {}).get('month') or {}).get('works') or []))" || echo "JSON_PARSE_FAILED=$?"
-          fi
+          done
