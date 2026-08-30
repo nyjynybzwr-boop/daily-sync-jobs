@@ -39,7 +39,7 @@ jobs:
           node scripts/analyze-review-reception-unknown-concrete-recall-bounds.mjs
           # replayGate's legacy module currently rewrites its canonical replay when imported.
           # The bounds analysis is the only intended artifact from this disposable run.
-          git restore data/research/review-reception-profile/evidence-recall-audit-v1/recall-gate-replay-v1.json
+          git restore data/research/review-reception-profile/evidence-recall-audit-v1/recall-gate-replay-v1.json || true
 
       - name: Push bounds result
         working-directory: work
@@ -49,6 +49,10 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add data/research/review-reception-profile/evidence-recall-audit-v1/unknown-concrete-recall-bounds-v1.json
           git commit -m "[skip actions] [CF-Pages-Skip] research: materialize unknown-polarity recall bounds"
+          # Preserve the committed bounds artifact while discarding any unintended
+          # unstaged side effects from imported replay modules before rebasing.
+          git reset --hard HEAD
+          git clean -fd
           git fetch --quiet origin main
           git rebase origin/main
           git push origin HEAD:main
