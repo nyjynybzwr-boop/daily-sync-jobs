@@ -13,14 +13,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Clone private source
+      - name: Clone only review-reception inputs
         env:
           SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
           GIT_LFS_SKIP_SMUDGE: '1'
         run: |
           set -euo pipefail
-          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+          AUTH_URL="https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git"
+          git clone --quiet --filter=blob:none --depth=1 --no-checkout --branch main --single-branch "$AUTH_URL" work
+          cd work
+          git sparse-checkout init --no-cone
+          git sparse-checkout set '/scripts/' '/data/research/review-reception-profile/evidence-recall-audit-v1/'
+          git checkout --quiet main
+          git fetch --quiet --depth=1 origin 614499fa3e02982ae2795b91e6bec303eccd8ddc
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -32,7 +38,7 @@ jobs:
         working-directory: work
         run: |
           set +e
-          EVALUATED_HEAD="$(git rev-parse HEAD)"
+          EVALUATED_HEAD="$(git rev-parse main)"
           node scripts/run-review-reception-frozen-polarity-recall-chain.mjs --self-test > /tmp/reception-selftest.log 2>&1
           SELFTEST_EXIT=$?
           node scripts/run-review-reception-frozen-polarity-recall-chain.mjs > /tmp/reception-chain.log 2>&1
@@ -61,6 +67,7 @@ jobs:
               'schema_version': 1,
               'generated_at': datetime.now(timezone.utc).isoformat(),
               'evaluated_head': os.environ['EVALUATED_HEAD'],
+              'pre_unblind_snapshot': '614499fa3e02982ae2795b91e6bec303eccd8ddc',
               'node_version': os.popen('node --version').read().strip(),
               'self_test_exit_code': int(os.environ['SELFTEST_EXIT']),
               'chain_exit_code': int(os.environ['CHAIN_EXIT']),
@@ -93,8 +100,9 @@ jobs:
             exit 0
           fi
           git commit -m "[skip actions] [CF-Pages-Skip] research: execute frozen-polarity recall chain"
-          git pull --rebase origin main
-          git push origin main
+          git fetch --quiet origin main
+          git rebase origin/main
+          git push origin HEAD:main
 
       - name: Report chain outcome
         run: |
