@@ -1,4 +1,4 @@
-name: Run review reception chain once
+name: Run review reception uncertainty bounds once
 
 on:
   push:
@@ -26,85 +26,26 @@ jobs:
           git sparse-checkout init --no-cone
           git sparse-checkout set '/scripts/' '/data/research/review-reception-profile/evidence-recall-audit-v1/'
           git checkout --quiet main
-          git fetch --quiet --depth=1 origin 614499fa3e02982ae2795b91e6bec303eccd8ddc
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Execute frozen-polarity recall chain
-        id: chain
+      - name: Enumerate all 256 unknown-polarity assignments
         working-directory: work
         run: |
-          set +e
-          EVALUATED_HEAD="$(git rev-parse main)"
-          node scripts/run-review-reception-frozen-polarity-recall-chain.mjs --self-test > /tmp/reception-selftest.log 2>&1
-          SELFTEST_EXIT=$?
-          node scripts/run-review-reception-frozen-polarity-recall-chain.mjs > /tmp/reception-chain.log 2>&1
-          CHAIN_EXIT=$?
-          set -e
-          export EVALUATED_HEAD SELFTEST_EXIT CHAIN_EXIT
-          python - <<'PY'
-          import json, os
-          from datetime import datetime, timezone
-          from pathlib import Path
+          set -euo pipefail
+          node scripts/analyze-review-reception-unknown-concrete-recall-bounds.mjs
 
-          root = Path('.')
-          out_dir = root / 'data/research/review-reception-profile/evidence-recall-audit-v1'
-          out_dir.mkdir(parents=True, exist_ok=True)
-          files = {
-              'provenance_audit': out_dir / 'unknown-concrete-polarity-provenance-audit-v1.json',
-              'resolution': out_dir / 'frozen-concrete-polarity-resolution-v1.json',
-              'resolved_replay': out_dir / 'recall-gate-replay-with-frozen-polarity-v1.json',
-          }
-          def tail(path, limit=30000):
-              p = Path(path)
-              if not p.exists(): return ''
-              text = p.read_text(encoding='utf-8', errors='replace')
-              return text[-limit:]
-          payload = {
-              'schema_version': 1,
-              'generated_at': datetime.now(timezone.utc).isoformat(),
-              'evaluated_head': os.environ['EVALUATED_HEAD'],
-              'pre_unblind_snapshot': '614499fa3e02982ae2795b91e6bec303eccd8ddc',
-              'node_version': os.popen('node --version').read().strip(),
-              'self_test_exit_code': int(os.environ['SELFTEST_EXIT']),
-              'chain_exit_code': int(os.environ['CHAIN_EXIT']),
-              'artifact_presence': {k: v.exists() for k, v in files.items()},
-              'self_test_log_tail': tail('/tmp/reception-selftest.log'),
-              'chain_log_tail': tail('/tmp/reception-chain.log'),
-          }
-          (out_dir / 'frozen-polarity-chain-run-latest.json').write_text(
-              json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8'
-          )
-          PY
-          echo "selftest_exit=$SELFTEST_EXIT" >> "$GITHUB_OUTPUT"
-          echo "chain_exit=$CHAIN_EXIT" >> "$GITHUB_OUTPUT"
-
-      - name: Push diagnostic and validated-or-preserved artifacts
+      - name: Push bounds result
         working-directory: work
         run: |
           set -euo pipefail
           git config user.name 'ChatGPT external runner'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/research/review-reception-profile/evidence-recall-audit-v1/frozen-polarity-chain-run-latest.json
-          for f in \
-            data/research/review-reception-profile/evidence-recall-audit-v1/unknown-concrete-polarity-provenance-audit-v1.json \
-            data/research/review-reception-profile/evidence-recall-audit-v1/frozen-concrete-polarity-resolution-v1.json \
-            data/research/review-reception-profile/evidence-recall-audit-v1/recall-gate-replay-with-frozen-polarity-v1.json; do
-            if [ -f "$f" ]; then git add "$f"; fi
-          done
-          if git diff --cached --quiet; then
-            echo 'No diagnostic/artifact changes to push.'
-            exit 0
-          fi
-          git commit -m "[skip actions] [CF-Pages-Skip] research: execute frozen-polarity recall chain"
+          git add data/research/review-reception-profile/evidence-recall-audit-v1/unknown-concrete-recall-bounds-v1.json
+          git commit -m "[skip actions] [CF-Pages-Skip] research: materialize unknown-polarity recall bounds"
           git fetch --quiet origin main
           git rebase origin/main
           git push origin HEAD:main
-
-      - name: Report chain outcome
-        run: |
-          echo "self-test exit: ${{ steps.chain.outputs.selftest_exit }}"
-          echo "chain exit: ${{ steps.chain.outputs.chain_exit }}"
