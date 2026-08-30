@@ -1,0 +1,55 @@
+name: Verify one-off market comparison coverage
+on:
+  push:
+    paths:
+      - '.github/workflows/market-coverage-once.yml'
+permissions:
+  contents: read
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Clone source repository
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Materialize catalogs
+        working-directory: work
+        run: |
+          set -euo pipefail
+          git lfs pull --include='data/catalog/full/details.json,data/manga/catalog/full/details.json'
+      - name: Count release-year coverage
+        working-directory: work
+        run: |
+          set -euo pipefail
+          mkdir -p data/research
+          node <<'NODE'
+          const fs=require('fs');
+          const years=[2021,2022,2023,2024,2025,2026];
+          const sources={audio:'data/catalog/full/details.json',manga:'data/manga/catalog/full/details.json'};
+          const getYear=x=>Number(String(x.release_date_text||x.release_date||'').match(/((?:19|20)\d{2})/)?.[1])||null;
+          const hasSales=x=>x.sales_count!==null&&x.sales_count!==undefined&&x.sales_count!==''&&Number.isFinite(Number(x.sales_count));
+          const out={generated_at:new Date().toISOString(),markets:{}};
+          for(const [market,file] of Object.entries(sources)){
+            const p=JSON.parse(fs.readFileSync(file,'utf8')); const raw=Array.isArray(p)?p:Object.values(p||{});
+            out.markets[market]={source_works:raw.length,yearly:years.map(year=>{const rows=raw.filter(x=>getYear(x)===year);const withSales=rows.filter(hasSales);return {year,released_works:rows.length,sales_observed_works:withSales.length,sales_coverage:rows.length?Math.round(withSales.length/rows.length*10000)/10000:null};})};
+          }
+          fs.writeFileSync('data/research/interview-market-coverage-2026-08-30.json',JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out,null,2));
+          NODE
+      - name: Push result
+        working-directory: work
+        run: |
+          set -euo pipefail
+          TARGET='data/research/interview-market-coverage-2026-08-30.json'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$TARGET"
+          git commit -m '[skip actions] [CF-Pages-Skip] research: verify interview market coverage'
+          git pull --rebase origin main
+          git push origin HEAD:main
