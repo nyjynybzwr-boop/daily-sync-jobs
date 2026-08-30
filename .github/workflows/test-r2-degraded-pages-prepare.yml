@@ -1,0 +1,42 @@
+name: Test R2-degraded Pages prepare
+
+on:
+  push:
+    paths:
+      - '.github/workflows/test-r2-degraded-pages-prepare.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout latest private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --depth 1 --branch main "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Exercise degraded path without Cloudflare credentials
+        working-directory: work
+        run: |
+          node --check scripts/prepare-cloudflare-pages.mjs
+          rm -rf site
+          mkdir -p site/data/catalog
+          printf '{"schema_version":1,"markets":{}}' > site/data/dashboard-fallback.json
+          printf '{"full":true}' > site/data/dashboard.json
+          printf '{"search":true}' > site/data/catalog/search-index.json
+          env -u CLOUDFLARE_ACCOUNT_ID -u CLOUDFLARE_API_TOKEN node scripts/prepare-cloudflare-pages.mjs
+          test -s site/data/dashboard-fallback.json
+          test ! -e site/data/dashboard.json
+          test ! -e site/data/catalog/search-index.json
+          test -s site/_headers
+          grep -q '/data/dashboard-fallback.json' site/_headers
+          echo DEGRADED_PREPARE_OK=1
