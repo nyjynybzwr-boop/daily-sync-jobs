@@ -1,0 +1,86 @@
+name: Audit Ainou Yu label mentions once
+
+on:
+  push:
+    paths:
+      - '.github/triggers/audit-ainou-yu-label-mentions-once'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work
+
+      - name: Audit official label mentions
+        working-directory: work
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const root='data/research/review-reading-packets/deep-dive-ainou-yu-direct';
+          const reviews=JSON.parse(fs.readFileSync(`${root}/reviews.json`,'utf8')).reviews||[];
+          const norm=v=>String(v??'').normalize('NFKC').toLowerCase();
+          const specs={
+            '甘々':/甘々|あまあま|甘い|甘やか|ベタ甘/iu,
+            '純愛':/純愛|一途|相思相愛|恋人|彼氏|両想い|両思い/iu,
+            'キス':/キス|ちゅっ|ちゅー|口づけ|kiss/iu,
+            '耳舐め・耳責め':/耳舐|耳責|耳元|耳を|耳が/iu,
+            '乳首責め':/乳首|ちくび/iu,
+            'クリ責め':/クリ責|クリトリス|クリを|クリが/iu,
+            'クンニ':/クンニ/iu,
+            '手マン・指責め':/手マン|指責|指で.*責|指で.*弄/iu,
+            '羞恥':/羞恥|恥ずか|恥ず/iu,
+            '拘束':/拘束|縛ら|縛っ|手を縛/iu,
+            '焦らし':/焦ら|じら/iu,
+            '言葉責め':/言葉責|煽り|煽って|小馬鹿|からか/iu,
+            '玩具':/玩具|おもちゃ|ローター|バイブ/iu,
+            '中出し':/中出し|中に出/iu,
+            '連続絶頂':/連続絶頂|連続でイ|何度もイ|何回もイ/iu,
+            '強制系':/強制|無理やり|無理矢理|抵抗.*でき|逃げ.*でき/iu,
+            '媚薬':/媚薬/iu,
+            '調教':/調教/iu,
+            '屈辱':/屈辱/iu,
+            '喘ぎ真似':/喘ぎ真似|喘ぎまね|喘ぎ.*真似|イク.*真似/iu,
+            '甘噛み':/甘噛|噛ま|噛ん/iu,
+            '巨根':/巨根|大きい|おっきい|でかい|デカい|太い|サイズ/iu,
+            '処女':/処女|初体験|処女喪失|初めて.*挿/iu,
+            '現代':/現代/iu,
+            'オフィス・職場':/オフィス|職場|勤務|会社|サラリーマン/iu,
+            'ささやき':/ささや|囁/iu,
+            '脳イキ':/脳イキ/iu,
+            'オナニー(女性)':/オナニ|0721|自慰/iu,
+          };
+          const out={review_count:reviews.length,labels:{}};
+          for(const [label,re] of Object.entries(specs)){
+            const hits=[];
+            for(const r of reviews){
+              if(re.test(norm(`${r.title||''}\n${r.text||''}`))){hits.push({review_ref:r.review_ref,rate_num:r.rate_num,title:r.title});}
+              re.lastIndex=0;
+            }
+            out.labels[label]={mentions:hits.length,share:Number((hits.length*100/reviews.length).toFixed(1)),sample:hits.slice(0,8)};
+          }
+          fs.writeFileSync(`${root}/official-label-mention-audit.json`,JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(Object.fromEntries(Object.entries(out.labels).map(([k,v])=>[k,v.mentions])),null,2));
+          NODE
+
+      - name: Commit audit
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/research/review-reading-packets/deep-dive-ainou-yu-direct/official-label-mention-audit.json
+          git commit -m '[CF-Pages-Skip] [skip actions] research: audit Ainou Yu label mentions' || exit 0
+          git pull --rebase origin main
+          git push origin HEAD:main
