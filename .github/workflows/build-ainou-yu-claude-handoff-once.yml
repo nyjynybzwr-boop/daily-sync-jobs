@@ -1,0 +1,145 @@
+name: Build Ainou Yu Claude handoff once
+
+on:
+  push:
+    paths:
+      - 'triggers/build-ainou-yu-claude-handoff.txt'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+        with:
+          repository: nyjynybzwr-boop/dlsite-trend-radar
+          token: ${{ secrets.GH_PAT }}
+          path: target
+          fetch-depth: 1
+
+      - name: Build consolidated Claude handoff
+        shell: bash
+        run: |
+          cd target
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const dir = 'data/research/review-reading-packets/deep-dive-ainou-yu-direct';
+          const reviews = JSON.parse(fs.readFileSync(path.join(dir, 'reviews.json'), 'utf8'));
+          const audit = JSON.parse(fs.readFileSync(path.join(dir, 'analysis-audit.json'), 'utf8'));
+          const labels = JSON.parse(fs.readFileSync(path.join(dir, 'official-label-mention-audit.json'), 'utf8'));
+
+          const combined = {
+            handoff_version: 1,
+            purpose: 'Claude/other LLM handoff: full evidence packet for RJ01306051. Read all 151 reviews before drawing conclusions.',
+            analysis_rules: [
+              'Treat individual review text as primary evidence.',
+              'Do not equate keyword mention share with causal sales contribution.',
+              'Keep observed facts, interpretations, and hypotheses separate.',
+              'Pay attention to negative and 4/5 reviews, not only 5/5 praise.',
+              'Do not claim an element was unimportant merely because reviewers did not explicitly name it.',
+              'When proposing hit factors, explain the mechanism connecting character/story/performance/sexual content to user response.'
+            ],
+            work: {
+              product_id: reviews.product_id,
+              title: reviews.title,
+              circle: reviews.circle,
+              official_work_url: reviews.official_work_url,
+              source: reviews.source,
+              fetched_at: reviews.fetched_at,
+              expected_review_count: reviews.expected_review_count,
+              fetched_review_count: reviews.fetched_review_count,
+              rating_distribution: reviews.rating_distribution,
+              catalog_row: audit.catalog_row,
+              official_page: audit.official_page
+            },
+            aggregate_analysis: {
+              category_audit: audit.categories,
+              low_rated_reviews: audit.low_rated_reviews,
+              top_tokens: audit.top_tokens,
+              official_label_mention_audit: labels.labels
+            },
+            reviews: reviews.reviews
+          };
+          fs.writeFileSync(path.join(dir, 'claude-handoff-all-151.json'), JSON.stringify(combined, null, 2) + '\n');
+
+          const categories = Object.entries(audit.categories || {})
+            .map(([k,v]) => ({ key:k, mentions:v.review_mentions, share:v.share }))
+            .sort((a,b) => b.mentions - a.mentions);
+          const labelRows = Object.entries(labels.labels || {})
+            .map(([k,v]) => ({ key:k, mentions:v.mentions, share:v.share }))
+            .sort((a,b) => b.mentions - a.mentions);
+
+          let md = '';
+          md += '# 愛脳ユウ / RJ01306051 — Claude引き継ぎ用・151レビュー全件パケット\n\n';
+          md += '## 0. このファイルの用途\n\n';
+          md += 'この資料は、DLsite公式レビューAPIから取得したレビュー151件を**省略せず全文**収録し、その前に機械集計と注意事項を置いたものです。Claude等の別LLMに渡す場合は、集計値だけで結論を出さず、必ず後半の151件本文も読んでください。\n\n';
+          md += '### 読み方のルール\n\n';
+          md += '- レビュー本文＝一次証拠。カテゴリ集計・ラベル言及数＝補助証拠。\n';
+          md += '- 「言及率が低い」ことを「売上への寄与が低い」と同義にしない。\n';
+          md += '- FACT（観測事実）／INTERPRETATION（解釈）／HYPOTHESIS（仮説）を分離する。\n';
+          md += '- 5/5だけでなく4/5・3/5も重視する。\n';
+          md += '- ヒット要因を述べる場合は、タグ名の列挙ではなく、なぜその要素がユーザー反応につながったかのメカニズムまで説明する。\n\n';
+          md += '## 1. 作品・データ概要\n\n';
+          md += `- product_id: ${reviews.product_id}\n`;
+          md += `- title: ${reviews.title}\n`;
+          md += `- circle: ${reviews.circle}\n`;
+          md += `- official URL: ${reviews.official_work_url}\n`;
+          md += `- source: ${reviews.source}\n`;
+          md += `- fetched: ${reviews.fetched_review_count}/${reviews.expected_review_count}\n`;
+          md += `- rating distribution: 5相当=${reviews.rating_distribution['50'] || 0}, 4相当=${reviews.rating_distribution['40'] || 0}, 3相当=${reviews.rating_distribution['30'] || 0}\n`;
+          if (audit.catalog_row) {
+            md += `- catalog snapshot sales_count: ${audit.catalog_row.sales_count}\n`;
+            md += `- catalog snapshot rating: ${audit.catalog_row.rating}\n`;
+            md += `- price_yen: ${audit.catalog_row.price_yen}\n`;
+            md += `- voice actor: ${(audit.catalog_row.voice_actors || []).join(', ')}\n`;
+            md += `- scenario: ${(audit.catalog_row.scenario_by || []).join(', ')}\n`;
+            md += `- illustration: ${(audit.catalog_row.illust_by || []).join(', ')}\n`;
+            md += `- official labels: ${(audit.catalog_row.labels || []).join(' / ')}\n`;
+          }
+          md += '\n## 2. レビュー横断カテゴリ集計\n\n';
+          md += '| category | reviews | share |\n|---|---:|---:|\n';
+          for (const x of categories) md += `| ${x.key} | ${x.mentions} | ${x.share}% |\n`;
+
+          md += '\n## 3. 公式タグのレビュー本文内・明示言及監査\n\n';
+          md += '※これは文字列・近似語ベースの「明示言及数」。要素の存在や売上寄与そのものを測る指標ではありません。\n\n';
+          md += '| official label | reviews mentioning | share |\n|---|---:|---:|\n';
+          for (const x of labelRows) md += `| ${x.key} | ${x.mentions} | ${x.share}% |\n`;
+
+          md += '\n## 4. 低評価側（5/5未満）全文\n\n';
+          for (const r of (audit.low_rated_reviews || [])) {
+            md += `### ${r.rate_num/10}/5 — ${r.title}\n\n`;
+            md += `- review_ref: ${r.review_ref}\n- date: ${r.date}\n- good_review: ${r.good_review}\n\n`;
+            md += `${r.text}\n\n`;
+          }
+
+          md += '\n## 5. 全151レビュー・全文\n\n';
+          reviews.reviews.forEach((r, i) => {
+            md += `### Review ${String(i+1).padStart(3,'0')} / 151 — ${r.rate_num/10}/5 — ${r.title}\n\n`;
+            md += `- review_ref: ${r.review_ref}\n`;
+            md += `- date: ${r.date}\n`;
+            md += `- purchased: ${r.is_purchased}\n`;
+            md += `- good_review: ${r.good_review}\n`;
+            md += `- bad_review: ${r.bad_review}\n`;
+            md += `- recommend: ${r.recommend}\n`;
+            md += `- spoiler: ${r.spoiler}\n\n`;
+            md += `${r.text}\n\n---\n\n`;
+          });
+          fs.writeFileSync(path.join(dir, 'claude-handoff-all-151.md'), md);
+          NODE
+
+      - name: Commit handoff files
+        shell: bash
+        run: |
+          cd target
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/research/review-reading-packets/deep-dive-ainou-yu-direct/claude-handoff-all-151.md \
+                  data/research/review-reading-packets/deep-dive-ainou-yu-direct/claude-handoff-all-151.json
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Add complete Ainou Yu 151-review Claude handoff"
+            git push
+          fi
