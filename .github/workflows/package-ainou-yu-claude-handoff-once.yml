@@ -1,0 +1,35 @@
+name: Package Ainou Yu Claude handoff once
+
+on:
+  push:
+    paths:
+      - 'triggers/package-ainou-yu-claude-handoff.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch completed handoff files
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+        run: |
+          set -euo pipefail
+          mkdir -p package
+          base="https://raw.githubusercontent.com/${SOURCE_REPO}/main/data/research/review-reading-packets/deep-dive-ainou-yu-direct"
+          curl -fsSL -H "Authorization: Bearer ${SYNC_TOKEN}" -H "Accept: application/vnd.github.raw+json" "${base}/claude-handoff-all-151.md" -o package/ainou-yu-151reviews-claude-handoff.md
+          curl -fsSL -H "Authorization: Bearer ${SYNC_TOKEN}" -H "Accept: application/vnd.github.raw+json" "${base}/claude-handoff-all-151.json" -o package/ainou-yu-151reviews-full-data.json
+          wc -c package/*
+
+      - name: Upload handoff package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ainou-yu-151reviews-claude-package
+          path: package/
+          if-no-files-found: error
+          retention-days: 7
