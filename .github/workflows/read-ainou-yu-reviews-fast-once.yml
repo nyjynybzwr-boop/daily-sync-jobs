@@ -9,18 +9,14 @@ permissions:
   contents: read
 
 jobs:
-  fetch-reviews:
+  analyze-reviews:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Fetch official DLsite reviews and write private packet
-        env:
-          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
-          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+      - name: Fetch and summarize official DLsite reviews
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
-          import fs from 'node:fs';
           const productId='RJ01306051';
           const headers={
             'User-Agent':'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
@@ -37,8 +33,7 @@ jobs:
               try{
                 const res=await fetch(url,{headers,redirect:'follow'});
                 if(!res.ok) throw new Error(`HTTP ${res.status}`);
-                const body=await res.text();
-                json=JSON.parse(body);
+                json=JSON.parse(await res.text());
                 if(json?.is_success!==true) throw new Error(`API_ERROR ${clean(json?.error_msg||'is_success=false')}`);
                 break;
               }catch(e){if(attempt===3) throw e; await sleep(attempt*1200);}
@@ -48,28 +43,46 @@ jobs:
             for(const r of list) rows.push({
               review_id:clean(r.member_review_id||r.review_id||''),
               title:String(r.review_title??''), text:String(r.review_text??''),
-              entry_date:clean(r.entry_date||''), regist_date:clean(r.regist_date||''),
               rate_num:Number(r.rate_num)||null,
               is_purchased:['1','true'].includes(String(r.is_purchased??'').toLowerCase())||r.is_purchased===true,
-              recommend:clean(r.recommend||''), spoiler:clean(r.spoiler||''),
-              good_review:Number(r.good_review)||0, bad_review:Number(r.bad_review)||0,
-              genre:Array.isArray(r.genre)?r.genre:[]
+              recommend:clean(r.recommend||''), spoiler:clean(r.spoiler||'')
             });
             if(list.length<20) break;
-            await sleep(750);
+            await sleep(650);
           }
-          const dedup=[...new Map(rows.map(r=>[r.review_id||`${r.entry_date}:${r.title}:${r.text}`,r])).values()];
-          const out={schema_version:1,source:'official_dlsite_review_api',product_id:productId,fetched_at:new Date().toISOString(),review_count:dedup.length,reviews:dedup};
-          fs.writeFileSync('/tmp/ainou-yu-reviews.json',JSON.stringify(out,null,2)+'\n');
-          const content=fs.readFileSync('/tmp/ainou-yu-reviews.json').toString('base64');
-          const payload={message:'[CF-Pages-Skip] [skip actions] research: cache Ainou Yu reviews fast',content,branch:'main'};
-          fs.writeFileSync('/tmp/ainou-yu-payload.json',JSON.stringify(payload));
-          console.log(JSON.stringify({product_id:productId,review_count:dedup.length}));
+          const reviews=[...new Map(rows.map(r=>[r.review_id||`${r.title}:${r.text}`,r])).values()];
+          const cats={
+            performance:/恋津田|演技|声優|CV|声|ボイス|話し方|笑い方|息遣い|吐息/,
+            character_melo:/愛脳|ユウ|キャラ|沼|メロ|スパダリ|いい男|イケメン|魅力的/,
+            sweetness_affection:/甘|優し|溺愛|愛され|好きすぎ|大好き|惚れ|幸せ|愛し|可愛|かわい/,
+            erotic_overall:/エロ|えっち|エッチ|Hシーン|濡れ場|SEX|セックス|すけべ|絶頂|イく|イク|射精|挿入|ちん/,
+            kiss_lip:/キス|リップ音|ちゅ|口づけ/,
+            lick_sound:/舐め|舌|水音/,
+            moan_imitation:/喘ぎ真似|喘ぎ|喘ぐ|声真似/,
+            teasing_verbal:/煽|言葉責め|意地悪|いじめたい|焦らし/,
+            interrogation:/尋問|取り調べ/,
+            story_mystery:/ストーリー|シナリオ|脚本|物語|謎|展開|オチ|正体|答え合わせ|ネタバレ|伏線/,
+            detective_premise:/探偵|調査|尾行|依頼|潜入/,
+            gap_duality:/ギャップ|二面性|裏の顔|一枚上手|クズ|不穏|得体|意外|爽やか/,
+            heroine:/ヒロイン|主人公/,
+            replay:/リピート|聴き返|聞き返|もう一度|二度目|2回目|何度も|何回も/,
+            sequel:/続編|次回作|2作目|二作目|続き|第二弾/,
+            bonus_track:/おまけ|特典|TRACK02|TRACK 02|トラック02|トラック2/,
+            smoking:/喫煙|タバコ|煙草/,
+            name_wordplay:/I know you|愛脳ユウ.*名前|名前.*愛脳ユウ|ネーミング/,
+            illustration:/イラスト|ジャケット|絵|ビジュアル|見た目/,
+            sound_design:/SE|環境音|音質|効果音|ボイチェン|加工され/,
+            length_volume:/尺|ボリューム|短い|長い|時間.*短|もっと長/,
+            relationship_reason:/惹かれた.*理由|好き.*理由|なぜ.*好き|どうして.*好き|きっかけ/,
+            negative_cue:/惜し|残念|モヤ|物足|置いてきぼり|分から|わから|微妙|合わな|苦手|違和感|不満|驚き.*な|予想.*通|読め|でしょうね|もう少し|もっと.*欲|短い|怖かった/
+          };
+          const presence={};
+          for(const [k,re] of Object.entries(cats)) presence[k]=reviews.filter(r=>re.test(`${r.title}\n${r.text}`)).length;
+          const rating={};
+          for(const r of reviews) rating[r.rate_num]=(rating[r.rate_num]||0)+1;
+          const neg=reviews.filter(r=>cats.negative_cue.test(`${r.title}\n${r.text}`)||Number(r.rate_num)<=40)
+            .map(r=>({rate_num:r.rate_num,title:clean(r.title),text:clean(r.text).slice(0,1200)}));
+          const lowMention=Object.entries(presence).sort((a,b)=>a[1]-b[1]);
+          console.log('SUMMARY_JSON');
+          console.log(JSON.stringify({review_count:reviews.length,purchased:reviews.filter(r=>r.is_purchased).length,recommend_yes:reviews.filter(r=>r.recommend==='1').length,rating,presence,lowMention,negative_or_low_rating_reviews:neg},null,2));
           NODE
-          path='data/research/interview-2026-09-01/ainou-yu-reviews-fast.json'
-          curl -fsS -X PUT \
-            -H "Authorization: Bearer $SYNC_TOKEN" \
-            -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2022-11-28' \
-            "https://api.github.com/repos/$SOURCE_REPO/contents/$path" \
-            --data-binary @/tmp/ainou-yu-payload.json >/dev/null
