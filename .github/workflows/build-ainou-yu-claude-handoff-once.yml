@@ -6,17 +6,21 @@ on:
       - 'triggers/build-ainou-yu-claude-handoff.txt'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Checkout target repo
-        uses: actions/checkout@v4
-        with:
-          repository: nyjynybzwr-boop/dlsite-trend-radar
-          token: ${{ secrets.GH_PAT }}
-          path: target
-          fetch-depth: 1
+      - name: Clone source repo
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" target
 
       - name: Build consolidated Claude handoff
         shell: bash
@@ -101,45 +105,38 @@ jobs:
           md += '\n## 2. レビュー横断カテゴリ集計\n\n';
           md += '| category | reviews | share |\n|---|---:|---:|\n';
           for (const x of categories) md += `| ${x.key} | ${x.mentions} | ${x.share}% |\n`;
-
           md += '\n## 3. 公式タグのレビュー本文内・明示言及監査\n\n';
           md += '※これは文字列・近似語ベースの「明示言及数」。要素の存在や売上寄与そのものを測る指標ではありません。\n\n';
           md += '| official label | reviews mentioning | share |\n|---|---:|---:|\n';
           for (const x of labelRows) md += `| ${x.key} | ${x.mentions} | ${x.share}% |\n`;
-
           md += '\n## 4. 低評価側（5/5未満）全文\n\n';
           for (const r of (audit.low_rated_reviews || [])) {
             md += `### ${r.rate_num/10}/5 — ${r.title}\n\n`;
             md += `- review_ref: ${r.review_ref}\n- date: ${r.date}\n- good_review: ${r.good_review}\n\n`;
             md += `${r.text}\n\n`;
           }
-
           md += '\n## 5. 全151レビュー・全文\n\n';
           reviews.reviews.forEach((r, i) => {
             md += `### Review ${String(i+1).padStart(3,'0')} / 151 — ${r.rate_num/10}/5 — ${r.title}\n\n`;
-            md += `- review_ref: ${r.review_ref}\n`;
-            md += `- date: ${r.date}\n`;
-            md += `- purchased: ${r.is_purchased}\n`;
-            md += `- good_review: ${r.good_review}\n`;
-            md += `- bad_review: ${r.bad_review}\n`;
-            md += `- recommend: ${r.recommend}\n`;
-            md += `- spoiler: ${r.spoiler}\n\n`;
+            md += `- review_ref: ${r.review_ref}\n- date: ${r.date}\n- purchased: ${r.is_purchased}\n- good_review: ${r.good_review}\n- bad_review: ${r.bad_review}\n- recommend: ${r.recommend}\n- spoiler: ${r.spoiler}\n\n`;
             md += `${r.text}\n\n---\n\n`;
           });
           fs.writeFileSync(path.join(dir, 'claude-handoff-all-151.md'), md);
+          console.log(JSON.stringify({reviews: reviews.reviews.length, categories: categories.length, labels: labelRows.length, md_chars: md.length}, null, 2));
           NODE
 
       - name: Commit handoff files
-        shell: bash
+        working-directory: target
         run: |
-          cd target
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add data/research/review-reading-packets/deep-dive-ainou-yu-direct/claude-handoff-all-151.md \
                   data/research/review-reading-packets/deep-dive-ainou-yu-direct/claude-handoff-all-151.json
           if git diff --cached --quiet; then
-            echo "No changes"
+            echo 'No changes'
           else
-            git commit -m "Add complete Ainou Yu 151-review Claude handoff"
-            git push
+            git commit -m '[CF-Pages-Skip] [skip actions] research: add complete Ainou Yu Claude handoff'
+            git pull --rebase origin main
+            git push origin HEAD:main
           fi
