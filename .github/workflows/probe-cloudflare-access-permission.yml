@@ -1,11 +1,8 @@
 name: Probe Cloudflare Access Permission
 
-# Read-only / invalid-payload permission checks. This workflow never creates an Access app.
+# Retired one-shot diagnostic. Kept manual-only for auditability; do not schedule.
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - '.github/workflows/probe-cloudflare-access-permission.yml'
 
 permissions:
   contents: read
@@ -14,42 +11,5 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe Access permissions and identity providers without changes
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "Required Cloudflare secrets are missing."
-            exit 1
-          fi
-
-          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
-
-          read_body="$(mktemp)"
-          read_code="$(curl -sS -o "$read_body" -w '%{http_code}' "${auth[@]}" \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps?per_page=1")"
-          echo "ACCESS-READ HTTP $read_code"
-          jq '{success, errors: [.errors[]? | {code, message}], result_count: ((.result // []) | length)}' "$read_body"
-
-          write_body="$(mktemp)"
-          write_code="$(curl -sS -o "$write_body" -w '%{http_code}' -X POST "${auth[@]}" \
-            --data '{}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps")"
-          echo "ACCESS-WRITE-PROBE HTTP $write_code"
-          jq '{success, errors: [.errors[]? | {code, message}]}' "$write_body"
-          if [ "$write_code" = "200" ] || [ "$write_code" = "201" ]; then
-            echo "Unexpected success from deliberately invalid payload; refusing to continue."
-            exit 2
-          fi
-
-          idp_body="$(mktemp)"
-          idp_code="$(curl -sS -o "$idp_body" -w '%{http_code}' "${auth[@]}" \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/identity_providers?per_page=100")"
-          echo "IDP-READ HTTP $idp_code"
-          if [ "$idp_code" = "200" ]; then
-            # Only provider types/counts are printed. Names/config/secrets are not logged.
-            jq '{success, provider_count: ((.result // []) | length), provider_types: ((.result // []) | map(.type) | sort | group_by(.) | map({type: .[0], count: length}))}' "$idp_body"
-          else
-            jq '{success, errors: [.errors[]? | {code, message}]}' "$idp_body"
-          fi
+      - run: |
+          echo "Retired. 2026-09-05 findings: Access app READ=200, WRITE=403; identity-provider READ=200 with zero providers."
