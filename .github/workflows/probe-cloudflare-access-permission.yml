@@ -1,5 +1,6 @@
 name: Probe Cloudflare Access Permission
 
+# One-shot read-only permission check for the existing Cloudflare API token.
 on:
   workflow_dispatch:
   push:
