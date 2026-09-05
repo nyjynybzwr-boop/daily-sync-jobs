@@ -6,7 +6,9 @@ on:
     paths:
       - '.github/workflows/bl-comic-ranking-sync.yml'
   schedule:
-    - cron: '20 16 * * *'
+    # 02:20 JST. Staggered after otome manga so the BL relay does not overlap
+    # another daily DLsite collector.
+    - cron: '20 17 * * *'
 
 concurrency:
   group: bl-manga-ranking-sync
@@ -48,6 +50,7 @@ jobs:
         working-directory: work
         env:
           DLSITE_JP_RELAY_ORIGIN: ${{ vars.DLSITE_JP_RELAY_ORIGIN }}
+          NODE_OPTIONS: '--import=./scripts/lib/dlsite-request-throttle.mjs'
         run: |
           set -euo pipefail
           source scripts/ci/dlsite-jp-relay-env.sh
