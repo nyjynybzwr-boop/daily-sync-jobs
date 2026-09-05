@@ -14,7 +14,7 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe Access read and write permissions without changes
+      - name: Probe Access permissions and account-member count without changes
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -25,25 +25,31 @@ jobs:
             exit 1
           fi
 
-          read_body="$(mktemp)"
-          read_code="$(curl -sS -o "$read_body" -w '%{http_code}' \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            -H 'Content-Type: application/json' \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps?per_page=1")"
-          echo "READ HTTP $read_code"
-          jq '{success, errors: [.errors[]? | {code, message}], result_count: ((.result // []) | length)}' "$read_body"
-          test "$read_code" = "200"
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
 
-          # Deliberately invalid payload: required application fields are absent, so this cannot create an app.
+          read_body="$(mktemp)"
+          read_code="$(curl -sS -o "$read_body" -w '%{http_code}' "${auth[@]}" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps?per_page=1")"
+          echo "ACCESS-READ HTTP $read_code"
+          jq '{success, errors: [.errors[]? | {code, message}], result_count: ((.result // []) | length)}' "$read_body"
+
           write_body="$(mktemp)"
-          write_code="$(curl -sS -o "$write_body" -w '%{http_code}' -X POST \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            -H 'Content-Type: application/json' \
-            --data '{}' \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps")"
-          echo "WRITE-PROBE HTTP $write_code"
+          write_code="$(curl -sS -o "$write_body" -w '%{http_code}' -X POST "${auth[@]}" \
+            --data '{}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps")"
+          echo "ACCESS-WRITE-PROBE HTTP $write_code"
           jq '{success, errors: [.errors[]? | {code, message}]}' "$write_body"
           if [ "$write_code" = "200" ] || [ "$write_code" = "201" ]; then
             echo "Unexpected success from deliberately invalid payload; refusing to continue."
             exit 2
+          fi
+
+          members_body="$(mktemp)"
+          members_code="$(curl -sS -o "$members_body" -w '%{http_code}' "${auth[@]}" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/members?per_page=100")"
+          echo "MEMBERS HTTP $members_code"
+          if [ "$members_code" = "200" ]; then
+            # Deliberately print only aggregate counts; never expose member identities/emails in logs.
+            jq '{success, member_count: ((.result // []) | map(select(.status == "member")) | length), invited_count: ((.result // []) | map(select(.status == "invited")) | length)}' "$members_body"
+          else
+            jq '{success, errors: [.errors[]? | {code, message}]}' "$members_body"
           fi
