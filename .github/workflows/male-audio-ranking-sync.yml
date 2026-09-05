@@ -7,7 +7,9 @@ on:
       - '.github/workflows/male-audio-ranking-sync.yml'
       - '.github/triggers/male-audio-ranking-now'
   schedule:
-    - cron: '0 17 * * *'
+    # 03:20 JST. Staggered away from the other DLsite collectors so the
+    # conservative per-request throttle does not compete across runners.
+    - cron: '20 18 * * *'
 
 concurrency:
   group: male-audio-ranking-sync
@@ -46,6 +48,8 @@ jobs:
       - name: Collect and analyze male audio rankings
         id: collect
         working-directory: work
+        env:
+          NODE_OPTIONS: '--import=./scripts/lib/dlsite-request-throttle.mjs'
         run: |
           set -o pipefail
           mkdir -p ../status
