@@ -21,7 +21,7 @@ jobs:
     env:
       R2_BUCKET_NAME: melosignal-data
       REVIEW_CHUNK_SIZE: '100'
-      REVIEW_DELAY_MS: '2000'
+      REVIEW_DELAY_MS: '10000'
       REVIEW_R2_MAX_BYTES: '5368709120'
 
     steps:
@@ -128,7 +128,7 @@ jobs:
             log=".tmp/reviews/${REVIEW_SEGMENT}/crawl-${padded}.log"
 
             set +e
-            REVIEW_CHUNK_INDEX="$chunk_index" node scripts/crawl-reviews-r2-chunk.mjs 2>&1 | tee "$log"
+            NODE_OPTIONS='--import=./scripts/lib/dlsite-request-throttle.mjs' REVIEW_CHUNK_INDEX="$chunk_index" node scripts/crawl-reviews-r2-chunk.mjs 2>&1 | tee "$log"
             crawler_rc=${PIPESTATUS[0]}
             set -e
 
