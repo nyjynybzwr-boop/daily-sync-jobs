@@ -6,7 +6,9 @@ on:
     paths:
       - '.github/workflows/comic-ranking-sync.yml'
   schedule:
-    - cron: '0 16 * * *'
+    # 01:20 JST. Staggered after the audio collectors so Tokyo relay traffic
+    # does not overlap another DLsite ranking job.
+    - cron: '20 16 * * *'
 
 concurrency:
   group: sync
@@ -48,6 +50,7 @@ jobs:
         working-directory: work
         env:
           DLSITE_JP_RELAY_ORIGIN: ${{ vars.DLSITE_JP_RELAY_ORIGIN }}
+          NODE_OPTIONS: '--import=./scripts/lib/dlsite-request-throttle.mjs'
         run: |
           set -euo pipefail
           # GitHub-hosted runners are outside Japan. Route ranking HTML and
