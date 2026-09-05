@@ -13,7 +13,9 @@ on:
     paths:
       - '.github/workflows/bl-manga-catalog.yml'
   schedule:
-    - cron: '30 17 * * 0'
+    # 05:30 JST Monday. Run only after all six daily ranking collectors have
+    # finished their staggered windows, avoiding cross-runner DLsite overlap.
+    - cron: '30 20 * * 0'
 
 concurrency:
   group: bl-manga-catalog-background
@@ -68,7 +70,7 @@ jobs:
             export CATALOG_RESCAN_FROM_START='0'
           fi
           export BATCH_SIZE="$INPUT_BATCH_SIZE"
-          export DETAIL_DELAY_MS='800'
+          export DETAIL_DELAY_MS='10000'
           source scripts/ci/dlsite-jp-relay-env.sh
           bash scripts/ci/run-manga-bl-catalog.sh
 
