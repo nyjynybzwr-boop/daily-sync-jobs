@@ -7,7 +7,9 @@ on:
       - '.github/workflows/male-manga-ranking-sync.yml'
       - '.github/triggers/male-manga-ranking-now'
   schedule:
-    - cron: '5 17 * * *'
+    # 04:20 JST. Keep this after male audio so the two maniax collectors do
+    # not overlap while using the conservative DLsite request interval.
+    - cron: '20 19 * * *'
 
 concurrency:
   group: male-manga-ranking-sync
@@ -42,6 +44,8 @@ jobs:
 
       - name: Collect and analyze male manga rankings
         working-directory: work
+        env:
+          NODE_OPTIONS: '--import=./scripts/lib/dlsite-request-throttle.mjs'
         run: |
           set -euo pipefail
           bash scripts/ci/run-l.sh
