@@ -79,6 +79,8 @@ jobs:
       - name: Collect Target A daily ranking
         if: steps.need.outputs.needed == 'true'
         working-directory: work
+        env:
+          NODE_OPTIONS: '--import=./scripts/lib/dlsite-request-throttle.mjs'
         run: |
           set -euo pipefail
           timeout 12m node scripts/collect-ranking.mjs
@@ -118,6 +120,8 @@ jobs:
         id: windows
         if: steps.need.outputs.needed == 'true'
         working-directory: work
+        env:
+          NODE_OPTIONS: '--import=./scripts/lib/dlsite-request-throttle.mjs'
         run: |
           set -euo pipefail
           if timeout 25m node scripts/collect-window-rankings.mjs; then
