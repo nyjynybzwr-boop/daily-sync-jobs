@@ -1,75 +1,17 @@
 [dlsite-safety] robots preflight OK; minimum interval=10000ms jitter<=750ms
 day: 30 source works | https://www.dlsite.com/maniax/ranking/day?category=voice | 同人 ボイス・ASMRランキング (24時間) | DLsite 同人 - R18
-week: 30 source works | https://www.dlsite.com/maniax/ranking/week?category=voice | 同人 ボイス・ASMRランキング (7日間) | DLsite 同人 - R18
-month: 30 source works | https://www.dlsite.com/maniax/ranking/month?category=voice | 同人 ボイス・ASMRランキング (30日間) | DLsite 同人 - R18
-Enrich 1/58: RJ01705595
-Enrich 2/58: RJ01653286
-Enrich 3/58: RJ01702393
-Enrich 4/58: RJ01699526
-Enrich 5/58: RJ01683813
-Enrich 6/58: RJ01700554
-Enrich 7/58: RJ01669365
-Enrich 8/58: RJ01702093
-Enrich 9/58: RJ01694928
-Enrich 10/58: RJ01673201
-Enrich 11/58: RJ01669043
-Enrich 12/58: RJ01702128
-Enrich 13/58: RJ01678051
-Enrich 14/58: RJ01681124
-Enrich 15/58: RJ01708769
-Enrich 16/58: RJ01702353
-Enrich 17/58: RJ01691463
-Enrich 18/58: RJ01665656
-Enrich 19/58: RJ01668085
-Enrich 20/58: RJ01667639
-Enrich 21/58: RJ01675439
-Enrich 22/58: RJ01690975
-Enrich 23/58: RJ01705210
-Enrich 24/58: RJ01697882
-Enrich 25/58: RJ01682626
-Enrich 26/58: RJ01651389
-Enrich 27/58: RJ01683873
-Enrich 28/58: RJ01682178
-Enrich 29/58: RJ01690720
-Enrich 30/58: RJ01683551
-Enrich 31/58: RJ01684127
-Enrich 32/58: RJ01698981
-Enrich 33/58: RJ01570721
-Enrich 34/58: RJ01570739
-Enrich 35/58: RJ01695509
-Enrich 36/58: RJ01673629
-Enrich 37/58: RJ01633013
-Enrich 38/58: RJ01691274
-Enrich 39/58: RJ01694366
-Enrich 40/58: RJ01664495
-Enrich 41/58: RJ01700826
-Enrich 42/58: RJ01675023
-Enrich 43/58: RJ01678178
-Enrich 44/58: RJ01648555
-Enrich 45/58: RJ01244814
-Enrich 46/58: RJ01688728
-Enrich 47/58: RJ01678210
-Enrich 48/58: RJ01650239
-Enrich 49/58: RJ01675771
-Enrich 50/58: RJ01673453
-Enrich 51/58: RJ01693033
-Enrich 52/58: RJ01676747
-Enrich 53/58: RJ01682378
-Enrich 54/58: RJ01688539
-Enrich 55/58: RJ01676679
-Enrich 56/58: RJ01698658
-Enrich 57/58: RJ01653899
-Enrich 58/58: RJ01692978
-Saved male day 30 works to data/male/raw/2026-09-08.json
-Saved male week 30 works to data/male/windows/week/raw/2026-09-08.json
-Saved male month 30 works to data/male/windows/month/raw/2026-09-08.json
-[dlsite-safety] robots preflight OK; minimum interval=10000ms jitter<=750ms
-Analyzed 19 day(s). Latest: 2026-09-08, 30 works.
-[dlsite-safety] robots preflight OK; minimum interval=10000ms jitter<=750ms
-Analyzed week: 19 snapshot(s), latest 2026-09-08.
-Analyzed month: 19 snapshot(s), latest 2026-09-08.
+file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/scripts/collect-male-rankings-plain.mjs:91
+    throw new Error(`Unexpected male ${period} ranking title: ${title}`);
+          ^
+
+Error: Unexpected male week ranking title: 
+    at fetchRanking (file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/scripts/collect-male-rankings-plain.mjs:91:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/scripts/collect-male-rankings-plain.mjs:108:13
+
+Node.js v22.23.2
 
 ---
-finished_at=2026-09-07T21:49:06Z
-source_head=8d163e24d230e6e259703d5cff17c9fc0a594b03
-job_status=success
+finished_at=2026-09-08T21:16:23Z
+source_head=d1adc7aa368e3fe1bf1fd3754279d09fd904c09c
+job_status=failure
