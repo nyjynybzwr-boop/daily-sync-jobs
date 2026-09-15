@@ -2,70 +2,67 @@
 day: 30 source works | https://www.dlsite.com/maniax/ranking/day?category=voice | 同人 ボイス・ASMRランキング (24時間) | DLsite 同人 - R18
 week: 30 source works | https://www.dlsite.com/maniax/ranking/week?category=voice | 同人 ボイス・ASMRランキング (7日間) | DLsite 同人 - R18
 month: 30 source works | https://www.dlsite.com/maniax/ranking/month?category=voice | 同人 ボイス・ASMRランキング (30日間) | DLsite 同人 - R18
-Enrich 1/54: RJ01675713
-Enrich 2/54: RJ01683949
-Enrich 3/54: RJ01690344
-Enrich 4/54: RJ01715342
-Enrich 5/54: RJ01708243
-Enrich 6/54: RJ01709638
-Enrich 7/54: RJ01704024
-Enrich 8/54: RJ01701278
-Enrich 9/54: RJ01714764
-Enrich 10/54: RJ01712126
-Enrich 11/54: RJ01702393
-Enrich 12/54: RJ01653286
-Enrich 13/54: RJ01673201
-Enrich 14/54: RJ01700554
-Enrich 15/54: RJ01709667
-Enrich 16/54: RJ01709197
-Enrich 17/54: RJ01705486
-Enrich 18/54: RJ01712823
-Enrich 19/54: RJ01678051
-Enrich 20/54: RJ01658731
-Enrich 21/54: RJ01707795
-Enrich 22/54: RJ01664608
-Enrich 23/54: RJ01677732
-Enrich 24/54: RJ01683813
-Enrich 25/54: RJ01692978
-Enrich 26/54: RJ01690720
-Enrich 27/54: RJ01704757
-Enrich 28/54: RJ01718905
-Enrich 29/54: RJ01690975
-Enrich 30/54: RJ01705595
-Enrich 31/54: RJ01694928
-Enrich 32/54: RJ01702128
-Enrich 33/54: RJ01714072
-Enrich 34/54: RJ01658014
-Enrich 35/54: RJ01669043
-Enrich 36/54: RJ01675439
-Enrich 37/54: RJ01702093
-Enrich 38/54: RJ01699526
-Enrich 39/54: RJ01682626
-Enrich 40/54: RJ01659193
-Enrich 41/54: RJ01682178
-Enrich 42/54: RJ01648555
-Enrich 43/54: RJ01688728
-Enrich 44/54: RJ01691463
-Enrich 45/54: RJ01570721
-Enrich 46/54: RJ01650239
-Enrich 47/54: RJ01693033
-Enrich 48/54: RJ01682378
-Enrich 49/54: RJ01570739
-Enrich 50/54: RJ01688539
-Enrich 51/54: RJ01678178
-Enrich 52/54: RJ01698658
-Enrich 53/54: RJ01653899
-Enrich 54/54: RJ01633013
-Saved male day 30 works to data/male/raw/2026-09-15.json
-Saved male week 30 works to data/male/windows/week/raw/2026-09-15.json
-Saved male month 30 works to data/male/windows/month/raw/2026-09-15.json
+Enrich 1/51: RJ01675713
+Enrich 2/51: RJ01691063
+Enrich 3/51: RJ01683949
+Enrich 4/51: RJ01714764
+Enrich 5/51: RJ01690344
+Enrich 6/51: RJ01708243
+Enrich 7/51: RJ01715342
+Enrich 8/51: RJ01704024
+Enrich 9/51: RJ01701278
+Enrich 10/51: RJ01709638
+Enrich 11/51: RJ01702393
+Enrich 12/51: RJ01709197
+Enrich 13/51: RJ01709667
+Enrich 14/51: RJ01712823
+Enrich 15/51: RJ01673201
+Enrich 16/51: RJ01712126
+Enrich 17/51: RJ01653286
+Enrich 18/51: RJ01700554
+Enrich 19/51: RJ01718905
+Enrich 20/51: RJ01665656
+Enrich 21/51: RJ01692978
+Enrich 22/51: RJ01677732
+Enrich 23/51: RJ01675439
+Enrich 24/51: RJ01702128
+Enrich 25/51: RJ01683813
+Enrich 26/51: RJ01707795
+Enrich 27/51: RJ01658731
+Enrich 28/51: RJ01690975
+Enrich 29/51: RJ01688539
+Enrich 30/51: RJ01664608
+Enrich 31/51: RJ01714072
+Enrich 32/51: RJ01694928
+Enrich 33/51: RJ01705595
+Enrich 34/51: RJ01658014
+Enrich 35/51: RJ01690720
+Enrich 36/51: RJ01659193
+Enrich 37/51: RJ01678051
+Enrich 38/51: RJ01682178
+Enrich 39/51: RJ01688728
+Enrich 40/51: RJ01570721
+Enrich 41/51: RJ01650239
+Enrich 42/51: RJ01693033
+Enrich 43/51: RJ01648555
+Enrich 44/51: RJ01691463
+Enrich 45/51: RJ01682626
+Enrich 46/51: RJ01570739
+Enrich 47/51: RJ01698658
+Enrich 48/51: RJ01678178
+Enrich 49/51: RJ01683551
+Enrich 50/51: RJ01633013
+Enrich 51/51: RJ01697882
+Saved male day 30 works to data/male/raw/2026-09-16.json
+Saved male week 30 works to data/male/windows/week/raw/2026-09-16.json
+Saved male month 30 works to data/male/windows/month/raw/2026-09-16.json
 [dlsite-safety] robots preflight OK; minimum interval=10000ms jitter<=750ms
-Analyzed 25 day(s). Latest: 2026-09-15, 30 works.
+Analyzed 26 day(s). Latest: 2026-09-16, 30 works.
 [dlsite-safety] robots preflight OK; minimum interval=10000ms jitter<=750ms
-Analyzed week: 25 snapshot(s), latest 2026-09-15.
-Analyzed month: 25 snapshot(s), latest 2026-09-15.
+Analyzed week: 26 snapshot(s), latest 2026-09-16.
+Analyzed month: 26 snapshot(s), latest 2026-09-16.
 
 ---
-finished_at=2026-09-14T22:07:40Z
-source_head=a59c3b89856c2c47e17ac03c86a062cf708bbba3
+finished_at=2026-09-15T21:40:52Z
+source_head=719db10771693e2e9f829476b06fb1064ca837ce
 job_status=success
