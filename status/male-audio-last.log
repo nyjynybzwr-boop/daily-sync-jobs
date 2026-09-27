@@ -1,17 +1,74 @@
 [dlsite-safety] robots preflight OK; minimum interval=10000ms jitter<=750ms
 day: 30 source works | https://www.dlsite.com/maniax/ranking/day?category=voice | 同人 ボイス・ASMRランキング (24時間) | DLsite 同人 - R18
-file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/scripts/collect-male-rankings-plain.mjs:91
-    throw new Error(`Unexpected male ${period} ranking title: ${title}`);
-          ^
-
-Error: Unexpected male week ranking title: 
-    at fetchRanking (file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/scripts/collect-male-rankings-plain.mjs:91:11)
-    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
-    at async file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/scripts/collect-male-rankings-plain.mjs:108:13
-
-Node.js v22.23.2
+week: 30 source works | https://www.dlsite.com/maniax/ranking/week?category=voice | 同人 ボイス・ASMRランキング (7日間) | DLsite 同人 - R18
+month: 30 source works | https://www.dlsite.com/maniax/ranking/month?category=voice | 同人 ボイス・ASMRランキング (30日間) | DLsite 同人 - R18
+Enrich 1/57: RJ01721463
+Enrich 2/57: RJ01717194
+Enrich 3/57: RJ01725086
+Enrich 4/57: RJ01705975
+Enrich 5/57: RJ01724966
+Enrich 6/57: RJ01675713
+Enrich 7/57: RJ01712700
+Enrich 8/57: RJ01673201
+Enrich 9/57: RJ01723342
+Enrich 10/57: RJ01726233
+Enrich 11/57: RJ01705214
+Enrich 12/57: RJ01725566
+Enrich 13/57: RJ01724090
+Enrich 14/57: RJ01708953
+Enrich 15/57: RJ01684497
+Enrich 16/57: RJ01715662
+Enrich 17/57: RJ01714903
+Enrich 18/57: RJ01708243
+Enrich 19/57: RJ01723255
+Enrich 20/57: RJ01702393
+Enrich 21/57: RJ01723271
+Enrich 22/57: RJ01716567
+Enrich 23/57: RJ01690344
+Enrich 24/57: RJ01683949
+Enrich 25/57: RJ01716150
+Enrich 26/57: RJ01648147
+Enrich 27/57: RJ01720281
+Enrich 28/57: RJ01629800
+Enrich 29/57: RJ01725757
+Enrich 30/57: RJ01700554
+Enrich 31/57: RJ01704024
+Enrich 32/57: RJ01702152
+Enrich 33/57: RJ01672820
+Enrich 34/57: RJ01712782
+Enrich 35/57: RJ01708351
+Enrich 36/57: RJ01722433
+Enrich 37/57: RJ01709638
+Enrich 38/57: RJ01691063
+Enrich 39/57: RJ01705248
+Enrich 40/57: RJ01674550
+Enrich 41/57: RJ01675439
+Enrich 42/57: RJ01683813
+Enrich 43/57: RJ01653286
+Enrich 44/57: RJ01570721
+Enrich 45/57: RJ01682626
+Enrich 46/57: RJ01570739
+Enrich 47/57: RJ01694928
+Enrich 48/57: RJ01701278
+Enrich 49/57: RJ01683551
+Enrich 50/57: RJ01697882
+Enrich 51/57: RJ01633013
+Enrich 52/57: RJ01705595
+Enrich 53/57: RJ01700826
+Enrich 54/57: RJ01690975
+Enrich 55/57: RJ01639627
+Enrich 56/57: RJ01698981
+Enrich 57/57: RJ01639630
+Saved male day 30 works to data/male/raw/2026-09-28.json
+Saved male week 30 works to data/male/windows/week/raw/2026-09-28.json
+Saved male month 30 works to data/male/windows/month/raw/2026-09-28.json
+[dlsite-safety] robots preflight OK; minimum interval=10000ms jitter<=750ms
+Analyzed 37 day(s). Latest: 2026-09-28, 30 works.
+[dlsite-safety] robots preflight OK; minimum interval=10000ms jitter<=750ms
+Analyzed week: 37 snapshot(s), latest 2026-09-28.
+Analyzed month: 37 snapshot(s), latest 2026-09-28.
 
 ---
-finished_at=2026-09-26T21:17:55Z
-source_head=2139d0acee69a6812dd060d58b779929a434334c
-job_status=failure
+finished_at=2026-09-27T21:40:50Z
+source_head=14e6e80063dab16ffc3475edcc14e513a9032400
+job_status=success
