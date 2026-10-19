@@ -69,10 +69,17 @@ jobs:
           node --input-type=module <<'NODE' >> "$GITHUB_ENV"
           import fs from 'node:fs';
           const segments=['otome-audio','bl-audio','otome-manga','bl-manga','male-audio','male-manga','girls-drama'];
+          // review-targets-weekly-delta.yml が週次で作る追い足し分。
+          // ターゲットが未生成のうちは単に対象外にする(基底セグメントと違い
+          // 存在しないことが異常ではないので、ここでは throw しない)。
+          const optional=['otome-audio-delta','bl-audio-delta'];
           let selected='';
-          for(const s of segments){
+          for(const s of [...segments,...optional]){
             const tp=`data/reviews/targets/${s}.json`;
-            if(!fs.existsSync(tp)) throw new Error(`Missing review target manifest: ${tp}`);
+            if(!fs.existsSync(tp)){
+              if(optional.includes(s)) continue;
+              throw new Error(`Missing review target manifest: ${tp}`);
+            }
             const t=JSON.parse(fs.readFileSync(tp,'utf8'));
             if(Number(t.schema_version||0)<2) throw new Error(`${s}: review target must be schema v2+`);
             const pp=`data/reviews/progress/${s}.json`;
@@ -205,9 +212,15 @@ jobs:
           remaining="$(node --input-type=module <<'NODE'
           import fs from 'node:fs';
           const ss=['otome-audio','bl-audio','otome-manga','bl-manga','male-audio','male-manga','girls-drama'];
+          const optional=['otome-audio-delta','bl-audio-delta'];
           let n=0;
-          for(const s of ss){
-            const t=JSON.parse(fs.readFileSync(`data/reviews/targets/${s}.json`,'utf8'));
+          for(const s of [...ss,...optional]){
+            const tp=`data/reviews/targets/${s}.json`;
+            if(!fs.existsSync(tp)){
+              if(optional.includes(s)) continue;
+              throw new Error(`Missing review target manifest: ${tp}`);
+            }
+            const t=JSON.parse(fs.readFileSync(tp,'utf8'));
             const pp=`data/reviews/progress/${s}.json`;
             const p=fs.existsSync(pp)?JSON.parse(fs.readFileSync(pp,'utf8')):{};
             if(p.stopped_reason){console.error(`safety stop ${s}: ${p.stopped_reason}`);process.exit(3)}

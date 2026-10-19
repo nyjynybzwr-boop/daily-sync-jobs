@@ -1,0 +1,160 @@
+name: Review targets weekly delta
+
+# 音声2セグメント(乙女・BL)のレビュー収集対象を週次で追い足す。
+#
+# data/reviews/targets/<segment>.json は収集し切った凍結スナップショットで、
+# 署名に expected_review_count を含むため作り直すとクローラの
+# "frozen target snapshot changed" ガードに必ず引っかかる。
+# なので基底セグメントには触らず、別の <segment>-delta に新作だけを
+# 追記していく(append-only。一度載った行は二度と書き換えない)。
+#
+# 生成後は review-crawl-continuous.yml が delta セグメントを拾って巡回する。
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 日曜 11:40 JST。日次のランキング収集(23:00/23:30 JST)と離してある。
+    - cron: '40 2 * * 0'
+
+concurrency:
+  group: dlsite-review-targets-weekly-delta
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build-delta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Require credentials
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${SOURCE_REPO:-}"
+          test -n "${SYNC_TOKEN:-}"
+
+      - name: Checkout private source
+        env:
+          SOURCE_REPO: ${{ secrets.SOURCE_REPO }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: '1'
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            rm -rf work
+            if git clone --quiet --branch main --single-branch "https://x-access-token:${SYNC_TOKEN}@github.com/${SOURCE_REPO}.git" work; then
+              break
+            fi
+            if [ "$attempt" -ge 5 ]; then
+              echo "Private source clone failed after ${attempt} attempts." >&2
+              exit 1
+            fi
+            echo "Private source clone transient failure; retrying ${attempt}/5." >&2
+            sleep $((attempt * 10))
+          done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Hydrate the two audio catalogs from LFS
+        working-directory: work
+        run: |
+          set -euo pipefail
+          # クローンは GIT_LFS_SKIP_SMUDGE=1 なので details.json はポインタのまま。
+          # 差分ビルダはこの2本しか読まないので、必要な分だけ実体化する。
+          git lfs pull --include='data/catalog/full/details.json'
+          git lfs pull --include='data/bl/catalog/full/details.json'
+          for f in data/catalog/full/details.json data/bl/catalog/full/details.json; do
+            if head -c 45 "$f" | grep -q 'git-lfs.github.com/spec'; then
+              echo "LFS hydration failed for $f" >&2
+              exit 1
+            fi
+            echo "$f: $(du -h "$f" | cut -f1)"
+          done
+
+      - name: Build append-only delta targets
+        working-directory: work
+        run: |
+          set -euo pipefail
+          REVIEW_BASE_SEGMENT='otome-audio' \
+          REVIEW_DELTA_SEGMENT='otome-audio-delta' \
+          REVIEW_CATALOG_FILE='data/catalog/full/details.json' \
+            node scripts/build-review-targets-delta.mjs
+
+          REVIEW_BASE_SEGMENT='bl-audio' \
+          REVIEW_DELTA_SEGMENT='bl-audio-delta' \
+          REVIEW_CATALOG_FILE='data/bl/catalog/full/details.json' \
+            node scripts/build-review-targets-delta.mjs
+
+      - name: Verify the crawled prefix stayed byte-stable
+        working-directory: work
+        run: |
+          set -euo pipefail
+          # append-onlyが壊れていないかの確認。既に処理済みの件数ぶんの
+          # 先頭エントリが書き換わっていたら、クローラは最初からやり直しになる。
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          for (const seg of ['otome-audio-delta', 'bl-audio-delta']) {
+            const file = `data/reviews/targets/${seg}.json`;
+            if (!fs.existsSync(file)) throw new Error(`${seg}: delta target was not produced`);
+            const now = JSON.parse(fs.readFileSync(file, 'utf8'));
+            const pp = `data/reviews/progress/${seg}.json`;
+            const processed = fs.existsSync(pp)
+              ? Number(JSON.parse(fs.readFileSync(pp, 'utf8')).processed_target_works || 0)
+              : 0;
+            let before = null;
+            try {
+              before = JSON.parse(execFileSync('git', ['show', `HEAD:${file}`], { encoding: 'utf8' }));
+            } catch {
+              console.log(`${seg}: new file, ${now.targets.length} entries, nothing crawled yet`);
+              continue;
+            }
+            const a = JSON.stringify(before.targets.slice(0, processed));
+            const b = JSON.stringify(now.targets.slice(0, processed));
+            if (a !== b) throw new Error(`${seg}: the first ${processed} crawled entries changed; append-only is broken`);
+            console.log(`${seg}: ${before.targets.length} -> ${now.targets.length} entries (crawled prefix of ${processed} unchanged)`);
+          }
+          NODE
+
+      - name: Push delta targets
+        working-directory: work
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          bash scripts/ci/push.sh \
+            'data/reviews/targets/otome-audio-delta.json data/reviews/targets/bl-audio-delta.json' \
+            "[CF-Pages-Skip] [skip actions] reviews: weekly audio delta targets $(TZ=Asia/Tokyo date +%F)"
+
+      - name: Kick the crawler if anything is pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: work
+        run: |
+          set -euo pipefail
+          pending="$(node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          let n = 0;
+          for (const seg of ['otome-audio-delta', 'bl-audio-delta']) {
+            const t = JSON.parse(fs.readFileSync(`data/reviews/targets/${seg}.json`, 'utf8'));
+            const pp = `data/reviews/progress/${seg}.json`;
+            const p = fs.existsSync(pp) ? JSON.parse(fs.readFileSync(pp, 'utf8')) : {};
+            if (p.stopped_reason) { console.error(`safety stop ${seg}: ${p.stopped_reason}`); process.exit(3); }
+            if (Number(p.processed_target_works || 0) < Number(t.target_work_count || t.targets.length)) n += 1;
+          }
+          process.stdout.write(String(n));
+          NODE
+          )"
+          echo "pending delta segments=$pending"
+          if [ "$pending" -gt 0 ]; then
+            gh workflow run review-crawl-continuous.yml --repo "$GITHUB_REPOSITORY"
+          else
+            echo 'No new works to collect this week.'
+          fi
