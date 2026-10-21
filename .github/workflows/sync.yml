@@ -20,17 +20,10 @@ on:
           - k
           - l
           - m
-          - n
-          - o
         default: a
   schedule:
     # 00:20 JST. Keep BL audio well separated from the 23:25 JST otome run.
     - cron: '20 15 * * *'
-    # 01:18 JST / 01:47 JST. Otome and BL manga daily rankings. These had no
-    # collector at all, so the dashboard was serving 2026-09-05 data on
-    # 2026-10-21. Spaced away from the audio runs and off the hour.
-    - cron: '18 16 * * *'
-    - cron: '47 16 * * *'
 
 concurrency:
   group: "sync-${{ github.event_name }}-${{ github.event.inputs.target || github.event.schedule }}"
@@ -52,10 +45,6 @@ jobs:
             TARGET="${{ github.event.inputs.target }}"
           elif [ "${{ github.event.schedule }}" = "20 15 * * *" ]; then
             TARGET="b"
-          elif [ "${{ github.event.schedule }}" = "18 16 * * *" ]; then
-            TARGET="n"
-          elif [ "${{ github.event.schedule }}" = "47 16 * * *" ]; then
-            TARGET="o"
           else
             TARGET="a"
           fi
@@ -88,12 +77,12 @@ jobs:
         run: npm install --no-save @huggingface/transformers@3.8.1 >/tmp/step.log 2>&1 || (echo 'Embedding dependency installation failed.'; exit 1)
 
       - name: Install comic parsing dependency
-        if: steps.target.outputs.target == 'l' || steps.target.outputs.target == 'm' || steps.target.outputs.target == 'n' || steps.target.outputs.target == 'o'
+        if: steps.target.outputs.target == 'l' || steps.target.outputs.target == 'm'
         working-directory: work
         run: npm install --no-save devalue >/tmp/step.log 2>&1 || (echo 'Comic parsing dependency installation failed.'; exit 1)
 
       - name: Install browser
-        if: steps.target.outputs.target == 'a' || steps.target.outputs.target == 'b' || steps.target.outputs.target == 'c' || steps.target.outputs.target == 'n' || steps.target.outputs.target == 'o'
+        if: steps.target.outputs.target == 'a' || steps.target.outputs.target == 'b' || steps.target.outputs.target == 'c'
         working-directory: work
         run: |
           npm install --no-save playwright devalue >/tmp/step.log 2>&1 || (echo 'Browser dependency installation failed.'; exit 1)
@@ -202,20 +191,6 @@ jobs:
           source scripts/ci/dlsite-jp-relay-env.sh
           bash scripts/ci/run-h.sh >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Job M failed.'; exit 1)
 
-      - name: Run job N
-        if: steps.target.outputs.target == 'n'
-        working-directory: work
-        env:
-          NODE_OPTIONS: '--import=./scripts/lib/dlsite-request-throttle.mjs'
-        run: bash scripts/ci/run-n.sh >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Job N failed.'; exit 1)
-
-      - name: Run job O
-        if: steps.target.outputs.target == 'o'
-        working-directory: work
-        env:
-          NODE_OPTIONS: '--import=./scripts/lib/dlsite-request-throttle.mjs'
-        run: bash scripts/ci/run-o.sh >/tmp/step.log 2>&1 || (cat /tmp/step.log; echo 'Job O failed.'; exit 1)
-
       - name: Push results (A)
         if: steps.target.outputs.target == 'a'
         working-directory: work
@@ -255,16 +230,6 @@ jobs:
         if: steps.target.outputs.target == 'l'
         working-directory: work
         run: bash scripts/ci/push.sh "analysis/comic-nuxt-inspect.json" >/tmp/step.log 2>&1 || (echo 'Push L failed.'; exit 1)
-
-      - name: Push results (N)
-        if: steps.target.outputs.target == 'n'
-        working-directory: work
-        run: bash scripts/ci/push.sh "data/manga/raw data/manga/labeled data/manga/reports data/manga/windows" >/tmp/step.log 2>&1 || (echo 'Push N failed.'; exit 1)
-
-      - name: Push results (O)
-        if: steps.target.outputs.target == 'o'
-        working-directory: work
-        run: bash scripts/ci/push.sh "data/manga/bl/raw data/manga/bl/labeled data/manga/bl/reports data/manga/bl/windows" >/tmp/step.log 2>&1 || (echo 'Push O failed.'; exit 1)
 
       - name: Push results (M)
         if: steps.target.outputs.target == 'm'
