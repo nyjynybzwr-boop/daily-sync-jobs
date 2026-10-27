@@ -2,73 +2,82 @@
 day: 30 source works | https://www.dlsite.com/maniax/ranking/day?category=voice | 同人 ボイス・ASMRランキング (24時間) | DLsite 同人 - R18
 week: 30 source works | https://www.dlsite.com/maniax/ranking/week?category=voice | 同人 ボイス・ASMRランキング (7日間) | DLsite 同人 - R18
 month: 30 source works | https://www.dlsite.com/maniax/ranking/month?category=voice | 同人 ボイス・ASMRランキング (30日間) | DLsite 同人 - R18
-Enrich 1/57: RJ01741252
-Enrich 2/57: RJ01751589
-Enrich 3/57: RJ01743468
-Enrich 4/57: RJ01688386
-Enrich 5/57: RJ01720261
-Enrich 6/57: RJ01660384
-Enrich 7/57: RJ01745397
-Enrich 8/57: RJ01741555
-Enrich 9/57: RJ01719523
-Enrich 10/57: RJ01739965
-Enrich 11/57: RJ01719326
-Enrich 12/57: RJ01694101
-Enrich 13/57: RJ01746135
-Enrich 14/57: RJ01722318
-Enrich 15/57: RJ01746573
-Enrich 16/57: RJ01737684
-Enrich 17/57: RJ01749209
-Enrich 18/57: RJ01740646
-Enrich 19/57: RJ01738772
-Enrich 20/57: RJ01719814
-Enrich 21/57: RJ01722261
-Enrich 22/57: RJ01739688
-Enrich 23/57: RJ01731080
-Enrich 24/57: RJ01741545
-Enrich 25/57: RJ01745114
-Enrich 26/57: RJ01726974
-Enrich 27/57: RJ01695272
-Enrich 28/57: RJ01745531
-Enrich 29/57: RJ01734271
-Enrich 30/57: RJ01731456
-Enrich 31/57: RJ01734601
-Enrich 32/57: RJ01724680
-Enrich 33/57: RJ01746922
-Enrich 34/57: RJ01731651
-Enrich 35/57: RJ01741327
-Enrich 36/57: RJ01734619
-Enrich 37/57: RJ01733647
-Enrich 38/57: RJ01718060
-Enrich 39/57: RJ01733280
-Enrich 40/57: RJ01728295
-Enrich 41/57: RJ01664205
-Enrich 42/57: RJ01721463
-Enrich 43/57: RJ01675713
-Enrich 44/57: RJ01678871
-Enrich 45/57: RJ01673201
-Enrich 46/57: RJ01705975
-Enrich 47/57: RJ01725965
-Enrich 48/57: RJ01654808
-Enrich 49/57: RJ01712700
-Enrich 50/57: RJ01705214
-Enrich 51/57: RJ01717194
-Enrich 52/57: RJ01708243
-Enrich 53/57: RJ01725086
-Enrich 54/57: RJ01717564
-Enrich 55/57: RJ01683949
-Enrich 56/57: RJ01725566
-Enrich 57/57: RJ01735224
-Saved male day 30 works to data/male/raw/2026-10-27.json
-Saved male week 30 works to data/male/windows/week/raw/2026-10-27.json
-Saved male month 30 works to data/male/windows/month/raw/2026-10-27.json
+Enrich 1/66: RJ332920
+Enrich 2/66: RJ416750
+Enrich 3/66: RJ01687946
+Enrich 4/66: RJ315642
+Enrich 5/66: RJ01404735
+Enrich 6/66: RJ01531623
+Enrich 7/66: RJ300607
+Enrich 8/66: RJ310954
+Enrich 9/66: RJ01676747
+Enrich 10/66: RJ01515566
+Enrich 11/66: RJ01741252
+Enrich 12/66: RJ01136905
+Enrich 13/66: RJ370398
+Enrich 14/66: RJ01660384
+Enrich 15/66: RJ01702393
+Enrich 16/66: RJ01691463
+Enrich 17/66: RJ01357133
+Enrich 18/66: RJ01743468
+Enrich 19/66: RJ01167139
+Enrich 20/66: RJ01681124
+Enrich 21/66: RJ01720261
+Enrich 22/66: RJ01696644
+Enrich 23/66: RJ01682378
+Enrich 24/66: RJ01027678
+Enrich 25/66: RJ01126122
+Enrich 26/66: RJ01688386
+Enrich 27/66: RJ01498413
+Enrich 28/66: RJ01190232
+Enrich 29/66: RJ01751589
+Enrich 30/66: RJ01194969
+Enrich 31/66: RJ01719326
+Enrich 32/66: RJ01739965
+Enrich 33/66: RJ01694101
+Enrich 34/66: RJ01745397
+Enrich 35/66: RJ01737684
+Enrich 36/66: RJ01745114
+Enrich 37/66: RJ01741555
+Enrich 38/66: RJ01722318
+Enrich 39/66: RJ01745531
+Enrich 40/66: RJ01734271
+Enrich 41/66: RJ01726974
+Enrich 42/66: RJ01739688
+Enrich 43/66: RJ01734601
+Enrich 44/66: RJ01746922
+Enrich 45/66: RJ01731651
+Enrich 46/66: RJ01733280
+Enrich 47/66: RJ01719814
+Enrich 48/66: RJ01728295
+Enrich 49/66: RJ01664205
+Enrich 50/66: RJ01675713
+Enrich 51/66: RJ01678871
+Enrich 52/66: RJ01673201
+Enrich 53/66: RJ01705975
+Enrich 54/66: RJ01725965
+Enrich 55/66: RJ01654808
+Enrich 56/66: RJ01721463
+Enrich 57/66: RJ01712700
+Enrich 58/66: RJ01717194
+Enrich 59/66: RJ01705214
+Enrich 60/66: RJ01717564
+Enrich 61/66: RJ01725086
+Enrich 62/66: RJ01731456
+Enrich 63/66: RJ01708243
+Enrich 64/66: RJ01725566
+Enrich 65/66: RJ01735224
+Enrich 66/66: RJ01683949
+Saved male day 30 works to data/male/raw/2026-10-28.json
+Saved male week 30 works to data/male/windows/week/raw/2026-10-28.json
+Saved male month 30 works to data/male/windows/month/raw/2026-10-28.json
 [dlsite-safety] robots preflight OK; minimum interval=10000ms jitter<=750ms
-Analyzed 65 day(s). Latest: 2026-10-27, 30 works.
+Analyzed 66 day(s). Latest: 2026-10-28, 30 works.
 [dlsite-safety] robots preflight OK; minimum interval=10000ms jitter<=750ms
-Analyzed week: 65 snapshot(s), latest 2026-10-27.
-Analyzed month: 65 snapshot(s), latest 2026-10-27.
+Analyzed week: 66 snapshot(s), latest 2026-10-28.
+Analyzed month: 66 snapshot(s), latest 2026-10-28.
 
 ---
-finished_at=2026-10-26T23:01:45Z
-source_head=9a4dda54c776f5b476d191faba5d7e9240dbd5c0
+finished_at=2026-10-27T22:42:12Z
+source_head=b4e9d2d5a9b1a366b65270699c6b8c692ad9c35e
 job_status=success
