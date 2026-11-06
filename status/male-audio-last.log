@@ -1,9 +1,11 @@
 [dlsite-safety] robots preflight OK; minimum interval=10000ms jitter<=750ms
+day: 30 source works | https://www.dlsite.com/maniax/ranking/day?category=voice | 同人 ボイス・ASMRランキング (24時間) | DLsite 同人 - R18
+week: 30 source works | https://www.dlsite.com/maniax/ranking/week?category=voice | 同人 ボイス・ASMRランキング (7日間) | DLsite 同人 - R18
 file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/scripts/collect-male-rankings-plain.mjs:91
     throw new Error(`Unexpected male ${period} ranking title: ${title}`);
           ^
 
-Error: Unexpected male day ranking title: 
+Error: Unexpected male month ranking title: 
     at fetchRanking (file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/scripts/collect-male-rankings-plain.mjs:91:11)
     at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
     at async file:///home/runner/work/daily-sync-jobs/daily-sync-jobs/work/scripts/collect-male-rankings-plain.mjs:108:13
@@ -11,6 +13,6 @@ Error: Unexpected male day ranking title:
 Node.js v22.23.4
 
 ---
-finished_at=2026-11-05T23:44:44Z
-source_head=8bf0e54dea0e5e1ed0662420de4bb4d8e0404f83
+finished_at=2026-11-06T23:18:04Z
+source_head=0504e8a0b9e18f637e49bf434d48c6cafbc7b201
 job_status=failure
