@@ -74,3 +74,8 @@ Analyzed month: 77 snapshot(s), latest 2026-11-13.
 finished_at=2026-11-12T23:59:52Z
 source_head=e2c332232b446dab267f04936480dd124004d5bd
 job_status=success
+
+---
+finished_at=2026-11-13T23:40:01Z
+source_head=unavailable
+job_status=failure
