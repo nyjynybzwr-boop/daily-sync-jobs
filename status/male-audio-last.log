@@ -139,3 +139,8 @@ job_status=failure
 finished_at=2026-11-26T01:49:26Z
 source_head=unavailable
 job_status=failure
+
+---
+finished_at=2026-11-27T01:46:47Z
+source_head=unavailable
+job_status=failure
